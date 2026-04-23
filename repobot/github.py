@@ -119,6 +119,23 @@ def fetch_failing_dependabot_prs(limit: int = 50) -> list[dict]:
             if p.get("ci_status") == "failing"]
 
 
+def post_pr_comment(pr_number: int, body: str) -> None:
+    """Post a top-level comment on a PR. Shells out to `gh pr comment`
+    so the body can carry any multiline / markdown / @-mentions
+    without shell quoting hell."""
+    if not body or not body.strip():
+        raise ValueError("empty comment body")
+    result = subprocess.run(
+        ["gh", "pr", "comment", str(pr_number),
+         "--repo", _repo_slug(),
+         "--body-file", "-"],
+        input=body,
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"gh pr comment failed: {result.stderr.strip()}")
+
+
 def post_review_reply(pr_number: int, first_comment_id: int, body: str) -> None:
     """Post an inline reply on an existing PR review thread. JSON-encoded
     body goes via stdin so newlines and quotes survive intact. Raises
@@ -305,6 +322,51 @@ def fetch_my_prs(limit: int = 50) -> list[dict]:
 _BOT_SUFFIX = "[bot]"
 
 
+_COLLABS_TTL_SEC = 600  # 10 min
+_collabs_cache: dict = {"at": 0.0, "slug": "", "logins": set()}
+
+
+def collaborator_logins(force: bool = False) -> set[str]:
+    """Return the lowercase logins of anyone in the repo's collaborator
+    list who has push or admin rights — i.e., the set of people who
+    can legitimately be requested as reviewers. Cached for 10 min to
+    avoid hammering the API; the cache is keyed by repo slug so a
+    config change invalidates automatically.
+    """
+    slug = _repo_slug()
+    if (not force
+            and _collabs_cache["slug"] == slug
+            and time.time() - _collabs_cache["at"] < _COLLABS_TTL_SEC):
+        return _collabs_cache["logins"]
+    out: set[str] = set()
+    page = 1
+    while True:
+        try:
+            batch = _gh_json([
+                "gh", "api",
+                f"/repos/{slug}/collaborators",
+                "-X", "GET",
+                "-f", "per_page=100",
+                "-f", f"page={page}",
+                "-f", "affiliation=all",
+            ])
+        except Exception:
+            break
+        if not isinstance(batch, list) or not batch:
+            break
+        for c in batch:
+            login = (c.get("login") or "").strip()
+            perms = c.get("permissions") or {}
+            if login and (perms.get("push") or perms.get("admin")
+                          or perms.get("maintain")):
+                out.add(login.lower())
+        if len(batch) < 100:
+            break
+        page += 1
+    _collabs_cache.update({"at": time.time(), "slug": slug, "logins": out})
+    return out
+
+
 def suggest_reviewers(pr_number: int, limit: int = 8) -> list[dict]:
     """Rank candidate reviewers for a PR by who's committed to the
     touched files recently. Excludes the PR author, bots, anyone
@@ -373,8 +435,20 @@ def suggest_reviewers(pr_number: int, limit: int = 8) -> list[dict]:
         key=lambda e: (e["commits"], e["last_touched"]),
         reverse=True,
     )[:limit]
+    # Annotate each candidate with whether they can be requested as
+    # a reviewer — i.e., whether they're a repo collaborator. Callers
+    # (the modal UI) use this to decide which of the two checkboxes
+    # next to each name is available.
+    try:
+        collabs = collaborator_logins()
+    except Exception:
+        collabs = set()
     for e in ranked:
         e["files"] = sorted(e["files"])
+        # If we couldn't fetch collaborators at all, don't block the
+        # request checkbox for anyone — let the server reject it if
+        # it must.
+        e["can_request"] = (not collabs) or (e["login"].lower() in collabs)
     return ranked
 
 

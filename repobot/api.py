@@ -522,54 +522,95 @@ def reviewer_candidates(queue_id: str, item_id: int):
 
 @app.post("/queues/{queue_id}/items/{item_id}/request-reviewers")
 def submit_request_reviewers(queue_id: str, item_id: int,
-                             reviewers: list[str] = Form(default=[])):
-    """Called by the reviewer-picker modal after the user ticks boxes.
-    Calls the GH API with the selected logins, parks the card in
-    `awaiting update`, and records the result."""
+                             reviewers: list[str] = Form(default=[]),
+                             nudge: list[str] = Form(default=[]),
+                             comment_body: str = Form(default="")):
+    """Called by the reviewer-picker modal. Two independent slots of
+    action per candidate:
+      - `reviewers` — logins to request as formal reviewers (only
+        valid for repo collaborators; handled via GH's
+        requested_reviewers API).
+      - `nudge` + `comment_body` — logins to @-mention in a freeform
+        comment on the PR. Body was edited in the second modal before
+        it arrived here.
+    At least one must be non-empty. Both may be non-empty; if so, we
+    request review first then post the nudge comment.
+    """
     item = find_item(load_state(), queue_id, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="item not found")
     pr_number = item.get("number")
     if not pr_number:
         raise HTTPException(status_code=400, detail="item has no PR number")
-    cleaned = [r.strip() for r in reviewers if r and r.strip()]
-    if not cleaned:
+    to_request = [r.strip() for r in reviewers if r and r.strip()]
+    to_nudge = [r.strip() for r in nudge if r and r.strip()]
+    comment = (comment_body or "").strip()
+    if not to_request and not to_nudge:
         raise HTTPException(status_code=400,
-                            detail="no reviewers selected")
+                            detail="no reviewers or nudges selected")
+    if to_nudge and not comment:
+        raise HTTPException(status_code=400,
+                            detail="nudge selected but no comment body")
 
     cfg = load_config()
     dry_run = bool(cfg.get("actions", {}).get("dry_run", True))
     qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
     awaiting_state = qcfg.get("awaiting_state", "awaiting update")
 
+    actions_taken: list[str] = []
+    errors: list[str] = []
+
     if dry_run:
+        if to_request:
+            actions_taken.append(
+                "would request review from "
+                + ", ".join("@" + r for r in to_request))
+        if to_nudge:
+            actions_taken.append(
+                f"would post nudge comment ({len(comment)} chars)")
         set_item_result(queue_id, item_id, {
             "action": "request-reviewers",
             "status": "skipped_dry_run",
-            "message": (f"dry_run — would request review from "
-                        f"{', '.join('@' + r for r in cleaned)}."),
-            "reviewers": cleaned,
+            "message": "dry_run — " + "; ".join(actions_taken),
+            "reviewers": to_request,
+            "nudged": to_nudge,
         })
         return RedirectResponse(url="/", status_code=303)
 
-    try:
-        github.request_reviewers(int(pr_number), cleaned)
-    except Exception as exc:
+    if to_request:
+        try:
+            github.request_reviewers(int(pr_number), to_request)
+            actions_taken.append(
+                "requested review from "
+                + ", ".join("@" + r for r in to_request))
+        except Exception as exc:
+            errors.append(f"request_reviewers: {exc}")
+
+    if to_nudge and comment:
+        try:
+            github.post_pr_comment(int(pr_number), comment)
+            actions_taken.append(
+                "posted nudge comment (@"
+                + ", @".join(to_nudge) + ")")
+        except Exception as exc:
+            errors.append(f"post_pr_comment: {exc}")
+
+    if errors and not actions_taken:
         set_item_result(queue_id, item_id, {
             "action": "request-reviewers",
             "status": "error",
-            "message": str(exc),
+            "message": "; ".join(errors),
         })
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail="; ".join(errors))
 
     set_item_state(queue_id, item_id, awaiting_state)
     set_item_parked_at(queue_id, item_id, _now())
     set_item_result(queue_id, item_id, {
         "action": "request-reviewers",
-        "status": "completed",
-        "message": (f"Requested review from "
-                    f"{', '.join('@' + r for r in cleaned)}."),
-        "reviewers": cleaned,
+        "status": "completed" if not errors else "completed_with_errors",
+        "message": "; ".join(actions_taken + (["(errors: " + "; ".join(errors) + ")"] if errors else [])),
+        "reviewers": to_request,
+        "nudged": to_nudge,
     })
     return RedirectResponse(url="/", status_code=303)
 

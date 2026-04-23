@@ -224,20 +224,25 @@
     <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
       <div class="modal-header">
         <div>
-          <h3>Request reviewers</h3>
+          <h3>Request reviewers / nudge</h3>
           <div class="modal-pr" id="reviewers-modal-pr"></div>
         </div>
         <button type="button" class="modal-close" data-close-reviewers>×</button>
       </div>
       <div class="comment-modal-help">
-        Candidates are ranked by recent commits on the files this PR touches. Excludes you, bots, and anyone already requested or reviewing.
+        Candidates are ranked by recent commits on the touched files. Tick <strong>request</strong> to formally request review (only available for repo collaborators), and/or <strong>nudge</strong> to @-mention them in a comment you'll edit next.
+      </div>
+      <div class="reviewers-list-header">
+        <span class="reviewers-col-label">request</span>
+        <span class="reviewers-col-label">nudge</span>
+        <span></span>
       </div>
       <div id="reviewers-modal-list" class="reviewers-list">
         <div class="reviewers-loading">Loading candidates…</div>
       </div>
       <div class="comment-modal-actions">
         <button type="button" class="comment-modal-cancel" data-close-reviewers>Cancel</button>
-        <button type="button" class="comment-modal-send" id="reviewers-modal-send" disabled>Request selected</button>
+        <button type="button" class="comment-modal-send" id="reviewers-modal-send" disabled>Continue</button>
       </div>
     </div>
   </div>
@@ -466,22 +471,53 @@
         reviewersModalSend.disabled = true;
         return;
       }
+      const sync = () => {
+        const any = !!reviewersModalList.querySelector(
+          'input[type=checkbox]:checked');
+        reviewersModalSend.disabled = !any;
+      };
       for (const c of candidates) {
-        const row = document.createElement('label');
+        const row = document.createElement('div');
         row.className = 'reviewer-row';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.value = c.login;
-        cb.name = 'reviewers';
-        cb.addEventListener('change', () => {
-          const any = !!reviewersModalList.querySelector('input[type=checkbox]:checked');
-          reviewersModalSend.disabled = !any;
-        });
+        if (!c.can_request) row.classList.add('reviewer-row-no-access');
+
+        // Column 1: "request review" checkbox. Disabled + explained
+        // when the candidate isn't a repo collaborator.
+        const requestCell = document.createElement('label');
+        requestCell.className = 'reviewer-col reviewer-col-request';
+        const reqCb = document.createElement('input');
+        reqCb.type = 'checkbox';
+        reqCb.value = c.login;
+        reqCb.name = 'reviewers';
+        if (!c.can_request) {
+          reqCb.disabled = true;
+          requestCell.title = 'Not a repo collaborator — cannot request formal review.';
+        }
+        reqCb.addEventListener('change', sync);
+        requestCell.appendChild(reqCb);
+
+        // Column 2: "nudge in comment" checkbox. Always available.
+        const nudgeCell = document.createElement('label');
+        nudgeCell.className = 'reviewer-col reviewer-col-nudge';
+        const nudgeCb = document.createElement('input');
+        nudgeCb.type = 'checkbox';
+        nudgeCb.value = c.login;
+        nudgeCb.name = 'nudge';
+        nudgeCb.addEventListener('change', sync);
+        nudgeCell.appendChild(nudgeCb);
+
+        // Column 3: name + meta.
         const text = document.createElement('div');
         text.className = 'reviewer-row-text';
         const handle = document.createElement('div');
         handle.className = 'reviewer-row-handle';
         handle.textContent = '@' + c.login;
+        if (!c.can_request) {
+          const tag = document.createElement('span');
+          tag.className = 'reviewer-row-tag';
+          tag.textContent = 'not a collaborator';
+          handle.appendChild(tag);
+        }
         const sub = document.createElement('div');
         sub.className = 'reviewer-row-sub';
         const files = c.files || [];
@@ -491,7 +527,9 @@
         sub.textContent = `${c.commits} recent commit${c.commits === 1 ? '' : 's'} on ${fileLabel}`;
         text.appendChild(handle);
         text.appendChild(sub);
-        row.appendChild(cb);
+
+        row.appendChild(requestCell);
+        row.appendChild(nudgeCell);
         row.appendChild(text);
         reviewersModalList.appendChild(row);
       }
@@ -523,18 +561,56 @@
     reviewersModalSend.addEventListener('click', () => {
       if (!reviewersFormPending) return;
       const form = reviewersFormPending;
-      // Strip any prior reviewer inputs so re-open doesn't accumulate.
+      // Wipe any prior field injections — re-open can accumulate otherwise.
       form.querySelectorAll('input[data-reviewer-field]').forEach(n => n.remove());
-      const picked = reviewersModalList.querySelectorAll('input[type=checkbox]:checked');
-      if (!picked.length) return;
-      picked.forEach(cb => {
-        const hidden = document.createElement('input');
-        hidden.type = 'hidden';
-        hidden.name = 'reviewers';
-        hidden.value = cb.value;
-        hidden.dataset.reviewerField = '1';
-        form.appendChild(hidden);
-      });
+      // Clear stale nudge-body state from any earlier attempt.
+      delete form.dataset.editableBody;
+      delete form.dataset.editTitle;
+      form.dataset.editConfirmed = '';
+      form.querySelectorAll('input[name="comment_body"]').forEach(n => n.remove());
+      const reqLogins = Array.from(
+        reviewersModalList.querySelectorAll('input[name="reviewers"]:checked'))
+        .map(cb => cb.value);
+      const nudgeLogins = Array.from(
+        reviewersModalList.querySelectorAll('input[name="nudge"]:checked'))
+        .map(cb => cb.value);
+      if (!reqLogins.length && !nudgeLogins.length) return;
+
+      const injectHidden = (name, values) => {
+        for (const v of values) {
+          const hidden = document.createElement('input');
+          hidden.type = 'hidden';
+          hidden.name = name;
+          hidden.value = v;
+          hidden.dataset.reviewerField = '1';
+          form.appendChild(hidden);
+        }
+      };
+      injectHidden('reviewers', reqLogins);
+      injectHidden('nudge', nudgeLogins);
+
+      // If any nudges were picked, open the comment modal with a
+      // pre-generated body. On its confirm the form is submitted with
+      // reviewers + nudge + comment_body all in one POST.
+      if (nudgeLogins.length) {
+        const mentions = nudgeLogins.map(l => '@' + l).join(' ');
+        const defaultBody =
+          mentions + ' — bumping this up for your eyes when you get a sec.' +
+          (reqLogins.length ? '' : ' (no formal review requested; just a ping.)');
+        // Repurpose the existing editable-comment modal.
+        form.dataset.editTitle = 'Nudge comment — edit before posting';
+        // Stash default body on the form so the existing modal plumbing
+        // picks it up through data-editable-body.
+        form.dataset.editableBody = defaultBody;
+        // Flip edit-confirmed flag to 0 so the submit listener intercepts.
+        form.dataset.editConfirmed = '';
+        form.dataset.reviewerConfirmed = '1';
+        closeReviewersModal();
+        form.requestSubmit();  // submit listener will catch and open comment modal
+        return;
+      }
+
+      // No nudges — submit directly with just requests.
       form.dataset.reviewerConfirmed = '1';
       closeReviewersModal();
       form.requestSubmit();
