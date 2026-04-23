@@ -17,7 +17,7 @@ from .actions import (
     continue_action,
     dispatch,
 )
-from .config import PROJECT_ROOT, load_config
+from .config import PROJECT_ROOT, load_config, update_queue_definition
 from .queues import (
     _mutate,
     _now,
@@ -681,6 +681,82 @@ def update_global(max_concurrent: int = Form(...),
         sessions.resize_semaphore(int(max_concurrent))
     except Exception as exc:
         print(f"[settings] semaphore resize failed: {exc}")
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.get("/queues/{queue_id}/definition")
+def queue_definition(queue_id: str):
+    """Return one queue's current configuration (from config.yaml),
+    for the edit-query form."""
+    queues = get_queues_config()
+    q = next((q for q in queues if q.get("id") == queue_id), None)
+    if q is None:
+        raise HTTPException(status_code=404, detail="unknown queue")
+    return JSONResponse({
+        "id": q.get("id"),
+        "title": q.get("title"),
+        "max_in_flight": q.get("max_in_flight"),
+        "query": q.get("query") or {},
+    })
+
+
+@app.post("/queues/{queue_id}/definition")
+def update_queue_definition_endpoint(
+    queue_id: str,
+    title: str = Form(""),
+    q_author: str = Form(""),
+    q_state: str = Form("open"),
+    q_review_requested: str = Form(""),
+    q_labels: str = Form(""),
+    q_assignee: str = Form(""),
+    q_milestone: str = Form(""),
+):
+    """Rewrite one queue's query in config.yaml, preserving comments
+    and structure. Labels are a comma-separated string in the form;
+    stored as a list. On success, clear this queue's items so the
+    next fetch tick repopulates against the new query — otherwise
+    stale cards from the old query linger on the board."""
+    queues_cfg = get_queues_config()
+    if not any(q.get("id") == queue_id for q in queues_cfg):
+        raise HTTPException(status_code=404, detail="unknown queue")
+
+    labels_list = [l.strip() for l in q_labels.split(",") if l.strip()]
+    query_updates: dict = {
+        "author": q_author.strip() or None,
+        "state": q_state.strip() or None,
+        "review_requested": q_review_requested.strip() or None,
+        "assignee": q_assignee.strip() or None,
+        "milestone": q_milestone.strip() or None,
+        "labels": labels_list or None,
+    }
+    # Prune None so we don't write empty keys into yaml.
+    query_updates = {k: v for k, v in query_updates.items() if v is not None}
+
+    updates: dict = {"query": query_updates}
+    if title.strip():
+        updates["title"] = title.strip()
+    try:
+        update_queue_definition(queue_id, updates)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Wipe this queue's items so the next fetch repopulates from the
+    # new query. Without this, cards matching the OLD query stick
+    # around until the user manually deletes or closes them.
+    def _clear(state):
+        bucket = state.get("queues", {}).get(queue_id)
+        if bucket:
+            bucket["items"] = []
+    _mutate(_clear)
+
+    # Kick an immediate fetch in a background thread so the user sees
+    # new cards show up without waiting for the auto-refresh tick.
+    threading.Thread(
+        target=run_queue, args=(queue_id,),
+        kwargs={"wait_for_triage": False},
+        daemon=True,
+    ).start()
+
     return RedirectResponse(url="/", status_code=303)
 
 

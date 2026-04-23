@@ -353,6 +353,27 @@ body {
 .settings-gear > summary:hover { background: rgba(15, 23, 42, 0.08); color: #172b4d; }
 .settings-gear[open] > summary { background: rgba(15, 23, 42, 0.12); color: #172b4d; }
 .settings-gear-global > summary { color: #1e40af; }
+/* When multiple forms live in the same gear dropdown, we wrap them
+   in .settings-popover (carries the absolute positioning + shell
+   styling). Standalone .settings-form (no wrapper) still works the
+   same way so older callers aren't broken. */
+.settings-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 130;
+  min-width: 240px;
+  background: white;
+  border: 1px solid #dfe1e6;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(9, 30, 66, 0.22);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
 .settings-form {
   position: absolute;
   top: calc(100% + 4px);
@@ -368,7 +389,19 @@ body {
   flex-direction: column;
   gap: 8px;
 }
-.settings-gear-global .settings-form { right: 0; left: auto; }
+/* When the form is inside a .settings-popover, it's just a block —
+   the popover provides the shell. */
+.settings-form-static {
+  position: static;
+  box-shadow: none;
+  border: none;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  min-width: 0;
+}
+.settings-gear-global .settings-form,
+.settings-gear-global .settings-popover { right: 0; left: auto; }
 .settings-form label {
   display: flex;
   flex-direction: column;
@@ -379,7 +412,9 @@ body {
   letter-spacing: 0.03em;
 }
 .settings-form label > span { font-weight: 600; }
-.settings-form input[type="number"] {
+.settings-form input[type="number"],
+.settings-form input[type="text"],
+.settings-form select {
   font: inherit;
   padding: 4px 8px;
   border: 1px solid #d1d5da;
@@ -388,7 +423,9 @@ body {
   text-transform: none;
   letter-spacing: 0;
   color: #172b4d;
+  background: #fff;
 }
+.settings-form input[type="text"]::placeholder { color: var(--ink-faint); }
 .settings-form .settings-toggle {
   flex-direction: row;
   align-items: center;
@@ -408,6 +445,24 @@ body {
   border-color: #0366d6;
 }
 .settings-form button:hover { background: #0256b5; }
+
+/* Query-definition form sits directly below the runtime-settings one
+   inside the same gear dropdown. A rule + an eyebrow label make the
+   section distinct without needing a whole separate popover. */
+.settings-form-query {
+  border-top: 1px dashed var(--rule-strong);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+.settings-section-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
 
 .queue.queue-paused { background: var(--warn-soft); }
 .queue.queue-paused::before { background: var(--warn); }
@@ -799,17 +854,6 @@ button.action-primary:disabled {
 }
 .state::-webkit-scrollbar { width: 6px; }
 .state::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 3px; }
-.state > h3 {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: linear-gradient(
-    to bottom,
-    var(--bg-card) 0%,
-    var(--bg-card) 80%,
-    rgba(255, 255, 255, 0) 100%);
-  padding-bottom: 8px;
-}
 .state-triage   { --state-tone: var(--state-triage); }
 .state-progress { --state-tone: var(--state-progress); }
 .state-awaiting { --state-tone: var(--state-awaiting); }
@@ -817,7 +861,7 @@ button.action-primary:disabled {
 
 .state h3 {
   margin: 0 0 8px 0;
-  padding: 0 0 5px 0;
+  padding: 6px 0 6px;
   font-family: var(--mono);
   font-size: var(--size-eyebrow);
   color: var(--ink-mute);
@@ -828,7 +872,12 @@ button.action-primary:disabled {
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--rule);
-  position: relative;
+  /* Sticky to the scroll container (`.state`). Declared here so no
+     later `.state h3` rule (same specificity) can clobber it. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-card);
 }
 .state h3::after {
   /* A colored stub rule beneath the header picks up the state tone. */

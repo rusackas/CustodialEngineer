@@ -103,28 +103,90 @@
             </form>
             <details class="settings-gear settings-gear-queue">
               <summary title="Column settings" aria-label="Column settings">{{ icon('gear', size=16) }}</summary>
-              <form method="post"
-                    action="/queues/{{ queue.id }}/settings"
-                    class="settings-form">
-                <label>
-                  <span>Max in flight</span>
-                  <input type="number" name="max_in_flight" min="0" max="500"
-                         value="{{ eff_max }}" required />
-                </label>
-                <label>
-                  <span>Worker slots</span>
-                  <input type="number" name="worker_slots" min="1"
-                         max="{{ s.cap or 8 }}"
-                         value="{{ eff_slots }}" required />
-                </label>
-                <label class="settings-toggle">
-                  <input type="checkbox" name="intake_paused" value="1"
-                         {% if queue.intake_paused %}checked{% endif %} />
-                  <span>Pause intake</span>
-                </label>
-                <div class="settings-hint">Worker slots cap concurrent triage per tick (≤ global cap {{ s.cap or 8 }}).</div>
-                <button type="submit">Save</button>
-              </form>
+              <div class="settings-popover">
+                <form method="post"
+                      action="/queues/{{ queue.id }}/settings"
+                      class="settings-form settings-form-static">
+                  <label>
+                    <span>Max in flight</span>
+                    <input type="number" name="max_in_flight" min="0" max="500"
+                           value="{{ eff_max }}" required />
+                  </label>
+                  <label>
+                    <span>Worker slots</span>
+                    <input type="number" name="worker_slots" min="1"
+                           max="{{ s.cap or 8 }}"
+                           value="{{ eff_slots }}" required />
+                  </label>
+                  <label class="settings-toggle">
+                    <input type="checkbox" name="intake_paused" value="1"
+                           {% if queue.intake_paused %}checked{% endif %} />
+                    <span>Pause intake</span>
+                  </label>
+                  <div class="settings-hint">Worker slots cap concurrent triage per tick (≤ global cap {{ s.cap or 8 }}).</div>
+                  <button type="submit">Save</button>
+                </form>
+                {# Second form — edits the queue's query definition in
+                   config.yaml. On save, queue items are wiped and a
+                   fresh fetch kicks off so the new query repopulates. #}
+                {% set _q = queue.query or {} %}
+                <form method="post"
+                      action="/queues/{{ queue.id }}/definition"
+                      class="settings-form settings-form-static settings-form-query">
+                  <div class="settings-section-label">Query definition</div>
+                  <label>
+                    <span>Title</span>
+                    <input type="text" name="title"
+                           value="{{ queue.title }}" />
+                  </label>
+                  <label>
+                    <span>Author</span>
+                    <input type="text" name="q_author"
+                           value="{{ _q.get('author', '') }}"
+                           placeholder="e.g. app/dependabot, self, a-login" />
+                  </label>
+                  <label>
+                    <span>State</span>
+                    <select name="q_state">
+                      {% set _st = _q.get('state', 'open') %}
+                      {% for opt in ['open', 'closed', 'merged', 'all'] %}
+                        <option value="{{ opt }}"
+                          {% if _st == opt %}selected{% endif %}>{{ opt }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Review requested</span>
+                    <input type="text" name="q_review_requested"
+                           value="{{ _q.get('review_requested', '') }}"
+                           placeholder="self or a-login" />
+                  </label>
+                  <label>
+                    <span>Assignee</span>
+                    <input type="text" name="q_assignee"
+                           value="{{ _q.get('assignee', '') }}"
+                           placeholder="self or a-login" />
+                  </label>
+                  <label>
+                    <span>Milestone</span>
+                    <input type="text" name="q_milestone"
+                           value="{{ _q.get('milestone', '') }}"
+                           placeholder="milestone name" />
+                  </label>
+                  <label>
+                    <span>Labels</span>
+                    <input type="text" name="q_labels"
+                           value="{{ (_q.get('labels') or []) | join(', ') }}"
+                           placeholder="comma-separated" />
+                  </label>
+                  <div class="settings-hint">
+                    Writes to <code>config.yaml</code>, clears this
+                    queue's cards, and re-fetches against the new query.
+                    Existing state machine + ids are not touched.
+                  </div>
+                  <button type="submit">Save &amp; refetch</button>
+                </form>
+              </div>
             </details>
           </div>
         </div>
