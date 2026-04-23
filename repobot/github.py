@@ -10,7 +10,7 @@ import time
 
 from .config import load_config
 
-LIST_FIELDS = "number,title,url,mergeable,updatedAt,headRefName,isDraft"
+LIST_FIELDS = "number,title,url,mergeable,updatedAt,headRefName,isDraft,author"
 CHECK_FIELDS = "statusCheckRollup"
 
 
@@ -52,9 +52,15 @@ def pr_checks(number: int) -> list[dict]:
 
 
 def _is_failure(check: dict) -> bool:
+    # CANCELLED is intentionally NOT a failure. Superset has manual-gate
+    # workflows (e.g. `check-hold-label`) that get cancelled as part of
+    # normal operation; GitHub's own "all checks passed" banner ignores
+    # CANCELLED for the same reason. If a cancellation represents a real
+    # upstream problem, the upstream check will be in FAILURE / TIMED_OUT
+    # / ACTION_REQUIRED and we'll catch it there.
     conclusion = (check.get("conclusion") or "").upper()
     state = (check.get("state") or "").upper()
-    return conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"} or state == "FAILURE"
+    return conclusion in {"FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"} or state == "FAILURE"
 
 
 def ci_status(checks: list[dict]) -> str:
@@ -294,3 +300,123 @@ def fetch_my_prs(limit: int = 50) -> list[dict]:
                 or threads):
             out.append(pr)
     return out
+
+
+_BOT_SUFFIX = "[bot]"
+
+
+def suggest_reviewers(pr_number: int, limit: int = 8) -> list[dict]:
+    """Rank candidate reviewers for a PR by who's committed to the
+    touched files recently. Excludes the PR author, bots, anyone
+    already requested, and anyone who has already reviewed.
+
+    Returns a list of dicts: {login, commits, files, last_touched,
+    avatar_url}. Sorted by commit count desc, then recency desc.
+    """
+    pr = _gh_json([
+        "gh", "pr", "view", str(pr_number),
+        "--repo", _repo_slug(),
+        "--json", "author,files,reviewRequests,reviews",
+    ])
+    author_login = ((pr.get("author") or {}).get("login") or "").lower()
+    exclude = {author_login} if author_login else set()
+    for r in pr.get("reviewRequests") or []:
+        login = (r.get("login") or "").lower()
+        if login:
+            exclude.add(login)
+    for rv in pr.get("reviews") or []:
+        login = ((rv.get("author") or {}).get("login") or "").lower()
+        if login:
+            exclude.add(login)
+
+    files = [f.get("path") for f in (pr.get("files") or []) if f.get("path")]
+    # Keep the query budget bounded on huge PRs; the most-touched files
+    # usually come first in GitHub's listing.
+    files = files[:12]
+
+    candidates: dict[str, dict] = {}
+    for path in files:
+        try:
+            commits = _gh_json([
+                "gh", "api",
+                f"/repos/{_repo_slug()}/commits",
+                "-X", "GET",
+                "-f", f"path={path}",
+                "-f", "per_page=10",
+            ])
+        except Exception:
+            continue
+        if not isinstance(commits, list):
+            continue
+        for c in commits:
+            author = c.get("author") or {}
+            login = (author.get("login") or "").strip()
+            if not login or login.lower() in exclude:
+                continue
+            if login.endswith(_BOT_SUFFIX) or (author.get("type") or "") == "Bot":
+                continue
+            commit_date = ((c.get("commit") or {}).get("author") or {}).get("date") or ""
+            entry = candidates.setdefault(login, {
+                "login": login,
+                "avatar_url": author.get("avatar_url"),
+                "commits": 0,
+                "files": set(),
+                "last_touched": "",
+            })
+            entry["commits"] += 1
+            entry["files"].add(path)
+            if commit_date > (entry["last_touched"] or ""):
+                entry["last_touched"] = commit_date
+
+    ranked = sorted(
+        candidates.values(),
+        key=lambda e: (e["commits"], e["last_touched"]),
+        reverse=True,
+    )[:limit]
+    for e in ranked:
+        e["files"] = sorted(e["files"])
+    return ranked
+
+
+_DRAWER_FIELDS = ",".join([
+    "number", "title", "body", "url", "author",
+    "state", "isDraft", "createdAt", "updatedAt",
+    "headRefName", "baseRefName", "mergeable",
+    "additions", "deletions", "changedFiles",
+    "labels", "milestone",
+    "reviewRequests", "reviews", "reviewDecision",
+    "comments", "statusCheckRollup",
+    "closingIssuesReferences", "assignees",
+])
+
+
+def fetch_pr_for_drawer(pr_number: int) -> dict:
+    """Fetch a rich snapshot of a PR for the drawer view. One `gh pr
+    view --json` call — no per-field round-trips."""
+    return _gh_json([
+        "gh", "pr", "view", str(pr_number),
+        "--repo", _repo_slug(),
+        "--json", _DRAWER_FIELDS,
+    ])
+
+
+def request_reviewers(pr_number: int, logins: list[str]) -> dict:
+    """POST /repos/{owner}/{name}/pulls/{N}/requested_reviewers with
+    the selected logins. Returns the raw gh API response."""
+    if not logins:
+        raise ValueError("no reviewers selected")
+    cmd = ["gh", "api",
+           "--method", "POST",
+           "-H", "Accept: application/vnd.github+json",
+           f"/repos/{_repo_slug()}/pulls/{pr_number}/requested_reviewers"]
+    for login in logins:
+        cmd.extend(["-f", f"reviewers[]={login}"])
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"gh api request_reviewers failed: {result.stderr.strip()}"
+        )
+    try:
+        return json.loads(result.stdout) if result.stdout else {}
+    except json.JSONDecodeError:
+        return {"raw": result.stdout}

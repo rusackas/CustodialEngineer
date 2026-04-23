@@ -74,9 +74,20 @@ diffs) is fine to ignore.
 - `mergeStateStatus == BEHIND` → propose `rebase` or
   `dependabot-rebase` (primary). Don't recommend approve-merge; the
   branch has to catch up first.
-- `mergeStateStatus == BLOCKED` → propose `prompt` so a human can
-  decide (usually means required reviewers or branch protection).
-  Don't approve-merge.
+- `mergeStateStatus == BLOCKED` — look at `reviewDecision` to
+  disambiguate:
+  - `reviewDecision == CHANGES_REQUESTED` → propose `prompt` (a
+    reviewer has actively pushed back; don't approve over the top
+    of that). Summarize the request in the proposal.
+  - Otherwise (typically `REVIEW_REQUIRED`, i.e. branch protection
+    wants ≥1 approval and nobody has approved yet) → propose
+    **`approve-merge`** (primary). The user IS the maintainer who
+    crosses that gate; the downstream skill will post the approval
+    review and then `gh pr merge --squash --auto` will land it
+    once protections clear. If the gate is actually
+    2-approvals-required or something else the approval alone
+    won't clear, the downstream skill bails to `needs_human`
+    without merging.
 - `mergeStateStatus == UNSTABLE` → note which non-required checks
   are red in the excerpt. Usually safe to `approve-merge`, but say so
   explicitly in the proposal.
@@ -202,6 +213,10 @@ Valid ids only: `approve-merge`, `rebase`, `dependabot-rebase`,
 `dependabot-recreate`, `update-lockfile`, `attempt-fix`,
 `fix-precommit`, `retrigger-ci`, `close`, `prompt`. Order from most to
 least recommended. Never empty; never more than 5.
+
+**`prompt` MUST always be in `actions`** — it's the human escape
+hatch. Place it last. The UI renders it as a `prompt…` details
+expander, so it doesn't clutter the main button row.
 
 ### Rules for `notes`
 

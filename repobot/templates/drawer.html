@@ -1,0 +1,139 @@
+{# PR drawer partial — rendered by /queues/{q}/items/{id}/drawer.
+   Inserted into #drawer-panel > .drawer-content by the client. #}
+<div class="drawer-top">
+  <div class="drawer-title-row">
+    <a href="{{ pr.url }}" target="_blank" rel="noopener" class="drawer-open-gh"
+       title="Open on GitHub">{{ icon('link-external', size=16) }}</a>
+    <div class="drawer-title-text">
+      <div class="drawer-title">
+        <a href="{{ pr.url }}" target="_blank" rel="noopener">#{{ pr.number }}</a>
+        <span>{{ pr.title }}</span>
+      </div>
+      <div class="drawer-sub">
+        {% if pr.author and pr.author.login %}
+          <span class="drawer-author">@{{ pr.author.login }}</span>
+        {% endif %}
+        {% if pr.isDraft %}<span class="drawer-badge drawer-badge-draft">draft</span>{% endif %}
+        <span class="drawer-badge drawer-badge-state drawer-badge-{{ (pr.state or 'OPEN') | lower }}">{{ pr.state or 'OPEN' }}</span>
+        {% if pr.headRefName %}
+          <span class="drawer-refs">
+            <code>{{ pr.baseRefName or 'master' }}</code>
+            ←
+            <code>{{ pr.headRefName }}</code>
+          </span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer-stats">
+    <span>+{{ pr.additions or 0 }} / −{{ pr.deletions or 0 }}</span>
+    <span>· {{ pr.changedFiles or 0 }} files</span>
+    {% if pr.mergeable %}<span>· mergeable: {{ pr.mergeable }}</span>{% endif %}
+    {% if pr.reviewDecision %}<span>· review: {{ pr.reviewDecision }}</span>{% endif %}
+  </div>
+
+  {% if pr.labels %}
+    <div class="drawer-labels">
+      {% for l in pr.labels %}
+        <span class="drawer-label">{{ l.name }}</span>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+
+{% if pr.closingIssuesReferences %}
+  <section class="drawer-section">
+    <h4>Linked issues</h4>
+    <ul class="drawer-linked">
+      {% for ref in pr.closingIssuesReferences %}
+        <li>
+          <a href="{{ ref.url }}" target="_blank" rel="noopener">
+            #{{ ref.number }}
+          </a>
+          {{ ref.title }}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
+{% if pr.statusCheckRollup %}
+  <section class="drawer-section">
+    <h4>CI checks
+      <span class="drawer-check-summary">
+        {% set success = pr.statusCheckRollup | selectattr('conclusion', 'equalto', 'SUCCESS') | list | length %}
+        {% set failure = pr.statusCheckRollup | selectattr('conclusion', 'equalto', 'FAILURE') | list | length %}
+        {% set pending = pr.statusCheckRollup | rejectattr('conclusion') | list | length %}
+        <span class="drawer-check-pill drawer-check-success">{{ success }} ✓</span>
+        {% if failure %}<span class="drawer-check-pill drawer-check-failure">{{ failure }} ✗</span>{% endif %}
+        {% if pending %}<span class="drawer-check-pill drawer-check-pending">{{ pending }} …</span>{% endif %}
+      </span>
+    </h4>
+    <details>
+      <summary>all {{ pr.statusCheckRollup | length }} checks</summary>
+      <ul class="drawer-checks">
+        {% for c in pr.statusCheckRollup %}
+          <li class="drawer-check drawer-check-{{ (c.conclusion or 'pending') | lower }}">
+            <span class="drawer-check-state">{{ c.conclusion or c.state or '…' }}</span>
+            {% if c.detailsUrl %}
+              <a href="{{ c.detailsUrl }}" target="_blank" rel="noopener">{{ c.name or c.context or 'check' }}</a>
+            {% else %}
+              <span>{{ c.name or c.context or 'check' }}</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  </section>
+{% endif %}
+
+{% if pr.reviewRequests or pr.reviews %}
+  <section class="drawer-section">
+    <h4>Reviewers</h4>
+    {% if pr.reviewRequests %}
+      <div class="drawer-sub-label">Requested</div>
+      <ul class="drawer-reviewer-list">
+        {% for r in pr.reviewRequests %}
+          <li>@{{ r.login or r.name or 'unknown' }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if pr.reviews %}
+      <div class="drawer-sub-label">Reviews</div>
+      <ul class="drawer-reviewer-list">
+        {% for rv in pr.reviews %}
+          <li>
+            @{{ (rv.author or {}).login or 'unknown' }}
+            <span class="drawer-review-state drawer-review-{{ (rv.state or 'commented') | lower }}">{{ rv.state or 'COMMENTED' }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+{% endif %}
+
+<section class="drawer-section">
+  <h4>Description</h4>
+  <div class="drawer-md">
+    {% if body_html %}{{ body_html | safe }}
+    {% else %}<em class="drawer-empty">No description.</em>{% endif %}
+  </div>
+</section>
+
+{% if comments %}
+  <section class="drawer-section">
+    <h4>Comments ({{ comments | length }})</h4>
+    <div class="drawer-comments">
+      {% for c in comments %}
+        <div class="drawer-comment">
+          <div class="drawer-comment-head">
+            <strong>@{{ c.author or 'unknown' }}</strong>
+            <span class="drawer-comment-date">{{ c.createdAt or '' }}</span>
+          </div>
+          <div class="drawer-md drawer-md-compact">{{ c.html | safe }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}

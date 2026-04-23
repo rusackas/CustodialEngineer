@@ -3,37 +3,37 @@
 <head>
   <meta charset="utf-8" />
   <meta name="refresh-ms" content="{{ 3000 if pending else 10000 }}" />
-  <title>repobot</title>
+  <title>Custodial Engineer</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <h1>
-      repobot
-      {% if dry_run %}<span class="dry-run-pill">DRY RUN</span>{% endif %}
-      <span id="stats-bar" class="stats-bar">
-        {% set s = stats or {} %}
-        <span class="stat-pill-wrap">
-          <button type="button" class="stat-pill stat-sessions" id="stats-sessions-btn"
+  {% set s = stats or {} %}
+  {% set tt = (s.tokens_24h or {}) %}
+  {% set ttl = (tt.get('input_tokens', 0) + tt.get('output_tokens', 0)
+               + tt.get('cache_creation_input_tokens', 0) + tt.get('cache_read_input_tokens', 0)) %}
+  <header class="app-header">
+    <div class="app-header-row app-header-brand-row">
+      <h1 class="app-brand">
+        <span class="app-brand-mark" role="img" aria-label="Custodial Engineer">🧹</span>
+        <span class="app-brand-text">custodial<span class="app-brand-dot">·</span>engineer</span>
+        {% if dry_run %}<span class="app-brand-flag" title="Actions are logged instead of executed. Flip actions.dry_run in config.yaml when you trust the flow.">dry run</span>{% endif %}
+      </h1>
+    </div>
+
+    <div class="app-header-row app-readout">
+      <div class="readout-cluster">
+        <span class="stat-pill-wrap readout-item readout-item-interactive">
+          <button type="button" class="readout-button" id="stats-sessions-btn"
                   aria-haspopup="true" aria-expanded="false"
                   title="Click to see live sessions. Cap {{ s.cap or 4 }} applies to running turns — idle sessions release their slot.">
             <span class="spinner" {% if not s.working %}style="display:none"{% endif %}></span>
-            <span id="stats-working">{{ s.working or 0 }}</span>/<span id="stats-cap">{{ s.cap or 4 }}</span> running
-            {% if s.idle %} · <span id="stats-idle">{{ s.idle }}</span> idle{% endif %}
-            {% if s.queued %} · <span id="stats-queued">{{ s.queued }}</span> queued{% endif %}
+            <span class="readout-label">sessions</span>
+            <span class="readout-value">
+              <span id="stats-working">{{ s.working or 0 }}</span><span class="readout-sep">/</span><span id="stats-cap">{{ s.cap or 4 }}</span>
+              {% if s.idle %} <span class="readout-dim"><span id="stats-idle">{{ s.idle }}</span> idle</span>{% endif %}
+              {% if s.queued %} <span class="readout-dim"><span id="stats-queued">{{ s.queued }}</span> queued</span>{% endif %}
+            </span>
           </button>
-          <details class="settings-gear settings-gear-global">
-            <summary title="Edit global session cap" aria-label="Global settings">⚙︎</summary>
-            <form method="post" action="/settings/global" class="settings-form">
-              <label>
-                <span>Global session cap</span>
-                <input type="number" name="max_concurrent" min="1" max="64"
-                       value="{{ s.cap or 8 }}" required />
-              </label>
-              <div class="settings-hint">Applies live. Idle sessions release their slot.</div>
-              <button type="submit">Save</button>
-            </form>
-          </details>
           {% if s.live %}
           {% set visible_live = s.live | selectattr('number') | list %}
           {% if visible_live %}
@@ -56,16 +56,42 @@
           {% endif %}
           {% endif %}
         </span>
-        {% set tt = (s.tokens_24h or {}) %}
-        {% set ttl = (tt.get('input_tokens', 0) + tt.get('output_tokens', 0)
-                     + tt.get('cache_creation_input_tokens', 0) + tt.get('cache_read_input_tokens', 0)) %}
         {% if ttl %}
-          <span class="stat-pill stat-tokens" id="stats-tokens"
-                title="Tokens consumed across all Claude sessions in the last 24 hours (input + output + cache read/write). Rolling window.">{{ (ttl / 1000) | round(1) }}k tok · 24h</span>
+          <span class="readout-item" id="stats-tokens"
+                title="Tokens consumed across all Claude sessions in the last 24 hours (input + output + cache read/write). Rolling window.">
+            <span class="readout-label">tokens</span>
+            <span class="readout-value">{{ (ttl / 1000) | round(1) }}k <span class="readout-dim">/ 24h</span></span>
+          </span>
         {% endif %}
-      </span>
-    </h1>
-    <div class="subtitle">queues for keeping an open source repo moving</div>
+        {% if s.worktrees %}
+          <span class="readout-item"
+                title="Per-PR git worktrees currently on disk at workspace/worktrees/. Each lives until the card is deleted.">
+            <span class="readout-label">worktrees</span>
+            <span class="readout-value">{{ s.worktrees }}</span>
+          </span>
+        {% endif %}
+      </div>
+      <div class="readout-tools">
+        <details class="settings-gear settings-gear-global">
+          <summary title="Edit global settings" aria-label="Global settings">{{ icon('gear', size=16) }}</summary>
+          <form method="post" action="/settings/global" class="settings-form">
+            <label>
+              <span>Global session cap</span>
+              <input type="number" name="max_concurrent" min="1" max="64"
+                     value="{{ s.cap or 8 }}" required />
+            </label>
+            <div class="settings-hint">Applies live. Idle sessions release their slot.</div>
+            <label class="settings-toggle">
+              <input type="checkbox" name="auto_resume_on_boot"
+                     {% if s.auto_resume_on_boot %}checked{% endif %} />
+              <span>Auto-resume interrupted actions on restart</span>
+            </label>
+            <div class="settings-hint">Uses the saved SDK session id to pick up where each action left off.</div>
+            <button type="submit">Save</button>
+          </form>
+        </details>
+      </div>
+    </div>
   </header>
 
   <div class="board">
@@ -93,7 +119,7 @@
               <button type="submit" class="refresh" title="Re-fetch every item from GitHub. Non-done items whose PR was updated since last triage get re-triaged. Done items with new activity are reopened.">Update</button>
             </form>
             <details class="settings-gear settings-gear-queue">
-              <summary title="Column settings" aria-label="Column settings">⚙︎</summary>
+              <summary title="Column settings" aria-label="Column settings">{{ icon('gear', size=16) }}</summary>
               <form method="post"
                     action="/queues/{{ queue.id }}/settings"
                     class="settings-form">
@@ -122,9 +148,18 @@
 
         {% for st in queue.states %}
           {% set cards = q_items | selectattr('state', 'equalto', st) | list %}
-          <div class="state {{ 'state-done' if st == done_state else '' }}">
+          {# State tone — used by CSS to pick up the column token + rule
+             color. Defaults to `triage` so any bespoke state (e.g.
+             `triage: blocked`) still gets the ochre treatment. #}
+          {% set _stone = 'done' if st == done_state
+                      else 'awaiting' if st == awaiting_state
+                      else 'progress' if st == 'in progress'
+                      else 'triage' %}
+          <div class="state state-{{ _stone }} {{ 'state-done' if st == done_state else '' }}">
             <h3>
-              {{ st }} <span class="count">({{ cards|length }})</span>
+              <span class="state-token" aria-hidden="true"></span>
+              <span class="state-name">{{ st }}</span>
+              <span class="count">{{ cards|length }}</span>
               {% if st == done_state and cards %}
                 <form method="post" action="/queues/{{ queue.id }}/clear-done"
                       class="clear-done-form"
@@ -136,54 +171,53 @@
             {% for item in cards %}
               {% set is_queued = (item.last_result or {}).get('status') == 'queued' %}
               {% set live = live_by_item.get(queue.id ~ ':' ~ (item.id | string)) %}
+              {% set tl = item.tokens_lifetime or {} %}
+              {% set tll = (tl.get('input_tokens', 0) + tl.get('output_tokens', 0)
+                           + tl.get('cache_creation_input_tokens', 0) + tl.get('cache_read_input_tokens', 0)) %}
+              {% set sid = item.session_id or item.triage_session_id %}
+              {% set author_login = ((item.raw or {}).get('author') or {}).get('login') %}
               <article class="card {% if is_queued %}card-queued{% endif %}{% if live and live.status == 'idle' %} card-idle{% endif %}" data-item-id="{{ item.id }}">
-                <div class="card-title">
-                  <div class="card-title-text">
-                    <a href="{{ item.url }}" target="_blank" rel="noopener">#{{ item.number }}</a>
-                    <span>{{ item.title }}</span>
+                <header class="card-head">
+                  <div class="card-title">
+                    <div class="card-title-text">
+                      {% set _is_draft = (item.raw or {}).get('isDraft') %}
+                      {% set _pr_icon = 'git-pull-request-draft' if _is_draft else 'git-pull-request' %}
+                      <span class="pr-state pr-state-{{ 'draft' if _is_draft else 'open' }}"
+                            title="{{ 'Draft PR' if _is_draft else 'Open PR' }}">{{ icon(_pr_icon, size=14) }}</span>
+                      <a href="{{ item.url }}" target="_blank" rel="noopener"
+                         class="pr-link"
+                         data-drawer-queue="{{ queue.id }}"
+                         data-drawer-item="{{ item.id }}"
+                         data-drawer-pr="{{ item.number }}"
+                         data-drawer-title="{{ item.title }}"
+                         data-drawer-url="{{ item.url }}"
+                         title="Click to preview in drawer · ⌘-click / ctrl-click opens GitHub">#{{ item.number }}</a>
+                      <span class="card-title-body">{{ item.title }}</span>
+                    </div>
                   </div>
-                  <div class="card-title-chips">
-                    {% if live %}
-                      <span class="live-badge live-badge-{{ live.status }}" title="Claude session is {{ live.status }}">{{ live.status }}</span>
+                  <div class="card-meta">
+                    {% if author_login %}
+                      <span class="card-author" title="PR author">@{{ author_login }}</span>
                     {% endif %}
-                    {% set tl = item.tokens_lifetime or {} %}
-                    {% set tll = (tl.get('input_tokens', 0) + tl.get('output_tokens', 0)
-                                 + tl.get('cache_creation_input_tokens', 0) + tl.get('cache_read_input_tokens', 0)) %}
-                    {% set sid = item.session_id or item.triage_session_id %}
-                    {% if sid %}
-                      {% set ctx_pct = (live.context_percentage if live else None) %}
-                      {% set tip_parts = ['Open Claude session transcript (triage + action).'] %}
-                      {% if tll %}
-                        {% set _ = tip_parts.append('Lifetime: ' ~ ((tll / 1000) | round(1)) ~ 'k tok.') %}
-                      {% endif %}
-                      {% if ctx_pct %}
-                        {% set _ = tip_parts.append('Context: ' ~ (ctx_pct | round(0) | int) ~ '%.') %}
-                      {% endif %}
-                      <button type="button" class="open-session"
-                              data-session-id="{{ sid }}"
-                              data-pr-number="{{ item.number }}"
-                              data-pr-title="{{ item.title }}"
-                              data-pr-url="{{ item.url }}"
-                              title="{{ tip_parts | join(' ') }}">session</button>
-                    {% elif tll %}
-                      <span class="card-tokens" title="Lifetime tokens across every triage + action session on this card. Persists across server restarts.">{{ (tll / 1000) | round(1) }}k tok</span>
-                    {% endif %}
-                    <form method="post"
-                          action="/queues/{{ queue.id }}/items/{{ item.id }}/refresh"
-                          class="card-refresh-form">
-                      <button type="submit" class="card-refresh"
-                              title="Refetch this PR from GitHub. Re-triages only if the PR has been touched since last triage.">update</button>
-                    </form>
-                    {% if st != done_state %}
+                    <span class="card-meta-spacer"></span>
+                    <div class="card-title-chips">
                       <form method="post"
-                            action="/queues/{{ queue.id }}/items/{{ item.id }}/retriage"
-                            class="card-retriage-form">
-                        <button type="submit" class="card-retriage"
-                                title="Force a fresh triage on this card — kills any in-flight triage session and re-runs the skill from scratch.">retriage</button>
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/refresh"
+                            class="card-refresh-form">
+                        <button type="submit" class="card-refresh"
+                                title="Refetch this PR from GitHub. Re-triages only if the PR has been touched since last triage.">{{ icon('sync', size=11) }} update</button>
                       </form>
-                    {% endif %}
+                      {% if st != done_state %}
+                        <form method="post"
+                              action="/queues/{{ queue.id }}/items/{{ item.id }}/retriage"
+                              class="card-retriage-form">
+                          <button type="submit" class="card-retriage"
+                                  title="Force a fresh triage on this card — kills any in-flight triage session and re-runs the skill from scratch.">{{ icon('history', size=11) }} retriage</button>
+                        </form>
+                      {% endif %}
+                    </div>
                   </div>
-                </div>
+                </header>
                 {% if st == awaiting_state %}
                   <div class="parked-meta" title="Auto-unparks on the next PR update (review, comment, push, CI result).">
                     parked{% if item.parked_at %} · since {{ item.parked_at[:10] }}{% endif %}
@@ -191,36 +225,73 @@
                 {% else %}
                 {% if item.proposal %}
                   <div class="proposal">
-                    {% if item.triage_source %}
-                      <span class="triage-source triage-source-{{ item.triage_source }}">{{ item.triage_source }}</span>
+                    {# Skill-source badge is hidden when the Claude
+                       triage ran cleanly — the session button on the
+                       card header already implies it. Only surface the
+                       mechanical fallback so a failed triage is
+                       visible. #}
+                    {% if item.triage_source == 'mechanical' %}
+                      <span class="triage-source triage-source-mechanical"
+                            title="Triage produced by the Python fallback in triage.py — only looks at conflicts / ci_status / unresolved thread count. Usually means the Claude session errored or failed to parse; retriage to try again.">fallback</span>
                     {% endif %}
                     {{ item.proposal }}
                   </div>
-                  {% if item.triage_notes and item.triage_notes.log_excerpt %}
-                    <details class="triage-notes">
-                      <summary>{{ item.triage_notes.classification or 'details' }}{% if item.triage_notes.failing_check %} · {{ item.triage_notes.failing_check }}{% endif %}</summary>
-                      <pre>{{ item.triage_notes.log_excerpt }}</pre>
-                    </details>
-                  {% endif %}
-                  {# Review-requested triage surfaces richer buckets —
-                     blockers, concerns, tests-needed, open questions,
-                     bot flags, anti-patterns. Each bucket renders only
-                     if non-empty. Skip entirely when there's nothing. #}
+                  {# Unified findings pane. Shows everything on
+                     item.triage_notes worth reading — review buckets
+                     (blockers / concerns / tests / questions / bot flags
+                     / anti-patterns), small metadata chips (classification,
+                     merge_state_status, failing_check, unresolved_thread_count),
+                     and a log excerpt when present. Collapsed by default
+                     since the review buckets can get long. #}
                   {% set tn = item.triage_notes or {} %}
-                  {% set has_review_signal = tn.blockers or tn.concerns
-                       or tn.tests_needed or tn.open_questions
-                       or tn.bot_flags or tn.anti_patterns %}
-                  {% if has_review_signal %}
-                    <details class="review-findings" open>
-                      <summary>review findings</summary>
-                      {% for key, label, cls in [
-                        ('blockers', 'blockers', 'blocker'),
-                        ('concerns', 'concerns', 'concern'),
-                        ('tests_needed', 'tests needed', 'test'),
-                        ('open_questions', 'open questions', 'question'),
-                        ('bot_flags', 'bot flags', 'bot'),
-                        ('anti_patterns', 'anti-patterns', 'antipattern')
-                      ] %}
+                  {% set _buckets = [
+                    ('blockers', 'blockers', 'blocker'),
+                    ('concerns', 'concerns', 'concern'),
+                    ('tests_needed', 'tests needed', 'test'),
+                    ('open_questions', 'open questions', 'question'),
+                    ('bot_flags', 'bot flags', 'bot'),
+                    ('anti_patterns', 'anti-patterns', 'antipattern'),
+                  ] %}
+                  {% set _meta_keys = ['classification', 'merge_state_status',
+                    'failing_check', 'unresolved_thread_count'] %}
+                  {% set _find = namespace(has_meta=false, has_buckets=false) %}
+                  {% for k in _meta_keys %}
+                    {% if tn.get(k) is not none and tn.get(k) != '' %}{% set _find.has_meta = true %}{% endif %}
+                  {% endfor %}
+                  {% for key, _, _ in _buckets %}
+                    {% if tn.get(key) %}{% set _find.has_buckets = true %}{% endif %}
+                  {% endfor %}
+                  {% if _find.has_meta or _find.has_buckets or tn.log_excerpt %}
+                    <details class="review-findings">
+                      <summary>
+                        <span class="findings-label">findings</span>
+                        <span class="findings-preview">
+                          {% set _previewed = namespace(first=true) %}
+                          {% for key, label, _ in _buckets %}
+                            {% set _n = (tn.get(key) or []) | length %}
+                            {% if _n %}
+                              {% if not _previewed.first %}<span class="findings-sep">·</span>{% endif %}
+                              <span class="findings-count findings-count-{{ key }}">{{ _n }} {{ label }}</span>
+                              {% set _previewed.first = false %}
+                            {% endif %}
+                          {% endfor %}
+                          {% if tn.log_excerpt %}
+                            {% if not _previewed.first %}<span class="findings-sep">·</span>{% endif %}
+                            <span class="findings-count findings-count-log">log</span>
+                          {% endif %}
+                        </span>
+                      </summary>
+                      {% if _find.has_meta %}
+                        <div class="finding-meta">
+                          {% for k in _meta_keys %}
+                            {% set v = tn[k] if k in tn else none %}
+                            {% if v is not none and v != '' %}
+                              <span class="finding-meta-chip"><span class="finding-meta-key">{{ k.replace('_', ' ') }}</span><span class="finding-meta-val">{{ v }}</span></span>
+                            {% endif %}
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+                      {% for key, label, cls in _buckets %}
                         {% if tn.get(key) %}
                           <div class="finding-bucket finding-bucket-{{ cls }}">
                             <div class="finding-label">{{ label }}</div>
@@ -230,6 +301,12 @@
                           </div>
                         {% endif %}
                       {% endfor %}
+                      {% if tn.log_excerpt %}
+                        <div class="finding-bucket finding-bucket-log">
+                          <div class="finding-label">log excerpt</div>
+                          <pre>{{ tn.log_excerpt }}</pre>
+                        </div>
+                      {% endif %}
                     </details>
                   {% endif %}
                 {% elif item.state == queue.initial_state %}
@@ -243,6 +320,8 @@
                   {% set rt = rm.tokens or {} %}
                   {% set rtl = (rt.get('input_tokens', 0) + rt.get('output_tokens', 0)
                                + rt.get('cache_creation_input_tokens', 0) + rt.get('cache_read_input_tokens', 0)) %}
+                  {% set pill_continuable = r.status in ('unparsed', 'error', 'needs_human', 'interrupted')
+                                            and rm.get('session_id') %}
                   <div class="result result-{{ r.status or 'info' }}">
                     {% if r.status in ('running', 'queued') %}<span class="spinner"></span>{% endif %}
                     <strong>{{ r.action or 'result' }}</strong>
@@ -254,6 +333,14 @@
                         {% if rtl %}{% if rm.num_turns %} · {% endif %}{{ (rtl / 1000) | round(1) }}k tok{% endif %}
                         {% if rm.duration_ms %} · {{ (rm.duration_ms / 1000) | round(1) }}s{% endif %}
                       </div>
+                    {% endif %}
+                    {% if pill_continuable %}
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/continue"
+                            class="result-continue-form"
+                            title="Resume the prior session (same worktree) and ask it to finish.">
+                        <button type="submit" class="result-continue" data-action="continue">continue</button>
+                      </form>
                     {% endif %}
                   </div>
                 {% endif %}
@@ -462,7 +549,11 @@
                         <button type="submit" class="resume" data-action="resume">resume</button>
                       </form>
                     {% endif %}
-                    {% if continuable and not live_idle %}
+                    {# Inline continue lives inside the result pill (above).
+                       Keep a standalone fallback ONLY when the pill version
+                       didn't render — i.e., last_result is missing but we
+                       still somehow have a resumable session id. Rare. #}
+                    {% if continuable and not live_idle and not item.last_result %}
                       <form method="post"
                             action="/queues/{{ queue.id }}/items/{{ item.id }}/continue"
                             title="Resume the prior session (same worktree) and ask it to finish the task and emit the final JSON.">
@@ -484,10 +575,16 @@
                        recommendation — style it primary so the human sees
                        the bot's proposed next step at a glance. Unless
                        needs_human, in which case plan-fix takes primary. #}
+                    {% set _noprim = ['prompt', 'skip', 'await-update'] %}
                     {% set primary_action = (item.actions or [])
-                         | reject('equalto', 'prompt') | list | first %}
+                         | reject('in', _noprim) | list | first %}
                     {% for action in item.actions or [] %}
-                      {% if action != 'prompt' %}
+                      {# skip / await-update / prompt are rendered
+                         unconditionally below (skip/await) or in a
+                         dedicated details block (prompt). Don't render
+                         them from the loop to avoid duplicates when the
+                         skill emits them in `actions`. #}
+                      {% if action not in ('prompt', 'skip', 'await-update') %}
                         {% set is_primary = (action == primary_action)
                                             and not plan_fix_primary %}
                         {% set editable_body = '' %}
@@ -522,7 +619,32 @@
                              or (item.assessment or {}).get('approval_comment')
                              or '' %}
                           {% set edit_title = 'Approval review body — optional, empty is fine' %}
+                        {% elif action == 'nudge-author' %}
+                          {% set editable_body = (item.triage_notes or {}).get('nudge_comment')
+                             or (item.assessment or {}).get('nudge_comment')
+                             or 'Gentle nudge — edit this before posting.' %}
+                          {% set edit_title = 'Nudge comment — edit before posting' %}
+                        {% elif action == 'ping-reviewers' %}
+                          {% set editable_body = (item.triage_notes or {}).get('ping_comment')
+                             or (item.assessment or {}).get('ping_comment')
+                             or 'Gentle ping — edit this before posting.' %}
+                          {% set edit_title = 'Reviewer ping — edit before posting' %}
                         {% endif %}
+                        {% if action == 'request-reviewers' %}
+                          <form method="post"
+                                action="/queues/{{ queue.id }}/items/{{ item.id }}/request-reviewers"
+                                data-reviewer-picker="1"
+                                data-candidates-url="/queues/{{ queue.id }}/items/{{ item.id }}/reviewer-candidates"
+                                data-pr-number="{{ item.number }}"
+                                data-pr-title="{{ item.title }}"
+                                data-pr-url="{{ item.url }}">
+                            <button type="submit" data-action="{{ action }}"
+                                    class="{% if is_primary %}action-primary{% endif %}"
+                                    {% if ns.has_live_action %}disabled
+                                    title="An action session is already running on this card — wait for it, or open it via the session button."
+                                    {% elif is_primary %}title="Triage's recommended next step."{% endif %}>{{ action }}</button>
+                          </form>
+                        {% else %}
                         <form method="post"
                               action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/{{ action }}"
                               {% if editable_body %}data-editable-body="{{ editable_body }}"
@@ -536,6 +658,7 @@
                                   title="An action session is already running on this card — wait for it, or open it via the session button."
                                   {% elif is_primary %}title="Triage's recommended next step."{% endif %}>{{ action }}</button>
                         </form>
+                        {% endif %}
                       {% endif %}
                     {% endfor %}
                     <form method="post"
@@ -552,17 +675,52 @@
                               title="An action session is already running — skip would orphan it."{% endif %}>skip</button>
                     </form>
                   </div>
-                  {% if 'prompt' in (item.actions or []) %}
-                    <details class="prompt-form">
-                      <summary>prompt…</summary>
-                      <form method="post"
-                            action="/queues/{{ queue.id }}/items/{{ item.id }}/prompt">
-                        <textarea name="instruction" rows="3"
-                                  placeholder="e.g., Close with a note saying we already merged the fix in #12345."
-                                  required></textarea>
-                        <button type="submit" class="prompt-run">run in worktree</button>
-                      </form>
-                    </details>
+                  {# Session footer: everything Claude-session related
+                     lives below an hr at the bottom of the card — a
+                     session button (or an inline prompt to start one),
+                     plus the live status badge and lifetime token
+                     pill as companions. Only rendered when there's
+                     *something* session-like to show. #}
+                  {% set _footer_has_content = sid or tll or live
+                      or ('prompt' in (item.actions or [])) %}
+                  {% if _footer_has_content %}
+                    <div class="card-session-footer">
+                      {% if sid %}
+                        {% set ctx_pct = (live.context_percentage if live else None) %}
+                        {% set tip_parts = ['Open Claude session transcript (triage + action).'] %}
+                        {% if tll %}
+                          {% set _ = tip_parts.append('Lifetime: ' ~ ((tll / 1000) | round(1)) ~ 'k tok.') %}
+                        {% endif %}
+                        {% if ctx_pct %}
+                          {% set _ = tip_parts.append('Context: ' ~ (ctx_pct | round(0) | int) ~ '%.') %}
+                        {% endif %}
+                        <button type="button" class="prompt-run open-session"
+                                data-session-id="{{ sid }}"
+                                data-pr-number="{{ item.number }}"
+                                data-pr-title="{{ item.title }}"
+                                data-pr-url="{{ item.url }}"
+                                title="{{ tip_parts | join(' ') }}">{{ icon('comment', size=12) }} Open session</button>
+                      {% elif 'prompt' in (item.actions or []) %}
+                        <form class="prompt-inline"
+                              method="post"
+                              action="/queues/{{ queue.id }}/items/{{ item.id }}/prompt">
+                          <input type="text" name="instruction"
+                                 placeholder="e.g., Close with a note that we already merged this in #12345."
+                                 required />
+                          <button type="submit" class="prompt-run">{{ icon('rocket', size=12) }} Start session</button>
+                        </form>
+                      {% endif %}
+                      <div class="card-session-meta">
+                        {% if live %}
+                          <span class="live-badge live-badge-{{ live.status }}"
+                                title="Claude session is {{ live.status }}">{{ live.status }}</span>
+                        {% endif %}
+                        {% if tll %}
+                          <span class="card-tokens"
+                                title="Lifetime tokens across every triage + action session on this card. Persists across server restarts.">{{ (tll / 1000) | round(1) }}k tok</span>
+                        {% endif %}
+                      </div>
+                    </div>
                   {% endif %}
                 {% else %}
                   <div class="actions">
@@ -647,6 +805,40 @@
       <div class="comment-modal-actions">
         <button type="button" class="comment-modal-cancel" data-close-comment>Cancel</button>
         <button type="button" class="comment-modal-send" id="comment-modal-send">Post &amp; run</button>
+      </div>
+    </div>
+  </div>
+
+  <aside id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-backdrop" data-close-drawer></div>
+    <div class="drawer-panel" role="dialog" aria-modal="true">
+      <button type="button" class="drawer-close" data-close-drawer
+              aria-label="Close drawer">{{ icon('x', size=18) }}</button>
+      <div id="drawer-content" class="drawer-content">
+        <div class="drawer-loading">Loading…</div>
+      </div>
+    </div>
+  </aside>
+
+  <div id="reviewers-modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-reviewers></div>
+    <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3>Request reviewers</h3>
+          <div class="modal-pr" id="reviewers-modal-pr"></div>
+        </div>
+        <button type="button" class="modal-close" data-close-reviewers>×</button>
+      </div>
+      <div class="comment-modal-help">
+        Candidates are ranked by recent commits on the files this PR touches. Excludes you, bots, and anyone already requested or reviewing.
+      </div>
+      <div id="reviewers-modal-list" class="reviewers-list">
+        <div class="reviewers-loading">Loading candidates…</div>
+      </div>
+      <div class="comment-modal-actions">
+        <button type="button" class="comment-modal-cancel" data-close-reviewers>Cancel</button>
+        <button type="button" class="comment-modal-send" id="reviewers-modal-send" disabled>Request selected</button>
       </div>
     </div>
   </div>
@@ -771,6 +963,14 @@
         openCommentModal(form);
         return;
       }
+      // Reviewer-picker: click opens the modal; real submit happens
+      // from inside the modal after selections.
+      if (form.dataset.reviewerPicker && form.dataset.reviewerConfirmed !== '1') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        openReviewersModal(form);
+        return;
+      }
       form.querySelectorAll('button[type=submit], button:not([type])').forEach(btn => {
         if (btn.disabled) return;
         const label = btn.textContent.trim();
@@ -778,6 +978,171 @@
         btn.classList.add('loading');
         btn.innerHTML = '<span class="spinner"></span>' + label;
       });
+    });
+
+    // PR drawer: click a .pr-link to preview the PR inside the app
+    // (title, body, CI, reviewers, comments). ⌘-click / ctrl-click /
+    // middle-click still opens GitHub in a new tab — browser handles
+    // those before we intercept.
+    const drawer = document.getElementById('drawer');
+    const drawerContent = document.getElementById('drawer-content');
+    let drawerLastFetch = 0;
+
+    function openDrawer(queueId, itemId) {
+      drawerContent.innerHTML = '<div class="drawer-loading">Loading…</div>';
+      drawer.classList.add('is-open');
+      drawer.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('drawer-open');
+      const fetchId = ++drawerLastFetch;
+      fetch(`/queues/${encodeURIComponent(queueId)}/items/${encodeURIComponent(itemId)}/drawer`, {
+        credentials: 'same-origin',
+      })
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.text();
+        })
+        .then(html => {
+          if (fetchId !== drawerLastFetch) return; // superseded
+          drawerContent.innerHTML = html;
+          drawerContent.scrollTop = 0;
+        })
+        .catch(err => {
+          if (fetchId !== drawerLastFetch) return;
+          drawerContent.innerHTML =
+            `<div class="drawer-error">Could not load PR: ${err.message}</div>`;
+        });
+    }
+
+    function closeDrawer() {
+      drawer.classList.remove('is-open');
+      drawer.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('drawer-open');
+    }
+
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest('.pr-link');
+      if (link && !e.metaKey && !e.ctrlKey && !e.shiftKey
+          && e.button === 0) {
+        e.preventDefault();
+        openDrawer(link.dataset.drawerQueue, link.dataset.drawerItem);
+        return;
+      }
+      if (e.target.matches('[data-close-drawer]')) closeDrawer();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && drawer.classList.contains('is-open')) {
+        closeDrawer();
+      }
+    });
+
+    // Reviewer-picker modal: intercepted from the request-reviewers
+    // button. Fetches candidates, renders checkbox list; on confirm
+    // injects `reviewers` fields and submits the form to the
+    // /request-reviewers endpoint.
+    const reviewersModal = document.getElementById('reviewers-modal');
+    const reviewersModalPr = document.getElementById('reviewers-modal-pr');
+    const reviewersModalList = document.getElementById('reviewers-modal-list');
+    const reviewersModalSend = document.getElementById('reviewers-modal-send');
+    let reviewersFormPending = null;
+
+    function closeReviewersModal() {
+      reviewersModal.classList.remove('is-open');
+      reviewersModal.setAttribute('aria-hidden', 'true');
+      reviewersFormPending = null;
+    }
+
+    function renderReviewerCandidates(candidates) {
+      reviewersModalList.innerHTML = '';
+      if (!candidates || !candidates.length) {
+        const empty = document.createElement('div');
+        empty.className = 'reviewers-empty';
+        empty.textContent = 'No candidates found from recent commit history on the touched files.';
+        reviewersModalList.appendChild(empty);
+        reviewersModalSend.disabled = true;
+        return;
+      }
+      for (const c of candidates) {
+        const row = document.createElement('label');
+        row.className = 'reviewer-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = c.login;
+        cb.name = 'reviewers';
+        cb.addEventListener('change', () => {
+          const any = !!reviewersModalList.querySelector('input[type=checkbox]:checked');
+          reviewersModalSend.disabled = !any;
+        });
+        const text = document.createElement('div');
+        text.className = 'reviewer-row-text';
+        const handle = document.createElement('div');
+        handle.className = 'reviewer-row-handle';
+        handle.textContent = '@' + c.login;
+        const sub = document.createElement('div');
+        sub.className = 'reviewer-row-sub';
+        const files = c.files || [];
+        const fileLabel = files.length > 3
+          ? files.slice(0, 3).join(', ') + ` (+${files.length - 3} more)`
+          : files.join(', ');
+        sub.textContent = `${c.commits} recent commit${c.commits === 1 ? '' : 's'} on ${fileLabel}`;
+        text.appendChild(handle);
+        text.appendChild(sub);
+        row.appendChild(cb);
+        row.appendChild(text);
+        reviewersModalList.appendChild(row);
+      }
+      reviewersModalSend.disabled = true;
+    }
+
+    async function openReviewersModal(form) {
+      reviewersFormPending = form;
+      renderPrLine(reviewersModalPr, form.dataset.prNumber,
+                   form.dataset.prTitle, form.dataset.prUrl);
+      reviewersModalList.innerHTML = '<div class="reviewers-loading">Loading candidates…</div>';
+      reviewersModalSend.disabled = true;
+      reviewersModal.classList.add('is-open');
+      reviewersModal.setAttribute('aria-hidden', 'false');
+      try {
+        const res = await fetch(form.dataset.candidatesUrl, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderReviewerCandidates(data.candidates || []);
+      } catch (err) {
+        reviewersModalList.innerHTML = '';
+        const e = document.createElement('div');
+        e.className = 'reviewers-empty';
+        e.textContent = 'Could not load candidates: ' + err.message;
+        reviewersModalList.appendChild(e);
+      }
+    }
+
+    reviewersModalSend.addEventListener('click', () => {
+      if (!reviewersFormPending) return;
+      const form = reviewersFormPending;
+      // Strip any prior reviewer inputs so re-open doesn't accumulate.
+      form.querySelectorAll('input[data-reviewer-field]').forEach(n => n.remove());
+      const picked = reviewersModalList.querySelectorAll('input[type=checkbox]:checked');
+      if (!picked.length) return;
+      picked.forEach(cb => {
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = 'reviewers';
+        hidden.value = cb.value;
+        hidden.dataset.reviewerField = '1';
+        form.appendChild(hidden);
+      });
+      form.dataset.reviewerConfirmed = '1';
+      closeReviewersModal();
+      form.requestSubmit();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (e.target.matches('[data-close-reviewers]')) closeReviewersModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && reviewersModal.classList.contains('is-open')) {
+        closeReviewersModal();
+      }
     });
 
     // Plan-edit modal: clicking a `[data-plan-approve]` button opens a

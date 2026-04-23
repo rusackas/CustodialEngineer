@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import sessions, worktree
+from . import github, icons as _icons, markdown as md, sessions, worktree
 from .actions import (
     CONTINUE_NUDGE,
     approve_drafts,
@@ -30,8 +30,11 @@ from .queues import (
     queue_items,
     set_item_drafts,
     set_item_drafts_status,
+    set_item_parked_at,
     set_item_plan,
     set_item_plan_status,
+    set_item_result,
+    set_item_state,
     update_global_setting,
     update_queue_setting,
 )
@@ -44,6 +47,8 @@ STATIC_DIR = PROJECT_ROOT / "repobot" / "static"
 
 app = FastAPI(title="repobot")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+from markupsafe import Markup as _Markup
+templates.env.globals["icon"] = lambda name, **kw: _Markup(_icons.render(name, **kw))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -53,12 +58,17 @@ def _sweep_stale_session_state() -> None:
     - Any item with last_result.status == 'running' was interrupted —
       demote back to the queue's initial_state and mark the result
       'interrupted' so the user knows to retry.
+    - If `auto_resume_on_boot` is enabled, call continue_action for
+      each interrupted item that has an SDK session id we can resume
+      from.
     - Prune any worktree on disk whose PR number isn't referenced by
       a live item (e.g. from a previous session the user deleted while
       the server was running, or leftovers from an older run)."""
+    auto_resume = bool(get_global_setting("auto_resume_on_boot", False))
     queues_by_id = {q["id"]: q for q in get_queues_config()}
     now = _now()
     live_numbers: set[int] = set()
+    resume_candidates: list[tuple[str, object]] = []
 
     def _m(state):
         for qid, bucket in state.get("queues", {}).items():
@@ -76,6 +86,9 @@ def _sweep_stale_session_state() -> None:
                         "message": "Action interrupted by server restart. Retry from the buttons.",
                     }
                     item["last_result_at"] = now
+                    sdk_sid = (lr.get("meta") or {}).get("session_id")
+                    if auto_resume and sdk_sid and item.get("id") is not None:
+                        resume_candidates.append((qid, item["id"]))
                 num = item.get("number")
                 if isinstance(num, int):
                     live_numbers.add(num)
@@ -87,6 +100,18 @@ def _sweep_stale_session_state() -> None:
             print(f"[startup] pruned {len(removed)} orphan worktree(s): {removed}")
     except Exception as exc:
         print(f"[startup] worktree prune failed: {exc}")
+
+    if resume_candidates:
+        from . import actions as _actions
+        resumed = 0
+        for qid, item_id in resume_candidates:
+            try:
+                _actions.continue_action(qid, item_id)
+                resumed += 1
+            except Exception as exc:
+                print(f"[startup] auto-resume failed for {qid}/{item_id}: {exc}")
+        print(f"[startup] auto-resumed {resumed}/{len(resume_candidates)} "
+              "interrupted action(s)")
 
 
 _sweep_stale_session_state()
@@ -151,6 +176,8 @@ def index(request: Request):
             q["id"], "intake_paused", False))
 
     stats_data = sessions.stats()
+    stats_data["auto_resume_on_boot"] = bool(
+        get_global_setting("auto_resume_on_boot", False))
     # Enrich live-session rows with PR number/title so the popover can
     # render a useful label without another round-trip.
     live_by_item: dict[str, dict] = {}
@@ -339,6 +366,109 @@ def retriage(queue_id: str, item_id: int):
     return RedirectResponse(url="/", status_code=303)
 
 
+@app.get("/queues/{queue_id}/items/{item_id}/drawer", response_class=HTMLResponse)
+def drawer(request: Request, queue_id: str, item_id: int):
+    """Render a PR snapshot (title, body, CI, reviewers, comments,
+    linked issues) as an HTML fragment for the in-app drawer."""
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    pr_number = item.get("number")
+    if not pr_number:
+        raise HTTPException(status_code=400, detail="item has no PR number")
+    try:
+        pr = github.fetch_pr_for_drawer(int(pr_number))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    cfg = load_config()
+    owner = cfg["repo"]["owner"]
+    name = cfg["repo"]["name"]
+    body_html = md.render(pr.get("body"), owner=owner, name=name)
+    comments = []
+    for c in pr.get("comments") or []:
+        author_login = (c.get("author") or {}).get("login") or "unknown"
+        comments.append({
+            "author": author_login,
+            "createdAt": c.get("createdAt"),
+            "html": md.render(c.get("body"), owner=owner, name=name),
+        })
+    return templates.TemplateResponse(
+        request, "drawer.html",
+        {"pr": pr, "body_html": body_html, "comments": comments},
+    )
+
+
+@app.get("/queues/{queue_id}/items/{item_id}/reviewer-candidates")
+def reviewer_candidates(queue_id: str, item_id: int):
+    """Return ranked candidate reviewers for the modal. Mechanical
+    computation — no Claude session involved."""
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    pr_number = item.get("number")
+    if not pr_number:
+        raise HTTPException(status_code=400, detail="item has no PR number")
+    try:
+        candidates = github.suggest_reviewers(int(pr_number))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return JSONResponse({"candidates": candidates})
+
+
+@app.post("/queues/{queue_id}/items/{item_id}/request-reviewers")
+def submit_request_reviewers(queue_id: str, item_id: int,
+                             reviewers: list[str] = Form(default=[])):
+    """Called by the reviewer-picker modal after the user ticks boxes.
+    Calls the GH API with the selected logins, parks the card in
+    `awaiting update`, and records the result."""
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    pr_number = item.get("number")
+    if not pr_number:
+        raise HTTPException(status_code=400, detail="item has no PR number")
+    cleaned = [r.strip() for r in reviewers if r and r.strip()]
+    if not cleaned:
+        raise HTTPException(status_code=400,
+                            detail="no reviewers selected")
+
+    cfg = load_config()
+    dry_run = bool(cfg.get("actions", {}).get("dry_run", True))
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    awaiting_state = qcfg.get("awaiting_state", "awaiting update")
+
+    if dry_run:
+        set_item_result(queue_id, item_id, {
+            "action": "request-reviewers",
+            "status": "skipped_dry_run",
+            "message": (f"dry_run — would request review from "
+                        f"{', '.join('@' + r for r in cleaned)}."),
+            "reviewers": cleaned,
+        })
+        return RedirectResponse(url="/", status_code=303)
+
+    try:
+        github.request_reviewers(int(pr_number), cleaned)
+    except Exception as exc:
+        set_item_result(queue_id, item_id, {
+            "action": "request-reviewers",
+            "status": "error",
+            "message": str(exc),
+        })
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    set_item_state(queue_id, item_id, awaiting_state)
+    set_item_parked_at(queue_id, item_id, _now())
+    set_item_result(queue_id, item_id, {
+        "action": "request-reviewers",
+        "status": "completed",
+        "message": (f"Requested review from "
+                    f"{', '.join('@' + r for r in cleaned)}."),
+        "reviewers": cleaned,
+    })
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.post("/queues/{queue_id}/items/{item_id}/delete")
 def delete(queue_id: str, item_id: int):
     try:
@@ -386,14 +516,21 @@ def session_resume(session_id: str):
 
 
 @app.post("/settings/global")
-def update_global(max_concurrent: int = Form(...)):
+def update_global(max_concurrent: int = Form(...),
+                  auto_resume_on_boot: str = Form("")):
     """Bump (or trim) the global session cap. Applies live via semaphore
     resize — new/queued sessions pick up the new cap immediately; existing
-    in-flight sessions finish their current turn at the old cap."""
+    in-flight sessions finish their current turn at the old cap.
+    Also persists `auto_resume_on_boot` — when true, the startup sweep
+    resumes any interrupted action that left an SDK session id behind."""
     if max_concurrent < 1 or max_concurrent > 64:
         raise HTTPException(status_code=400,
                             detail="max_concurrent must be between 1 and 64")
     update_global_setting("max_concurrent", int(max_concurrent))
+    update_global_setting(
+        "auto_resume_on_boot",
+        auto_resume_on_boot.lower() in ("1", "true", "on", "yes"),
+    )
     try:
         sessions.resize_semaphore(int(max_concurrent))
     except Exception as exc:

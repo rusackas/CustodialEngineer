@@ -61,6 +61,24 @@ from check names. Use this mapping:
 For unclear failures, propose `attempt-fix` primary with `prompt` as
 fallback — the downstream skill can decide to bail.
 
+### When the signal and your observation disagree
+
+The `ci_status` / `mergeStateStatus` fields are mechanical snapshots
+that sometimes misclassify:
+
+- A lone CANCELLED check from a manual-gate workflow (Superset's
+  `check-hold-label`, for instance) is benign — it's not a real CI
+  failure.
+- `mergeStateStatus: BLOCKED` can be caused by `reviewDecision:
+  REVIEW_REQUIRED` alone, with CI entirely green.
+
+If your own read of `gh pr checks` / `gh pr view` shows CI is
+actually green, **do not emit CI-focused actions** (`retrigger-ci`,
+`fix-precommit`, `attempt-fix`, `update-lockfile`, `plan-fix`) just
+because the signal says "failing". Trust your observation. When the
+only blocker is review-gating, `prompt` is usually the right primary
+so the user can decide whether to ping reviewers.
+
 ## Review-thread assessment
 
 If unresolved threads are the main (or only) issue, scan the
@@ -79,6 +97,29 @@ Outdated threads (`is_outdated: true`) usually mean the code already
 moved past the concern — include `address-comments` so the downstream
 skill can reply+resolve.
 
+## Review-gating blockers (BLOCKED + REVIEW_REQUIRED)
+
+When `mergeStateStatus == BLOCKED`, your own observation shows CI is
+green, there are no unresolved threads, but `reviewDecision ==
+REVIEW_REQUIRED` (nobody's approved yet), the PR is waiting on
+humans, not on code. Pick one of these two:
+
+- **No reviewers requested yet** (`reviewRequests` is empty) →
+  primary action `request-reviewers`. The UI will open a picker
+  modal listing candidates mined from the commit history of the
+  touched files; no `ping_comment` needed.
+- **Reviewers already requested** (`reviewRequests` is non-empty) →
+  primary action `ping-reviewers`. Draft a `ping_comment` in
+  `notes` that @-mentions every requested reviewer by login and
+  politely asks for an update. Keep it short (two sentences);
+  reference the concrete state ("CI is green, no open threads" or
+  similar). Example: `"@alice @bob — gentle ping on this one: CI
+  is green and there are no open threads. Let me know if either
+  of you has bandwidth this week."`
+
+In either case, include `prompt` as a fallback in `actions` so the
+user has an escape hatch.
+
 ## Output
 
 Return a single JSON object fenced as ```json ... ```:
@@ -88,11 +129,12 @@ Return a single JSON object fenced as ```json ... ```:
   "proposal": "One sentence, first person. Name the specific blocker.",
   "actions": ["rebase", "attempt-fix", "address-comments", "prompt"],
   "notes": {
-    "classification": "conflicts | failing-ci | unresolved-threads | mixed | unknown",
+    "classification": "conflicts | failing-ci | unresolved-threads | review-gated | mixed | unknown",
     "merge_state_status": "CLEAN | BLOCKED | BEHIND | DIRTY | UNSTABLE | UNKNOWN",
     "failing_check": "optional — name of the primary red check",
     "unresolved_thread_count": 0,
-    "log_excerpt": "optional — only if you read a log"
+    "log_excerpt": "optional — only if you read a log",
+    "ping_comment": "optional — required when `ping-reviewers` is in actions. @-mention the requested reviewers, cite the concrete state (CI green, no threads), stay polite and brief."
   }
 }
 ```
@@ -100,8 +142,14 @@ Return a single JSON object fenced as ```json ... ```:
 ### Valid action ids
 
 `rebase`, `attempt-fix`, `fix-precommit`, `update-lockfile`,
-`plan-fix`, `retrigger-ci`, `address-comments`, `prompt`. Order most →
-least recommended. Never empty; never more than 5.
+`plan-fix`, `retrigger-ci`, `address-comments`, `request-reviewers`,
+`ping-reviewers`, `prompt`. Order most → least recommended. Never
+empty; never more than 5.
+
+**`prompt` MUST always be in `actions`** — it's the human escape
+hatch. Place it last unless it's the only option. The UI hides
+it from the main button row (rendered as a `prompt…` details
+expander instead), so it doesn't clutter the card.
 
 ### Rules for `proposal`
 

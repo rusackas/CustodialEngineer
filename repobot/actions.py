@@ -205,6 +205,40 @@ ACTIONS: dict[str, dict[str, Any]] = {
         "terminal_state": "done",
         "failure_state": "in triage",
     },
+    "request-reviewers": {
+        # Pick reviewers from a candidate list (mechanically computed
+        # from git history of touched files). Button click opens a
+        # checkbox modal; submit POSTs to a dedicated endpoint that
+        # calls the GH API directly — no Claude session.
+        "label": "request-reviewers",
+        "skill": None,
+        "worktree_required": False,
+        "in_progress_state": None,
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
+    "ping-reviewers": {
+        # Polite @-mention comment on your own PR to nudge currently-
+        # requested reviewers for an update. Body pre-filled from
+        # triage.notes.ping_comment and edited by the human in the modal.
+        "label": "ping-reviewers",
+        "skill": "ping-pr-reviewers",
+        "worktree_required": False,
+        "in_progress_state": "in progress",
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
+    "nudge-author": {
+        # Polite nudge comment on a PR where CI is red and/or feedback
+        # from other reviewers is unaddressed. Body pre-filled from
+        # triage.nudge_comment and edited by the human in the modal.
+        "label": "nudge-author",
+        "skill": "nudge-pr-author",
+        "worktree_required": False,
+        "in_progress_state": "in progress",
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
     "dismiss-review-request": {
         # Silently remove the user from the PR's requested-reviewers
         # list. No comment, no mutations beyond the API call.
@@ -621,6 +655,11 @@ def dispatch(queue_id: str, item_id, action_id: str,
             if status in SUCCESS_STATUSES:
                 if spec["terminal_state"]:
                     set_item_state(queue_id, item_id, spec["terminal_state"])
+                # nudge-author parks the card in `awaiting update`; stamp
+                # parked_at so the refresh loop auto-unparks it once the
+                # PR author acts (push, comment, resolve thread).
+                if action_id == "nudge-author":
+                    set_item_parked_at(queue_id, item_id, _now())
             elif status == "needs_human":
                 # The skill gave up and wants a human to look. Route back
                 # to the queue's failure_state (usually "in triage") so the

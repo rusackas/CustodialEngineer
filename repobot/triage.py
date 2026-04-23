@@ -184,20 +184,21 @@ def _mechanical_review_requested_triage(item: dict) -> tuple[str, list[str]]:
         actions.append("await-update")
     if ci == "failing":
         reasons.append("failing CI")
-        actions.append("await-update")
+        actions.append("nudge-author")
     if others:
         reasons.append(
             f"{len(others)} unresolved thread"
             + ("s" if len(others) != 1 else "")
             + " from others")
-        actions.append("await-update")
+        actions.append("nudge-author")
     if not reasons:
         msg = "No blockers on signal check — safe to review."
         actions = ["approve-merge", "add-review-comment", "await-update",
                    "prompt", "skip"]
     else:
         msg = "Blockers: " + ", ".join(reasons) + "."
-        actions.extend(["add-review-comment", "prompt", "skip"])
+        actions.extend(["add-review-comment", "await-update",
+                        "prompt", "skip"])
     seen: set = set()
     ordered = [a for a in actions if not (a in seen or seen.add(a))]
     return msg, ordered

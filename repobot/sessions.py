@@ -40,6 +40,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
@@ -513,6 +514,11 @@ def stats() -> dict:
     working = sum(c for st, c in by_status.items() if st in working_states)
     queued = by_status.get("queued", 0)
     idle = by_status.get("idle", 0)
+    try:
+        from . import worktree as _wt
+        worktrees = len(_wt.existing_worktree_numbers())
+    except Exception:
+        worktrees = 0
     return {
         "total": sum(by_status.values()),
         "active": working + queued,
@@ -524,6 +530,7 @@ def stats() -> dict:
         "tokens_total": tokens_total,
         "tokens_24h": _tokens_in_last(_TOKEN_WINDOW_SEC),
         "live": live_sessions,
+        "worktrees": worktrees,
     }
 
 
@@ -765,6 +772,34 @@ async def _consume_turn(state: SessionState, client: ClaudeSDKClient,
     last_text = ""
     meta: dict = {}
     async for msg in client.receive_response():
+        # SystemMessage (subtype=='init') fires at the very start of
+        # each turn and carries the SDK session id. Capture it ASAP
+        # so an interruption before first-turn-complete is still
+        # resumable. For ACTION sessions, also persist it on
+        # last_result.meta — the continue button and
+        # auto-resume-on-boot read from there. Triage sessions track
+        # their id separately via item.triage_session_id and do not
+        # own last_result, so don't touch it for those.
+        if isinstance(msg, SystemMessage):
+            sid = (msg.data or {}).get("session_id")
+            if sid and not state.sdk_session_id:
+                state.sdk_session_id = sid
+                if (state.kind == "action"
+                        and state.queue_id
+                        and state.item_id is not None):
+                    try:
+                        from .queues import find_item, load_state, set_item_result
+                        cur = find_item(load_state(), state.queue_id, state.item_id) or {}
+                        lr = cur.get("last_result")
+                        if isinstance(lr, dict):
+                            lr = dict(lr)
+                            meta = dict(lr.get("meta") or {})
+                            meta["session_id"] = sid
+                            lr["meta"] = meta
+                            set_item_result(state.queue_id, state.item_id, lr)
+                    except Exception:
+                        pass
+            continue
         if isinstance(msg, AssistantMessage):
             for block in msg.content:
                 if isinstance(block, TextBlock) and block.text.strip():

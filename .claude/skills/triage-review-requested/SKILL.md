@@ -59,9 +59,17 @@ Two things the user wants fast:
      non-trivial and you're not confident from a remote skim.
    - `summarize-diff` — the diff is large/unfamiliar and a 3-bullet
      summary would help the human decide.
+   - `nudge-author` — CI is failing and/or feedback from other
+     reviewers is unaddressed; post a polite comment prompting the
+     PR author to act. Parks the card in `awaiting update` until
+     the PR moves. Use for human-authored PRs where a nudge is
+     likely to help; skip for bot PRs (Dependabot has its own
+     action set).
    - `await-update` — author has open threads from others, or CI
-     isn't settled, or the branch is behind — park until the
-     situation moves.
+     isn't settled, or the branch is behind — park silently until
+     the situation moves. Prefer `nudge-author` when a visible ping
+     is likely to unstick things; `await-update` when you'd rather
+     wait quietly.
    - `prompt` — ambiguous; kick it to the human.
    - `dismiss-review-request` — you genuinely aren't the right
      reviewer. Rare.
@@ -222,7 +230,8 @@ Return a single JSON object fenced as ```json ... ```:
   ],
   "suggested_comment": "Optional — pre-filled body for add-review-comment / request-changes-review. First person, no @-mentions of the reviewer. Empty string if none.",
   "approval_comment": "Optional — pre-filled review body for approve-merge / approve-review. Author-aware: thank a human contributor; stay neutral/mechanical for bots (Dependabot, etc.). Reference the concrete merge-safety signal. Empty string if neither approve action is in `actions`.",
-  "actions": ["await-update", "add-review-comment", "assess-on-worktree", "approve-merge", "prompt", "skip"],
+  "nudge_comment": "Optional — pre-filled body for nudge-author. Polite maintainer voice; @-mention the PR author so they get pinged; enumerate the concrete blockers (failing CI checks by name, specific unresolved threads with quoter @ and file:line). Empty string when `nudge-author` is not in `actions`.",
+  "actions": ["nudge-author", "add-review-comment", "assess-on-worktree", "await-update", "approve-merge", "prompt", "skip"],
   "notes": {
     "classification": "mergeable | blocked",
     "unresolved_others_count": 3,
@@ -232,6 +241,9 @@ Return a single JSON object fenced as ```json ... ```:
 ```
 
 - `actions` MUST be primary-first and contain at least one id.
+- `prompt` MUST always be in `actions` — it's the human escape
+  hatch. Place it last (but before `skip`). The UI renders it as
+  a `prompt…` details expander, not a button in the main row.
 - `blockers` is for things that must be resolved before merge.
   `concerns` is for things the reviewer should know but that don't
   strictly block.
@@ -246,6 +258,24 @@ Return a single JSON object fenced as ```json ... ```:
   specific question. First person, no @-mentions of the reviewer,
   and don't address the PR author by @-handle either unless a
   specific person's input is being requested.
+- `nudge-author` SHOULD appear in `actions` whenever the PR has
+  failing CI OR at least one unresolved review thread whose
+  `first_author` is NOT the reviewer (`identity.github_username`)
+  — but ONLY for human-authored PRs. Skip it for bot authors
+  (Dependabot, renovate); those have their own action paths.
+  Position it high in `actions` on `triage: blocked` classifications.
+- `nudge_comment` MUST be non-empty whenever `actions` contains
+  `nudge-author`. First-person maintainer voice, polite, starts
+  with `@{author.login}` so the author gets pinged. Enumerate the
+  specific blockers:
+  - Failing CI: name the check(s) if you can tell (e.g. "`frontend-build`
+    is red"); fall back to "CI is failing" if the check names are
+    unclear.
+  - Unresolved threads from others: quote the asker's handle +
+    `path:line` + a short excerpt (e.g. "@alice's question on
+    `models.py:140` about caching").
+  Close with a low-pressure next-step (e.g., "let me know once
+  those are addressed and I'll take another look").
 - `approval_comment` MUST be non-empty whenever `actions` contains
   `approve-merge` or `approve-review`. Tailor to the PR author:
   - Human author → brief first-person thanks + the concrete
