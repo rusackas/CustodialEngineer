@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="refresh-ms" content="{{ 3000 if pending else 10000 }}" />
   <title>Custodial Engineer</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/idiomorph-ext.min.js"></script>
 </head>
-<body>
+<body hx-ext="morph" hx-boost="true">
   {% set s = stats or {} %}
   {% set tt = (s.tokens_24h or {}) %}
   {% set ttl = (tt.get('input_tokens', 0) + tt.get('output_tokens', 0)
@@ -21,55 +22,11 @@
     </div>
 
     <div class="app-header-row app-readout">
-      <div class="readout-cluster">
-        <span class="stat-pill-wrap readout-item readout-item-interactive">
-          <button type="button" class="readout-button" id="stats-sessions-btn"
-                  aria-haspopup="true" aria-expanded="false"
-                  title="Click to see live sessions. Cap {{ s.cap or 4 }} applies to running turns — idle sessions release their slot.">
-            <span class="spinner" {% if not s.working %}style="display:none"{% endif %}></span>
-            <span class="readout-label">sessions</span>
-            <span class="readout-value">
-              <span id="stats-working">{{ s.working or 0 }}</span><span class="readout-sep">/</span><span id="stats-cap">{{ s.cap or 4 }}</span>
-              {% if s.idle %} <span class="readout-dim"><span id="stats-idle">{{ s.idle }}</span> idle</span>{% endif %}
-              {% if s.queued %} <span class="readout-dim"><span id="stats-queued">{{ s.queued }}</span> queued</span>{% endif %}
-            </span>
-          </button>
-          {% if s.live %}
-          {% set visible_live = s.live | selectattr('number') | list %}
-          {% if visible_live %}
-          <div id="stats-popover" class="stats-popover" hidden>
-            <div class="stats-popover-title">Live Claude sessions</div>
-            {% for ls in visible_live %}
-              <button type="button" class="live-session-row"
-                      data-session-id="{{ ls.session_id }}"
-                      data-pr-number="{{ ls.number or '' }}"
-                      data-pr-title="{{ ls.title or '' }}">
-                <span class="live-session-kind live-session-kind-{{ ls.kind }}">{{ ls.kind }}</span>
-                <span class="live-session-status live-session-status-{{ ls.status }}">{{ ls.status }}</span>
-                <span class="live-session-label">#{{ ls.number }}</span>
-                {% if ls.title %}<span class="live-session-title">{{ ls.title }}</span>{% endif %}
-                {% set lp = (ls.context_percentage or 0) %}
-                {% if lp %}<span class="live-session-ctx" title="Context window">{{ lp | round(0) | int }}%</span>{% endif %}
-              </button>
-            {% endfor %}
-          </div>
-          {% endif %}
-          {% endif %}
-        </span>
-        {% if ttl %}
-          <span class="readout-item" id="stats-tokens"
-                title="Tokens consumed across all Claude sessions in the last 24 hours (input + output + cache read/write). Rolling window.">
-            <span class="readout-label">tokens</span>
-            <span class="readout-value">{{ (ttl / 1000) | round(1) }}k <span class="readout-dim">/ 24h</span></span>
-          </span>
-        {% endif %}
-        {% if s.worktrees %}
-          <span class="readout-item"
-                title="Per-PR git worktrees currently on disk at workspace/worktrees/. Each lives until the card is deleted.">
-            <span class="readout-label">worktrees</span>
-            <span class="readout-value">{{ s.worktrees }}</span>
-          </span>
-        {% endif %}
+      <div class="readout-cluster" id="readout-cluster"
+           hx-get="/fragments/header-readout"
+           hx-trigger="every 3s"
+           hx-swap="morph:innerHTML">
+        {% include "_header_readout.html" %}
       </div>
       <div class="readout-tools">
         <details class="settings-gear settings-gear-global">
@@ -146,597 +103,12 @@
           </div>
         </div>
 
-        {% for st in queue.states %}
-          {% set cards = q_items | selectattr('state', 'equalto', st) | list %}
-          {# State tone — used by CSS to pick up the column token + rule
-             color. Defaults to `triage` so any bespoke state (e.g.
-             `triage: blocked`) still gets the ochre treatment. #}
-          {% set _stone = 'done' if st == done_state
-                      else 'awaiting' if st == awaiting_state
-                      else 'progress' if st == 'in progress'
-                      else 'triage' %}
-          <div class="state state-{{ _stone }} {{ 'state-done' if st == done_state else '' }}">
-            <h3>
-              <span class="state-token" aria-hidden="true"></span>
-              <span class="state-name">{{ st }}</span>
-              <span class="count">{{ cards|length }}</span>
-              {% if st == done_state and cards %}
-                <form method="post" action="/queues/{{ queue.id }}/clear-done"
-                      class="clear-done-form"
-                      title="Delete every card in this column. Any PR still in the upstream feed will come back on the next Update.">
-                  <button type="submit" class="clear-done">clear all</button>
-                </form>
-              {% endif %}
-            </h3>
-            {% for item in cards %}
-              {% set is_queued = (item.last_result or {}).get('status') == 'queued' %}
-              {% set live = live_by_item.get(queue.id ~ ':' ~ (item.id | string)) %}
-              {% set tl = item.tokens_lifetime or {} %}
-              {% set tll = (tl.get('input_tokens', 0) + tl.get('output_tokens', 0)
-                           + tl.get('cache_creation_input_tokens', 0) + tl.get('cache_read_input_tokens', 0)) %}
-              {% set sid = item.session_id or item.triage_session_id %}
-              {% set author_login = ((item.raw or {}).get('author') or {}).get('login') %}
-              <article class="card {% if is_queued %}card-queued{% endif %}{% if live and live.status == 'idle' %} card-idle{% endif %}" data-item-id="{{ item.id }}">
-                <header class="card-head">
-                  <div class="card-title">
-                    <div class="card-title-text">
-                      {% set _is_draft = (item.raw or {}).get('isDraft') %}
-                      {% set _pr_icon = 'git-pull-request-draft' if _is_draft else 'git-pull-request' %}
-                      <span class="pr-state pr-state-{{ 'draft' if _is_draft else 'open' }}"
-                            title="{{ 'Draft PR' if _is_draft else 'Open PR' }}">{{ icon(_pr_icon, size=14) }}</span>
-                      <a href="{{ item.url }}" target="_blank" rel="noopener"
-                         class="pr-link"
-                         data-drawer-queue="{{ queue.id }}"
-                         data-drawer-item="{{ item.id }}"
-                         data-drawer-pr="{{ item.number }}"
-                         data-drawer-title="{{ item.title }}"
-                         data-drawer-url="{{ item.url }}"
-                         title="Click to preview in drawer · ⌘-click / ctrl-click opens GitHub">#{{ item.number }}</a>
-                      <span class="card-title-body">{{ item.title }}</span>
-                    </div>
-                  </div>
-                  <div class="card-meta">
-                    {% if author_login %}
-                      <span class="card-author" title="PR author">@{{ author_login }}</span>
-                    {% endif %}
-                    <span class="card-meta-spacer"></span>
-                    <div class="card-title-chips">
-                      <form method="post"
-                            action="/queues/{{ queue.id }}/items/{{ item.id }}/refresh"
-                            class="card-refresh-form">
-                        <button type="submit" class="card-refresh"
-                                title="Refetch this PR from GitHub. Re-triages only if the PR has been touched since last triage.">{{ icon('sync', size=11) }} update</button>
-                      </form>
-                      {% if st != done_state %}
-                        <form method="post"
-                              action="/queues/{{ queue.id }}/items/{{ item.id }}/retriage"
-                              class="card-retriage-form">
-                          <button type="submit" class="card-retriage"
-                                  title="Force a fresh triage on this card — kills any in-flight triage session and re-runs the skill from scratch.">{{ icon('history', size=11) }} retriage</button>
-                        </form>
-                      {% endif %}
-                    </div>
-                  </div>
-                </header>
-                {% if st == awaiting_state %}
-                  <div class="parked-meta" title="Auto-unparks on the next PR update (review, comment, push, CI result).">
-                    parked{% if item.parked_at %} · since {{ item.parked_at[:10] }}{% endif %}
-                  </div>
-                {% else %}
-                {% if item.proposal %}
-                  <div class="proposal">
-                    {# Skill-source badge is hidden when the Claude
-                       triage ran cleanly — the session button on the
-                       card header already implies it. Only surface the
-                       mechanical fallback so a failed triage is
-                       visible. #}
-                    {% if item.triage_source == 'mechanical' %}
-                      <span class="triage-source triage-source-mechanical"
-                            title="Triage produced by the Python fallback in triage.py — only looks at conflicts / ci_status / unresolved thread count. Usually means the Claude session errored or failed to parse; retriage to try again.">fallback</span>
-                    {% endif %}
-                    {{ item.proposal }}
-                  </div>
-                  {# Unified findings pane. Shows everything on
-                     item.triage_notes worth reading — review buckets
-                     (blockers / concerns / tests / questions / bot flags
-                     / anti-patterns), small metadata chips (classification,
-                     merge_state_status, failing_check, unresolved_thread_count),
-                     and a log excerpt when present. Collapsed by default
-                     since the review buckets can get long. #}
-                  {% set tn = item.triage_notes or {} %}
-                  {% set _buckets = [
-                    ('blockers', 'blockers', 'blocker'),
-                    ('concerns', 'concerns', 'concern'),
-                    ('tests_needed', 'tests needed', 'test'),
-                    ('open_questions', 'open questions', 'question'),
-                    ('bot_flags', 'bot flags', 'bot'),
-                    ('anti_patterns', 'anti-patterns', 'antipattern'),
-                  ] %}
-                  {% set _meta_keys = ['classification', 'merge_state_status',
-                    'failing_check', 'unresolved_thread_count'] %}
-                  {% set _find = namespace(has_meta=false, has_buckets=false) %}
-                  {% for k in _meta_keys %}
-                    {% if tn.get(k) is not none and tn.get(k) != '' %}{% set _find.has_meta = true %}{% endif %}
-                  {% endfor %}
-                  {% for key, _, _ in _buckets %}
-                    {% if tn.get(key) %}{% set _find.has_buckets = true %}{% endif %}
-                  {% endfor %}
-                  {% if _find.has_meta or _find.has_buckets or tn.log_excerpt %}
-                    <details class="review-findings">
-                      <summary>
-                        <span class="findings-label">findings</span>
-                        <span class="findings-preview">
-                          {% set _previewed = namespace(first=true) %}
-                          {% for key, label, _ in _buckets %}
-                            {% set _n = (tn.get(key) or []) | length %}
-                            {% if _n %}
-                              {% if not _previewed.first %}<span class="findings-sep">·</span>{% endif %}
-                              <span class="findings-count findings-count-{{ key }}">{{ _n }} {{ label }}</span>
-                              {% set _previewed.first = false %}
-                            {% endif %}
-                          {% endfor %}
-                          {% if tn.log_excerpt %}
-                            {% if not _previewed.first %}<span class="findings-sep">·</span>{% endif %}
-                            <span class="findings-count findings-count-log">log</span>
-                          {% endif %}
-                        </span>
-                      </summary>
-                      {% if _find.has_meta %}
-                        <div class="finding-meta">
-                          {% for k in _meta_keys %}
-                            {% set v = tn[k] if k in tn else none %}
-                            {% if v is not none and v != '' %}
-                              <span class="finding-meta-chip"><span class="finding-meta-key">{{ k.replace('_', ' ') }}</span><span class="finding-meta-val">{{ v }}</span></span>
-                            {% endif %}
-                          {% endfor %}
-                        </div>
-                      {% endif %}
-                      {% for key, label, cls in _buckets %}
-                        {% if tn.get(key) %}
-                          <div class="finding-bucket finding-bucket-{{ cls }}">
-                            <div class="finding-label">{{ label }}</div>
-                            <ul>
-                              {% for f in tn[key] %}<li>{{ f }}</li>{% endfor %}
-                            </ul>
-                          </div>
-                        {% endif %}
-                      {% endfor %}
-                      {% if tn.log_excerpt %}
-                        <div class="finding-bucket finding-bucket-log">
-                          <div class="finding-label">log excerpt</div>
-                          <pre>{{ tn.log_excerpt }}</pre>
-                        </div>
-                      {% endif %}
-                    </details>
-                  {% endif %}
-                {% elif item.state == queue.initial_state %}
-                  <div class="proposal triaging">
-                    <span class="pulse"></span> triaging…
-                  </div>
-                {% endif %}
-                {% if item.last_result %}
-                  {% set r = item.last_result %}
-                  {% set rm = r.meta or {} %}
-                  {% set rt = rm.tokens or {} %}
-                  {% set rtl = (rt.get('input_tokens', 0) + rt.get('output_tokens', 0)
-                               + rt.get('cache_creation_input_tokens', 0) + rt.get('cache_read_input_tokens', 0)) %}
-                  {% set pill_continuable = r.status in ('unparsed', 'error', 'needs_human', 'interrupted')
-                                            and rm.get('session_id') %}
-                  <div class="result result-{{ r.status or 'info' }}">
-                    {% if r.status in ('running', 'queued') %}<span class="spinner"></span>{% endif %}
-                    <strong>{{ r.action or 'result' }}</strong>
-                    {% if r.status %}<span class="status">({{ r.status }})</span>{% endif %}
-                    {% if r.message %}<div>{{ r.message }}</div>{% endif %}
-                    {% if rm.num_turns or rtl %}
-                      <div class="result-stats">
-                        {% if rm.num_turns %}{{ rm.num_turns }} turns{% endif %}
-                        {% if rtl %}{% if rm.num_turns %} · {% endif %}{{ (rtl / 1000) | round(1) }}k tok{% endif %}
-                        {% if rm.duration_ms %} · {{ (rm.duration_ms / 1000) | round(1) }}s{% endif %}
-                      </div>
-                    {% endif %}
-                    {% if pill_continuable %}
-                      <form method="post"
-                            action="/queues/{{ queue.id }}/items/{{ item.id }}/continue"
-                            class="result-continue-form"
-                            title="Resume the prior session (same worktree) and ask it to finish.">
-                        <button type="submit" class="result-continue" data-action="continue">continue</button>
-                      </form>
-                    {% endif %}
-                  </div>
-                {% endif %}
-                {% if item.drafts and item.drafts_status in ('proposed', 'executing') %}
-                  <div class="plan-pane plan-pane-{{ item.drafts_status }}">
-                    <div class="plan-pane-header">
-                      <span class="plan-pane-label">proposed replies</span>
-                      {% if item.drafts_status == 'executing' %}
-                        <span class="plan-pane-status"><span class="spinner"></span>posting…</span>
-                      {% endif %}
-                    </div>
-                    {% if item.drafts.message %}
-                      <div class="plan-summary">{{ item.drafts.message }}</div>
-                    {% endif %}
-                    {% if item.drafts.threads %}
-                      <details class="plan-steps" open>
-                        <summary>{{ item.drafts.threads | length }} thread{{ 's' if item.drafts.threads | length != 1 else '' }}</summary>
-                        <ol>
-                          {% for t in item.drafts.threads %}
-                            <li>
-                              <div class="plan-step-title">
-                                <code>{{ t.path }}{% if t.line %}:{{ t.line }}{% endif %}</code>
-                                <span class="drafts-action drafts-action-{{ t.action }}">{{ t.action }}</span>
-                                {% if t.commit_sha %}
-                                  <code class="drafts-sha">{{ t.commit_sha[:7] }}</code>
-                                {% endif %}
-                              </div>
-                              {% if t.reply_body %}
-                                <div class="plan-step-rationale">{{ t.reply_body }}</div>
-                              {% endif %}
-                            </li>
-                          {% endfor %}
-                        </ol>
-                      </details>
-                    {% endif %}
-                    {% if item.drafts_status == 'proposed' %}
-                      <div class="plan-actions">
-                        <button type="button" class="plan-approve"
-                                data-drafts-approve
-                                data-queue-id="{{ queue.id }}"
-                                data-item-id="{{ item.id }}"
-                                data-pr-number="{{ item.number }}"
-                                data-pr-title="{{ item.title }}"
-                                data-pr-url="{{ item.url }}"
-                                data-drafts-json="{{ item.drafts | tojson | forceescape }}">review &amp; post</button>
-                        <form method="post"
-                              action="/queues/{{ queue.id }}/items/{{ item.id }}/drafts/discard"
-                              class="plan-discard-form">
-                          <button type="submit" class="plan-discard">discard drafts</button>
-                        </form>
-                      </div>
-                    {% endif %}
-                  </div>
-                {% endif %}
-                {% if item.plan and item.plan_status in ('proposed', 'executing') %}
-                  <div class="plan-pane plan-pane-{{ item.plan_status }}">
-                    <div class="plan-pane-header">
-                      <span class="plan-pane-label">proposed plan</span>
-                      {% if item.plan_status == 'executing' %}
-                        <span class="plan-pane-status"><span class="spinner"></span>executing…</span>
-                      {% endif %}
-                    </div>
-                    {% if item.plan.summary %}
-                      <div class="plan-summary">{{ item.plan.summary }}</div>
-                    {% endif %}
-                    {% if item.plan.steps %}
-                      <details class="plan-steps" open>
-                        <summary>{{ item.plan.steps | length }} step{{ 's' if item.plan.steps | length != 1 else '' }}</summary>
-                        <ol>
-                          {% for step in item.plan.steps %}
-                            <li>
-                              <div class="plan-step-title">{{ step.title or 'step' }}</div>
-                              {% if step.rationale %}<div class="plan-step-rationale">{{ step.rationale }}</div>{% endif %}
-                              {% if step.files %}
-                                <div class="plan-step-files">
-                                  {% for f in step.files %}<code>{{ f }}</code>{% if not loop.last %} {% endif %}{% endfor %}
-                                </div>
-                              {% endif %}
-                              {% if step.verify %}<div class="plan-step-verify">verify: <code>{{ step.verify }}</code></div>{% endif %}
-                            </li>
-                          {% endfor %}
-                        </ol>
-                      </details>
-                    {% endif %}
-                    {% if item.plan.coordination %}
-                      <details class="plan-coordination">
-                        <summary>coordination ({{ item.plan.coordination | length }})</summary>
-                        <ul>
-                          {% for c in item.plan.coordination %}
-                            <li>{% if c.pr %}#{{ c.pr }} — {% endif %}{{ c.why or c }}</li>
-                          {% endfor %}
-                        </ul>
-                      </details>
-                    {% endif %}
-                    {% if item.plan.risks %}
-                      <details class="plan-risks">
-                        <summary>risks ({{ item.plan.risks | length }})</summary>
-                        <ul>
-                          {% for risk in item.plan.risks %}<li>{{ risk }}</li>{% endfor %}
-                        </ul>
-                      </details>
-                    {% endif %}
-                    {% if item.plan_status == 'proposed' %}
-                      <div class="plan-actions">
-                        <button type="button" class="plan-approve"
-                                data-plan-approve
-                                data-queue-id="{{ queue.id }}"
-                                data-item-id="{{ item.id }}"
-                                data-pr-number="{{ item.number }}"
-                                data-pr-title="{{ item.title }}"
-                                data-pr-url="{{ item.url }}"
-                                data-plan-json="{{ item.plan | tojson | forceescape }}">approve &amp; run</button>
-                        <form method="post"
-                              action="/queues/{{ queue.id }}/items/{{ item.id }}/plan/discard"
-                              class="plan-discard-form">
-                          <button type="submit" class="plan-discard">discard plan</button>
-                        </form>
-                      </div>
-                    {% endif %}
-                  </div>
-                {% endif %}
-                {% if item.assessment %}
-                  {% set asmt = item.assessment %}
-                  <details class="review-findings assessment-pane" open>
-                    <summary>worktree assessment{% if asmt.headline %} — {{ asmt.headline }}{% endif %}</summary>
-                    {% if asmt.proposal %}
-                      <div class="plan-summary">{{ asmt.proposal }}</div>
-                    {% endif %}
-                    {% set af = asmt.findings or {} %}
-                    {% for key, label, cls in [
-                      ('blockers', 'blockers', 'blocker'),
-                      ('concerns', 'concerns', 'concern'),
-                      ('tests_needed', 'tests needed', 'test'),
-                      ('anti_patterns', 'anti-patterns', 'antipattern'),
-                      ('open_questions', 'open questions', 'question'),
-                      ('scope_creep', 'scope creep', 'concern'),
-                      ('risky_surfaces', 'risky surfaces', 'blocker')
-                    ] %}
-                      {% if af.get(key) %}
-                        <div class="finding-bucket finding-bucket-{{ cls }}">
-                          <div class="finding-label">{{ label }}</div>
-                          <ul>
-                            {% for f in af[key] %}<li>{{ f }}</li>{% endfor %}
-                          </ul>
-                        </div>
-                      {% endif %}
-                    {% endfor %}
-                  </details>
-                {% endif %}
-                {% if item.diff_summary %}
-                  {% set ds = item.diff_summary %}
-                  <details class="review-findings diff-summary-pane" open>
-                    <summary>diff summary{% if ds.message %} — {{ ds.message }}{% endif %}</summary>
-                    {% if ds.bullets %}
-                      <ul class="diff-summary-bullets">
-                        {% for b in ds.bullets %}<li>{{ b }}</li>{% endfor %}
-                      </ul>
-                    {% endif %}
-                    {% if ds.stats %}
-                      <div class="diff-summary-stats">
-                        +{{ ds.stats.additions or 0 }} / −{{ ds.stats.deletions or 0 }} · {{ ds.stats.changed_files or 0 }} files
-                      </div>
-                    {% endif %}
-                  </details>
-                {% endif %}
-                {% if st != done_state %}
-                  {% set rs = (item.last_result or {}).get('status') %}
-                  {% set has_sdk_sid = (item.last_result or {}).get('meta', {}).get('session_id') %}
-                  {% set continuable = rs in ('unparsed', 'error', 'needs_human', 'interrupted') and has_sdk_sid %}
-                  {# Suppress Resume when the session reached a terminal
-                     verdict — nudging it would just reproduce the same answer. #}
-                  {% set session_concluded = rs in ('needs_human', 'completed', 'skipped', 'skipped_dry_run') %}
-                  {# Resume is for idle *action* sessions that were interrupted
-                     mid-work. Idle triage sessions have already emitted their
-                     verdict — nudging them just burns tokens without updating
-                     the card, since set_triage() already ran. Use the session
-                     modal if you really want to chat with an idle triage. #}
-                  {% set live_idle = live and live.status == 'idle'
-                                     and live.kind == 'action'
-                                     and not session_concluded %}
-                  {# Idle action sessions are just parked waiting for
-                     follow-up — skip/await can cleanly close them, so
-                     only actively-running sessions block those buttons. #}
-                  {% set ns = namespace(has_live_action=false) %}
-                  {% for ls in (stats.live or []) %}
-                    {% if ls.queue_id == queue.id and ls.item_id == item.id
-                          and ls.kind == 'action'
-                          and ls.status in ('queued', 'starting', 'running') %}
-                      {% set ns.has_live_action = true %}
-                    {% endif %}
-                  {% endfor %}
-                  {# plan-fix is a partner to attempt-fix, not something triage
-                     proposes directly. Offer it as an "I'd like to guide this
-                     one" escape hatch whenever the card has a worktree-able
-                     head ref AND no plan is already in flight. #}
-                  {% set plan_in_flight = item.plan and item.plan_status in ('proposed', 'executing') %}
-                  {% set has_head_ref = (item.raw or {}).get('headRefName') %}
-                  {% set show_plan_fix = has_head_ref and not plan_in_flight
-                                         and 'plan-fix' not in (item.actions or []) %}
-                  {% set plan_fix_primary = rs == 'needs_human' %}
-                  <div class="actions">
-                    {% if live_idle %}
-                      <form method="post"
-                            action="/queues/{{ queue.id }}/items/{{ item.id }}/resume-live"
-                            title="Nudge the idle session to finish what it was doing and emit its final JSON.">
-                        <button type="submit" class="resume" data-action="resume">resume</button>
-                      </form>
-                    {% endif %}
-                    {# Inline continue lives inside the result pill (above).
-                       Keep a standalone fallback ONLY when the pill version
-                       didn't render — i.e., last_result is missing but we
-                       still somehow have a resumable session id. Rare. #}
-                    {% if continuable and not live_idle and not item.last_result %}
-                      <form method="post"
-                            action="/queues/{{ queue.id }}/items/{{ item.id }}/continue"
-                            title="Resume the prior session (same worktree) and ask it to finish the task and emit the final JSON.">
-                        <button type="submit" class="continue" data-action="continue">continue</button>
-                      </form>
-                    {% endif %}
-                    {% if show_plan_fix %}
-                      <form method="post"
-                            action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/plan-fix"
-                            title="Investigate the PR and propose a plan you can edit before execution.">
-                        <button type="submit" data-action="plan-fix"
-                                class="{% if plan_fix_primary %}action-primary{% endif %}"
-                                {% if ns.has_live_action %}disabled
-                                title="An action session is already running — wait for it to finish."
-                                {% endif %}>plan-fix</button>
-                      </form>
-                    {% endif %}
-                    {# The first non-prompt action is the triage's top
-                       recommendation — style it primary so the human sees
-                       the bot's proposed next step at a glance. Unless
-                       needs_human, in which case plan-fix takes primary. #}
-                    {% set _noprim = ['prompt', 'skip', 'await-update'] %}
-                    {% set primary_action = (item.actions or [])
-                         | reject('in', _noprim) | list | first %}
-                    {% for action in item.actions or [] %}
-                      {# skip / await-update / prompt are rendered
-                         unconditionally below (skip/await) or in a
-                         dedicated details block (prompt). Don't render
-                         them from the loop to avoid duplicates when the
-                         skill emits them in `actions`. #}
-                      {% if action not in ('prompt', 'skip', 'await-update') %}
-                        {% set is_primary = (action == primary_action)
-                                            and not plan_fix_primary %}
-                        {% set editable_body = '' %}
-                        {% set edit_title = '' %}
-                        {% if action == 'close' %}
-                          {% set editable_body = (item.triage_notes or {}).get('close_comment')
-                             or 'Closing — please revise this comment before posting.' %}
-                          {% set edit_title = 'Close comment — review before posting' %}
-                        {% elif action == 'approve-merge' %}
-                          {% set editable_body = (item.triage_notes or {}).get('approval_comment')
-                             or (item.assessment or {}).get('approval_comment')
-                             or 'Dependabot version bump — CI green, mergeStateStatus CLEAN.' %}
-                          {% set edit_title = 'Approval review body — review before posting' %}
-                        {% elif action == 'dependabot-rebase' %}
-                          {% set editable_body = '@dependabot rebase' %}
-                          {% set edit_title = '@dependabot rebase comment — review before posting' %}
-                        {% elif action == 'dependabot-recreate' %}
-                          {% set editable_body = '@dependabot recreate' %}
-                          {% set edit_title = '@dependabot recreate comment — review before posting' %}
-                        {% elif action == 'add-review-comment' %}
-                          {% set editable_body = (item.triage_notes or {}).get('suggested_comment')
-                             or (item.assessment or {}).get('suggested_comment')
-                             or 'Draft a comment here — empty will not post.' %}
-                          {% set edit_title = 'Review comment — edit before posting' %}
-                        {% elif action == 'request-changes-review' %}
-                          {% set editable_body = (item.triage_notes or {}).get('suggested_comment')
-                             or (item.assessment or {}).get('suggested_comment')
-                             or 'Request-changes review body — please edit before submitting.' %}
-                          {% set edit_title = 'Request-changes review body — edit before submitting' %}
-                        {% elif action == 'approve-review' %}
-                          {% set editable_body = (item.triage_notes or {}).get('approval_comment')
-                             or (item.assessment or {}).get('approval_comment')
-                             or '' %}
-                          {% set edit_title = 'Approval review body — optional, empty is fine' %}
-                        {% elif action == 'nudge-author' %}
-                          {% set editable_body = (item.triage_notes or {}).get('nudge_comment')
-                             or (item.assessment or {}).get('nudge_comment')
-                             or 'Gentle nudge — edit this before posting.' %}
-                          {% set edit_title = 'Nudge comment — edit before posting' %}
-                        {% elif action == 'ping-reviewers' %}
-                          {% set editable_body = (item.triage_notes or {}).get('ping_comment')
-                             or (item.assessment or {}).get('ping_comment')
-                             or 'Gentle ping — edit this before posting.' %}
-                          {% set edit_title = 'Reviewer ping — edit before posting' %}
-                        {% endif %}
-                        {% if action == 'request-reviewers' %}
-                          <form method="post"
-                                action="/queues/{{ queue.id }}/items/{{ item.id }}/request-reviewers"
-                                data-reviewer-picker="1"
-                                data-candidates-url="/queues/{{ queue.id }}/items/{{ item.id }}/reviewer-candidates"
-                                data-pr-number="{{ item.number }}"
-                                data-pr-title="{{ item.title }}"
-                                data-pr-url="{{ item.url }}">
-                            <button type="submit" data-action="{{ action }}"
-                                    class="{% if is_primary %}action-primary{% endif %}"
-                                    {% if ns.has_live_action %}disabled
-                                    title="An action session is already running on this card — wait for it, or open it via the session button."
-                                    {% elif is_primary %}title="Triage's recommended next step."{% endif %}>{{ action }}</button>
-                          </form>
-                        {% else %}
-                        <form method="post"
-                              action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/{{ action }}"
-                              {% if editable_body %}data-editable-body="{{ editable_body }}"
-                              data-edit-title="{{ edit_title }}"
-                              data-pr-number="{{ item.number }}"
-                              data-pr-title="{{ item.title }}"
-                              data-pr-url="{{ item.url }}"{% endif %}>
-                          <button type="submit" data-action="{{ action }}"
-                                  class="{% if is_primary %}action-primary{% endif %}"
-                                  {% if ns.has_live_action %}disabled
-                                  title="An action session is already running on this card — wait for it, or open it via the session button."
-                                  {% elif is_primary %}title="Triage's recommended next step."{% endif %}>{{ action }}</button>
-                        </form>
-                        {% endif %}
-                      {% endif %}
-                    {% endfor %}
-                    <form method="post"
-                          action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/await-update">
-                      <button type="submit" class="await-update" data-action="await-update"
-                              title="Park this card — waiting on someone/something off-board. Auto-unparks when the PR is touched again (review, comment, push, CI result)."
-                              {% if ns.has_live_action %}disabled
-                              title="An action session is already running — park would orphan it."{% endif %}>await</button>
-                    </form>
-                    <form method="post"
-                          action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/skip">
-                      <button type="submit" class="skip" data-action="skip"
-                              {% if ns.has_live_action %}disabled
-                              title="An action session is already running — skip would orphan it."{% endif %}>skip</button>
-                    </form>
-                  </div>
-                  {# Session footer: everything Claude-session related
-                     lives below an hr at the bottom of the card — a
-                     session button (or an inline prompt to start one),
-                     plus the live status badge and lifetime token
-                     pill as companions. Only rendered when there's
-                     *something* session-like to show. #}
-                  {% set _footer_has_content = sid or tll or live
-                      or ('prompt' in (item.actions or [])) %}
-                  {% if _footer_has_content %}
-                    <div class="card-session-footer">
-                      {% if sid %}
-                        {% set ctx_pct = (live.context_percentage if live else None) %}
-                        {% set tip_parts = ['Open Claude session transcript (triage + action).'] %}
-                        {% if tll %}
-                          {% set _ = tip_parts.append('Lifetime: ' ~ ((tll / 1000) | round(1)) ~ 'k tok.') %}
-                        {% endif %}
-                        {% if ctx_pct %}
-                          {% set _ = tip_parts.append('Context: ' ~ (ctx_pct | round(0) | int) ~ '%.') %}
-                        {% endif %}
-                        <button type="button" class="prompt-run open-session"
-                                data-session-id="{{ sid }}"
-                                data-pr-number="{{ item.number }}"
-                                data-pr-title="{{ item.title }}"
-                                data-pr-url="{{ item.url }}"
-                                title="{{ tip_parts | join(' ') }}">{{ icon('comment', size=12) }} Open session</button>
-                      {% elif 'prompt' in (item.actions or []) %}
-                        <form class="prompt-inline"
-                              method="post"
-                              action="/queues/{{ queue.id }}/items/{{ item.id }}/prompt">
-                          <input type="text" name="instruction"
-                                 placeholder="e.g., Close with a note that we already merged this in #12345."
-                                 required />
-                          <button type="submit" class="prompt-run">{{ icon('rocket', size=12) }} Start session</button>
-                        </form>
-                      {% endif %}
-                      <div class="card-session-meta">
-                        {% if live %}
-                          <span class="live-badge live-badge-{{ live.status }}"
-                                title="Claude session is {{ live.status }}">{{ live.status }}</span>
-                        {% endif %}
-                        {% if tll %}
-                          <span class="card-tokens"
-                                title="Lifetime tokens across every triage + action session on this card. Persists across server restarts.">{{ (tll / 1000) | round(1) }}k tok</span>
-                        {% endif %}
-                      </div>
-                    </div>
-                  {% endif %}
-                {% else %}
-                  <div class="actions">
-                    <form method="post"
-                          action="/queues/{{ queue.id }}/items/{{ item.id }}/delete">
-                      <button type="submit" class="delete" data-action="delete">delete</button>
-                    </form>
-                  </div>
-                {% endif %}
-                {% endif %}
-              </article>
-            {% else %}
-              <div class="empty">—</div>
-            {% endfor %}
-          </div>
-        {% endfor %}
+        <div class="queue-body" id="queue-body-{{ queue.id }}"
+             hx-get="/queues/{{ queue.id }}/body"
+             hx-trigger="every 3s"
+             hx-swap="morph:innerHTML">
+          {% include "_queue_body.html" %}
+        </div>
       </section>
     {% endfor %}
   </div>
@@ -952,6 +324,10 @@
       }
     });
 
+    // Capture phase so we run BEFORE HTMX's hx-boost handler. If we
+    // preventDefault here, HTMX never fires the XHR — which is what
+    // we want while the editable-body / reviewer-picker modal is
+    // still open awaiting human confirmation.
     document.addEventListener('submit', (e) => {
       if (e.target.id === 'modal-send') return;
       const form = e.target;
@@ -971,14 +347,15 @@
         openReviewersModal(form);
         return;
       }
+      // Disabled-button-with-spinner UI. HTMX undoes this automatically
+      // on XHR completion via its own request/response classes, but
+      // we keep the visual feedback consistent across boost-intercepted
+      // and non-boost forms (if any).
       form.querySelectorAll('button[type=submit], button:not([type])').forEach(btn => {
         if (btn.disabled) return;
-        const label = btn.textContent.trim();
-        btn.disabled = true;
-        btn.classList.add('loading');
-        btn.innerHTML = '<span class="spinner"></span>' + label;
+        btn.classList.add('htmx-request');
       });
-    });
+    }, true);
 
     // PR drawer: click a .pr-link to preview the PR inside the app
     // (title, body, CI, reviewers, comments). ⌘-click / ctrl-click /
@@ -1224,7 +601,7 @@
         );
         if (r.ok || r.redirected) {
           closePlanModal();
-          location.reload();
+          refreshQueues();
         } else {
           let detail = 'Failed to submit plan.';
           try { const j = await r.json(); if (j.detail) detail = j.detail; }
@@ -1368,7 +745,7 @@
         );
         if (r.ok || r.redirected) {
           closeDraftsModal();
-          location.reload();
+          refreshQueues();
         } else {
           let detail = 'Failed to submit drafts.';
           try { const j = await r.json(); if (j.detail) detail = j.detail; }
@@ -1597,69 +974,45 @@
       } catch (err) { /* ignore */ }
     });
 
-    // Auto-refresh, but pause while the user is interacting. Guards
-    // against mid-click reloads: any modal open, any focused text input,
-    // any recent pointerdown, or pointer currently hovering a button
-    // cluster will defer the reload.
-    (function () {
-      const meta = document.querySelector('meta[name=refresh-ms]');
-      const refreshMs = meta ? parseInt(meta.content, 10) : 10000;
-      const TYPING_TAGS = new Set(['TEXTAREA', 'INPUT', 'SELECT']);
-      const POINTER_COOLDOWN_MS = 1500;
-      let lastPointerMs = 0;
-      let hoveringActions = false;
+    // Trigger an immediate re-fetch of every polling target. Used by
+    // the plan/drafts approve flows after their custom fetch finishes,
+    // so the UI reflects the new state right away rather than waiting
+    // for the next 3-second tick.
+    function refreshQueues() {
+      document.querySelectorAll('[hx-get][hx-trigger*="every"]')
+        .forEach(el => htmx.trigger(el, 'htmx:trigger'));
+    }
+    window.refreshQueues = refreshQueues;
 
-      // Any pointerdown resets the cooldown — covers clicks that land
-      // mid-reload. We also extend on pointerup so a slow click still
-      // counts as recent activity.
-      document.addEventListener('pointerdown', () => {
-        lastPointerMs = Date.now();
-      }, true);
-      document.addEventListener('pointerup', () => {
-        lastPointerMs = Date.now();
-      }, true);
-
-      // Hovering a card's action cluster (buttons or drafts pane) means
-      // the user is about to click — don't yank the page out from under
-      // them.
-      document.addEventListener('pointerover', (e) => {
-        const t = e.target;
-        if (t && t.closest && t.closest('.actions, .plan-pane, .plan-actions')) {
-          hoveringActions = true;
-        }
-      }, true);
-      document.addEventListener('pointerout', (e) => {
-        const t = e.target;
-        if (t && t.closest && t.closest('.actions, .plan-pane, .plan-actions')) {
-          hoveringActions = false;
-        }
-      }, true);
-
-      function userIsBusy() {
-        if (modal.classList.contains('is-open')) return true;
-        if (commentModal && commentModal.classList.contains('is-open')) return true;
-        if (planModal && planModal.classList.contains('is-open')) return true;
-        if (draftsModal && draftsModal.classList.contains('is-open')) return true;
-        if (statsPopover && !statsPopover.hidden) return true;
-        if (hoveringActions) return true;
-        if (Date.now() - lastPointerMs < POINTER_COOLDOWN_MS) return true;
-        const a = document.activeElement;
-        if (a && TYPING_TAGS.has(a.tagName)) return true;
-        for (const t of document.querySelectorAll('textarea, input[type=text]')) {
-          if (t.value && t.value.trim()) return true;
-        }
-        return false;
+    // After any hx-boost / hx-post form submission completes, nudge
+    // the polling loop so the UI reflects the change immediately
+    // instead of waiting for the next 3s tick. GETs (the polling
+    // itself) are skipped.
+    document.body.addEventListener('htmx:afterRequest', (evt) => {
+      const cfg = evt.detail && evt.detail.requestConfig;
+      if (cfg && cfg.verb && cfg.verb !== 'get') {
+        refreshQueues();
       }
+    });
 
-      function tick() {
-        if (userIsBusy()) {
-          setTimeout(tick, 1000);  // check back shortly
-        } else {
-          location.reload();
-        }
+    // HTMX polling handles refresh. Nudge modals/drawer/popover to
+    // pause polling when open by emitting events the polling targets
+    // can listen to (or just let polling proceed — morph swaps
+    // preserve identity for <details>, inputs, focus, scroll).
+    document.body.addEventListener('htmx:beforeRequest', (evt) => {
+      // Skip triggered polls when the user is actively inside a modal
+      // or the drawer — not strictly needed for correctness, but
+      // avoids surprising jitter under stat pills etc.
+      const busy =
+        (commentModal && commentModal.classList.contains('is-open')) ||
+        (planModal && planModal.classList.contains('is-open')) ||
+        (draftsModal && draftsModal.classList.contains('is-open')) ||
+        (reviewersModal && reviewersModal.classList.contains('is-open'));
+      const trigger = evt.detail && evt.detail.triggeringEvent;
+      if (busy && trigger && trigger.type === 'htmx:trigger') {
+        evt.preventDefault();
       }
-      setTimeout(tick, refreshMs);
-    })();
+    });
   </script>
 </body>
 </html>

@@ -5,7 +5,7 @@ import time
 import json
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -46,6 +46,22 @@ TEMPLATES_DIR = PROJECT_ROOT / "repobot" / "templates"
 STATIC_DIR = PROJECT_ROOT / "repobot" / "static"
 
 app = FastAPI(title="repobot")
+
+
+@app.middleware("http")
+async def htmx_swallow_redirects(request: Request, call_next):
+    """With hx-boost on the body, every form submit is XHR. A 303
+    redirect back to `/` would trigger HTMX to fetch `/` and swap the
+    whole page — defeating the point of the migration. Convert those
+    same-origin 303s into a 204 No Content when the request is
+    HTMX-driven; the client's afterRequest hook nudges the polling
+    loop to re-fetch the changed region instead."""
+    response = await call_next(request)
+    if (request.headers.get("HX-Request")
+            and response.status_code == 303):
+        return Response(status_code=204)
+    return response
+
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 from markupsafe import Markup as _Markup
 templates.env.globals["icon"] = lambda name, **kw: _Markup(_icons.render(name, **kw))
@@ -364,6 +380,80 @@ def retriage(queue_id: str, item_id: int):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return RedirectResponse(url="/", status_code=303)
+
+
+def _ctx_for_queue(request: Request, queue_id: str) -> dict:
+    """Build the Jinja context needed to render _queue_body.html for one
+    queue. Mirrors the shape the index page prepares so the partial
+    renders identically whether it's embedded in the full page or
+    returned as an HTMX fragment."""
+    cfg = load_config()
+    queues_cfg = get_queues_config()
+    # Per-queue overrides (matches index endpoint).
+    for q in queues_cfg:
+        q["effective_max_in_flight"] = int(
+            get_queue_setting(q["id"], "max_in_flight", q.get("max_in_flight", 0)))
+        q["effective_worker_slots"] = int(
+            get_queue_setting(q["id"], "worker_slots", q.get("max_in_flight", 0)))
+        q["intake_paused"] = bool(get_queue_setting(
+            q["id"], "intake_paused", False))
+    queue = next((q for q in queues_cfg if q["id"] == queue_id), None)
+    if queue is None:
+        raise HTTPException(status_code=404, detail="unknown queue")
+    state = load_state()
+    stats_data = sessions.stats()
+    stats_data["auto_resume_on_boot"] = bool(
+        get_global_setting("auto_resume_on_boot", False))
+    live_by_item: dict[str, dict] = {}
+    for ls in stats_data.get("live", []):
+        qid = ls.get("queue_id"); iid = ls.get("item_id")
+        if qid is None or iid is None:
+            continue
+        for item in state.get("queues", {}).get(qid, {}).get("items", []):
+            if item.get("id") == iid:
+                ls["number"] = item.get("number")
+                ls["title"] = item.get("title")
+                break
+        live_by_item[f"{qid}:{iid}"] = ls
+    q_items = state.get("queues", {}).get(queue_id, {}).get("items", [])
+    done_state = queue.get("done_state") or "done"
+    awaiting_state = queue.get("awaiting_state")
+    return {
+        "request": request,
+        "queue": queue,
+        "state": state,
+        "stats": stats_data,
+        "live_by_item": live_by_item,
+        "dry_run": bool(cfg.get("actions", {}).get("dry_run", True)),
+        "q_items": q_items,
+        "done_state": done_state,
+        "awaiting_state": awaiting_state,
+    }
+
+
+@app.get("/queues/{queue_id}/body", response_class=HTMLResponse)
+def queue_body(request: Request, queue_id: str):
+    """Return the state-columns fragment for one queue. Polled by
+    HTMX every few seconds; morph-swap preserves DOM identity so open
+    <details>, focused inputs, and scroll position survive."""
+    ctx = _ctx_for_queue(request, queue_id)
+    return templates.TemplateResponse(request, "_queue_body.html", ctx)
+
+
+@app.get("/fragments/header-readout", response_class=HTMLResponse)
+def header_readout(request: Request):
+    """Return just the header stats readout. Polled by HTMX."""
+    stats_data = sessions.stats()
+    stats_data["auto_resume_on_boot"] = bool(
+        get_global_setting("auto_resume_on_boot", False))
+    tt = stats_data.get("tokens_24h") or {}
+    ttl = (tt.get("input_tokens", 0) + tt.get("output_tokens", 0)
+           + tt.get("cache_creation_input_tokens", 0)
+           + tt.get("cache_read_input_tokens", 0))
+    return templates.TemplateResponse(
+        request, "_header_readout.html",
+        {"request": request, "s": stats_data, "ttl": ttl},
+    )
 
 
 @app.get("/queues/{queue_id}/items/{item_id}/drawer", response_class=HTMLResponse)

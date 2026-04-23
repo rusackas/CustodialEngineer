@@ -1,0 +1,48 @@
+        <span class="stat-pill-wrap readout-item readout-item-interactive">
+          <button type="button" class="readout-button" id="stats-sessions-btn"
+                  aria-haspopup="true" aria-expanded="false"
+                  title="Click to see live sessions. Cap {{ s.cap or 4 }} applies to running turns — idle sessions release their slot.">
+            <span class="spinner" {% if not s.working %}style="display:none"{% endif %}></span>
+            <span class="readout-label">sessions</span>
+            <span class="readout-value">
+              <span id="stats-working">{{ s.working or 0 }}</span><span class="readout-sep">/</span><span id="stats-cap">{{ s.cap or 4 }}</span>
+              {% if s.idle %} <span class="readout-dim"><span id="stats-idle">{{ s.idle }}</span> idle</span>{% endif %}
+              {% if s.queued %} <span class="readout-dim"><span id="stats-queued">{{ s.queued }}</span> queued</span>{% endif %}
+            </span>
+          </button>
+          {% if s.live %}
+          {% set visible_live = s.live | selectattr('number') | list %}
+          {% if visible_live %}
+          <div id="stats-popover" class="stats-popover" hidden>
+            <div class="stats-popover-title">Live Claude sessions</div>
+            {% for ls in visible_live %}
+              <button type="button" class="live-session-row"
+                      data-session-id="{{ ls.session_id }}"
+                      data-pr-number="{{ ls.number or '' }}"
+                      data-pr-title="{{ ls.title or '' }}">
+                <span class="live-session-kind live-session-kind-{{ ls.kind }}">{{ ls.kind }}</span>
+                <span class="live-session-status live-session-status-{{ ls.status }}">{{ ls.status }}</span>
+                <span class="live-session-label">#{{ ls.number }}</span>
+                {% if ls.title %}<span class="live-session-title">{{ ls.title }}</span>{% endif %}
+                {% set lp = (ls.context_percentage or 0) %}
+                {% if lp %}<span class="live-session-ctx" title="Context window">{{ lp | round(0) | int }}%</span>{% endif %}
+              </button>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% endif %}
+        </span>
+        {% if ttl %}
+          <span class="readout-item" id="stats-tokens"
+                title="Tokens consumed across all Claude sessions in the last 24 hours (input + output + cache read/write). Rolling window.">
+            <span class="readout-label">tokens</span>
+            <span class="readout-value">{{ (ttl / 1000) | round(1) }}k <span class="readout-dim">/ 24h</span></span>
+          </span>
+        {% endif %}
+        {% if s.worktrees %}
+          <span class="readout-item"
+                title="Per-PR git worktrees currently on disk at workspace/worktrees/. Each lives until the card is deleted.">
+            <span class="readout-label">worktrees</span>
+            <span class="readout-value">{{ s.worktrees }}</span>
+          </span>
+        {% endif %}
