@@ -484,8 +484,16 @@ body {
   color: #fff;
   border-radius: 8px;
   text-transform: none;
+  transition: background 0.18s ease, color 0.18s ease;
 }
-.boards-tab.is-active .boards-tab-badge { background: var(--accent); }
+.boards-tab-badge-zero {
+  background: transparent;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule);
+  padding: 0 6px;
+}
+.boards-tab.is-active .boards-tab-badge { background: var(--accent); color: #fff; border-color: var(--accent); }
+.boards-tab.is-active .boards-tab-badge-zero { background: transparent; color: var(--brand); border-color: var(--brand); }
 .boards-tabs-spacer { flex: 1 0 auto; min-width: 10px; }
 .boards-tabs-hint {
   padding: 0 6px 8px;
@@ -511,54 +519,134 @@ body {
 .boards-stage {
   position: relative;
   overflow: hidden;
-  padding: 4px 0 20px;
+  padding: 6px 0 24px;
   min-height: 60vh;
 }
 .boards-reel {
   display: flex;
   align-items: flex-start;
-  gap: 24px;
+  /* Negative gap — boards overlap each other so neighbors tuck behind
+     the active one. Active's z-index + shadow lifts it on top. */
+  gap: -60px;
   transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
   will-change: transform;
-  padding: 6px 0;
+  padding: 10px 0;
 }
+/* Fallback for browsers without negative-gap support: use margin. */
+.boards-reel > * + * { margin-left: -60px; }
+.boards-reel { gap: 0; }
 
-/* Each queue is a fixed-width panel in the reel. Non-active boards
-   fade + scale; the active one sits centered and crisp. */
+/* Active board: wide, crisp, on top. Non-active: tucked behind with
+   heavy fade + scale + muted saturation, so it reads as "stacked
+   underneath" rather than "peek of a neighbor". */
 .boards-reel > .queue {
-  flex: 0 0 min(920px, 86vw);
+  flex: 0 0 min(1280px, calc(100vw - 120px));
   max-width: none;
   transition:
     transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
     opacity 0.45s ease,
     filter 0.45s ease;
-  transform: scale(0.93);
-  opacity: 0.38;
-  filter: saturate(0.55);
+  transform: scale(0.9);
+  opacity: 0.12;
+  filter: saturate(0.4) blur(0.5px);
   pointer-events: none;
+  z-index: 1;
 }
 .boards-reel > .queue.is-active {
   transform: scale(1);
   opacity: 1;
   filter: none;
   pointer-events: auto;
+  z-index: 2;
   box-shadow:
-    0 10px 28px -14px rgba(15, 23, 42, 0.25),
+    0 20px 40px -18px rgba(15, 23, 42, 0.28),
+    0 6px 14px -6px rgba(15, 23, 42, 0.12),
     0 0 0 1px var(--rule);
 }
 
-/* Optimistic "pending" flash on cards when any action button is
-   clicked — same idea the inbox rows used, reapplied to the card
-   context. Morph-swap on the next poll clears the class naturally. */
+/* Left/right carets for mouse users. Float over the stage edges. */
+.boards-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 38px;
+  height: 60px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 300;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+  padding: 0;
+  font-family: inherit;
+}
+.boards-nav:hover:not(:disabled) {
+  background: #fff;
+  color: var(--brand);
+}
+.boards-nav:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+.boards-nav-prev { left: 8px; }
+.boards-nav-next { right: 8px; }
+
+/* Optimistic "pending" flash: clicked an action, server hasn't
+   confirmed yet. A persistent colored wash + a floating label so
+   the state change is unmissable. Morph-swap on the next poll
+   clears .card-pending naturally. */
 .card.card-pending {
-  box-shadow:
-    inset 3px 0 0 var(--accent),
-    0 1px 3px rgba(15, 23, 42, 0.08);
+  position: relative;
   background: linear-gradient(
     90deg,
     var(--accent-soft) 0%,
-    var(--bg-card) 40%,
+    var(--accent-soft) 10%,
+    var(--bg-card) 55%,
     var(--bg-card) 100%);
+  animation: card-pending-pulse 1.6s ease-in-out infinite;
+}
+.card.card-pending::before {
+  /* Widen and brighten the status rail while pending. */
+  width: 5px !important;
+  background: var(--accent) !important;
+  opacity: 1 !important;
+}
+.card.card-pending::after {
+  content: "QUEUED…";
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: var(--track-eyebrow);
+  font-weight: 700;
+  padding: 2px 8px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 3px;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
+  pointer-events: none;
+  z-index: 4;
+}
+@keyframes card-pending-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 0 rgba(37, 99, 235, 0.25),
+      0 1px 3px rgba(15, 23, 42, 0.08);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(37, 99, 235, 0.08),
+      0 1px 3px rgba(15, 23, 42, 0.08);
+  }
 }
 
 /* ============================ queue ============================
@@ -779,6 +867,70 @@ button.action-primary:disabled {
   border-color: rgba(4, 120, 87, 0.25);
   color: var(--state-done);
 }
+
+/* Sub-buckets inside a state column. Each is a small collapsible
+   group: "needs attention" / "in progress" / "in queue" / "done".
+   Bucketing makes the column readable when 20+ cards pile up. */
+.state-bucket {
+  margin: 0 0 10px;
+  padding: 0;
+  border: none;
+}
+.state-bucket > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 2px;
+  margin-bottom: 4px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  border-radius: 3px;
+  font-weight: 600;
+  position: sticky;
+  top: 30px;  /* below the state h3 which is also sticky */
+  background: linear-gradient(
+    to bottom,
+    var(--bg-card) 0%,
+    var(--bg-card) 80%,
+    rgba(255, 255, 255, 0) 100%);
+  z-index: 1;
+}
+.state-bucket > summary::-webkit-details-marker { display: none; }
+.state-bucket > summary::before {
+  content: "▸";
+  font-size: 9px;
+  color: var(--ink-faint);
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.state-bucket[open] > summary::before {
+  transform: rotate(90deg);
+}
+.state-bucket > summary:hover { background: var(--bg-inset); }
+.state-bucket-label { letter-spacing: var(--track-eyebrow); }
+.state-bucket-count {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 0 5px;
+  background: var(--bg-inset);
+  border-radius: 2px;
+  color: var(--ink-soft);
+  font-weight: 500;
+  letter-spacing: 0;
+  margin-left: auto;
+}
+/* Tint the bucket-label per bucket — matches the row-flag palette
+   from the earlier inbox experiment so the vocabulary carries over. */
+.state-bucket-attention > summary .state-bucket-label { color: var(--warn); }
+.state-bucket-progress  > summary .state-bucket-label { color: var(--accent); }
+.state-bucket-queue     > summary .state-bucket-label { color: var(--ink-soft); }
+.state-bucket-done      > summary .state-bucket-label { color: var(--ok); }
 .clear-done-form { margin: 0 0 0 auto; }
 button.clear-done {
   font-size: 10px;

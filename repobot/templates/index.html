@@ -63,16 +63,20 @@
               data-queue-id="{{ queue.id }}"
               aria-selected="{{ 'true' if loop.index0 == 0 else 'false' }}">
         <span class="boards-tab-title">{{ queue.title }}</span>
-        {% if att %}<span class="boards-tab-badge">{{ att }}</span>{% endif %}
+        <span class="boards-tab-badge {% if not att %}boards-tab-badge-zero{% endif %}">{{ att }}</span>
       </button>
     {% endfor %}
     <div class="boards-tabs-spacer"></div>
     <div class="boards-tabs-hint">
-      <kbd>←</kbd><kbd>→</kbd> switch · <kbd>1</kbd>–<kbd>9</kbd> jump
+      <kbd>←</kbd><kbd>→</kbd> switch
     </div>
   </nav>
 
   <section class="boards-stage" aria-label="Board of boards">
+    <button type="button" class="boards-nav boards-nav-prev"
+            aria-label="Previous board" data-board-nav="-1">‹</button>
+    <button type="button" class="boards-nav boards-nav-next"
+            aria-label="Next board" data-board-nav="1">›</button>
     <div class="boards-reel" id="boards-reel">
     {% for queue in queues %}
       {% set q_items = state.queues.get(queue.id, {}).get('items', []) %}
@@ -1029,6 +1033,11 @@
         t.setAttribute('aria-selected', on ? 'true' : 'false');
         t.classList.toggle('is-active', on);
       });
+      // Enable/disable the nav carets based on position.
+      const prev = document.querySelector('.boards-nav-prev');
+      const next = document.querySelector('.boards-nav-next');
+      if (prev) prev.disabled = index <= 0;
+      if (next) next.disabled = index >= bs.length - 1;
       const active = bs[index];
       if (!active) return;
       // Translate the reel so the active board sits centered in the
@@ -1072,8 +1081,15 @@
     })();
     window.addEventListener('resize', () => activateBoard(_activeIndex, { animate: false }));
     tabs.forEach((t, i) => t.addEventListener('click', () => activateBoard(i)));
+    document.querySelectorAll('[data-board-nav]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const delta = parseInt(btn.dataset.boardNav, 10) || 0;
+        activateBoard(_activeIndex + delta);
+      });
+    });
 
-    // Keybindings: ←/→ / h/l move between boards; 1..9 jump.
+    // Keybindings: ←/→ / h/l move between boards. 1..9 shortcuts
+    // removed since we expect to scale past 9 queues.
     document.addEventListener('keydown', (e) => {
       const a = document.activeElement;
       const typing = a && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
@@ -1094,13 +1110,9 @@
         case 'ArrowRight':
         case 'l':
           activateBoard(_activeIndex + 1); e.preventDefault(); break;
-        default:
-          if (/^[1-9]$/.test(e.key)) {
-            activateBoard(parseInt(e.key, 10) - 1);
-            e.preventDefault();
-          }
       }
     });
+
 
     // Flash the card's action button row as "pending" on click so
     // the user sees motion before the next 3s polling tick morph-

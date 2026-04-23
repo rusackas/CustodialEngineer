@@ -65,6 +65,8 @@ async def htmx_swallow_redirects(request: Request, call_next):
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 from markupsafe import Markup as _Markup
 templates.env.globals["icon"] = lambda name, **kw: _Markup(_icons.render(name, **kw))
+templates.env.globals["rank_bucket"] = _inbox.rank_bucket
+templates.env.globals["BUCKETS"] = _inbox.BUCKETS
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 

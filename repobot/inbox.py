@@ -17,6 +17,25 @@ in each rank floats to the top of that rank.
 from typing import Iterable
 
 
+# Sub-grouping within each state column: every card falls into one of
+# these buckets based on its attention rank. Used by _queue_body.html
+# to render collapsible sub-sections inside each kanban column.
+BUCKETS = [
+    # (bucket_key, label, covers_ranks)
+    ("attention", "needs attention", {0, 1, 2, 3}),
+    ("progress",  "in progress",     {4, 5, 6}),
+    ("queue",     "in queue",        {7}),
+    ("done",      "done",            {8}),
+]
+_RANK_TO_BUCKET = {rank: key for key, _, ranks in BUCKETS for rank in ranks}
+
+
+def rank_bucket(item: dict, queue_cfg: dict) -> str:
+    """Return a bucket key for the item — used to sub-group cards
+    inside a state column."""
+    return _RANK_TO_BUCKET.get(attention_rank(item, queue_cfg), "attention")
+
+
 _RANK_NAMES = [
     "needs_human",
     "interrupted",

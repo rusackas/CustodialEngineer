@@ -20,17 +20,44 @@
                 </form>
               {% endif %}
             </h3>
+
+            {# Bucket the cards into sub-groups (needs attention / in
+               progress / in queue / done) using the rank helper from
+               inbox.py. Render each non-empty bucket as a collapsible
+               sub-section. Each section has a stable id so open state
+               survives polling morph-swaps. #}
+            {% set _buckets = {} %}
             {% for item in cards %}
-              {% set is_queued = (item.last_result or {}).get('status') == 'queued' %}
-              {% set live = live_by_item.get(queue.id ~ ':' ~ (item.id | string)) %}
-              {% set tl = item.tokens_lifetime or {} %}
-              {% set tll = (tl.get('input_tokens', 0) + tl.get('output_tokens', 0)
-                           + tl.get('cache_creation_input_tokens', 0) + tl.get('cache_read_input_tokens', 0)) %}
-              {% set sid = item.session_id or item.triage_session_id %}
-              {% set author_login = ((item.raw or {}).get('author') or {}).get('login') %}
-              {% include "_card.html" %}
+              {% set _b = rank_bucket(item, queue) %}
+              {% if _buckets.update({_b: (_buckets.get(_b) or []) + [item]}) %}{% endif %}
+            {% endfor %}
+
+            {% if cards %}
+              {% for bucket_key, bucket_label, _ in BUCKETS %}
+                {% set bucket_cards = _buckets.get(bucket_key) or [] %}
+                {% if bucket_cards %}
+                  <details class="state-bucket state-bucket-{{ bucket_key }}"
+                           id="bucket-{{ queue.id }}-{{ st | replace(' ', '_') | replace(':', '') }}-{{ bucket_key }}"
+                           {% if bucket_key != 'queue' and bucket_key != 'done' %}open{% endif %}>
+                    <summary>
+                      <span class="state-bucket-label">{{ bucket_label }}</span>
+                      <span class="state-bucket-count">{{ bucket_cards | length }}</span>
+                    </summary>
+                    {% for item in bucket_cards %}
+                      {% set is_queued = (item.last_result or {}).get('status') == 'queued' %}
+                      {% set live = live_by_item.get(queue.id ~ ':' ~ (item.id | string)) %}
+                      {% set tl = item.tokens_lifetime or {} %}
+                      {% set tll = (tl.get('input_tokens', 0) + tl.get('output_tokens', 0)
+                                   + tl.get('cache_creation_input_tokens', 0) + tl.get('cache_read_input_tokens', 0)) %}
+                      {% set sid = item.session_id or item.triage_session_id %}
+                      {% set author_login = ((item.raw or {}).get('author') or {}).get('login') %}
+                      {% include "_card.html" %}
+                    {% endfor %}
+                  </details>
+                {% endif %}
+              {% endfor %}
             {% else %}
               <div class="empty">—</div>
-            {% endfor %}
+            {% endif %}
           </div>
         {% endfor %}
