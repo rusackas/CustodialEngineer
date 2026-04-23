@@ -6,23 +6,28 @@
    the whole app.
    ------------------------------------------------------------ */
 :root {
-  /* Surface */
-  --bg-canvas: #eef1f5;
-  --bg-queue: rgba(255, 255, 255, 0.5);
-  --bg-card: #ffffff;
-  --bg-panel: #f7f8fb;
-  --bg-inset: #f1f4f8;
+  /* Surface — warm paper palette. The canvas carries a slight cream
+     cast so pure-white cards read as "lifted paper" rather than
+     clinical white-on-grey. */
+  --bg-canvas: #efeae0;
+  --bg-canvas-top: #f5f0e6;   /* gradient stop used on body */
+  --bg-canvas-bot: #e8e2d3;
+  --bg-queue: rgba(255, 254, 251, 0.7);
+  --bg-card: #fffdf8;          /* warm ivory, a hair off pure white */
+  --bg-panel: #f6f1e6;
+  --bg-inset: #f0ead8;
 
-  /* Ink */
-  --ink: #0f172a;
-  --ink-soft: #475569;
-  --ink-mute: #94a3b8;
-  --ink-faint: #cbd5e1;
+  /* Ink — very slightly warmer than pure slate. Still calm but not
+     cold. */
+  --ink: #1c1a17;
+  --ink-soft: #55504a;
+  --ink-mute: #9b9489;
+  --ink-faint: #d4ccbf;
 
-  /* Rules */
-  --rule: rgba(148, 163, 184, 0.3);
-  --rule-strong: rgba(148, 163, 184, 0.55);
-  --rule-dashed: 1px dashed rgba(148, 163, 184, 0.5);
+  /* Rules — warm tan rather than slate grey. */
+  --rule: rgba(155, 140, 110, 0.3);
+  --rule-strong: rgba(155, 140, 110, 0.5);
+  --rule-dashed: 1px dashed rgba(155, 140, 110, 0.45);
 
   /* Primary accent (bright blue) */
   --accent: #2563eb;
@@ -109,7 +114,13 @@ button.loading { opacity: 0.6; cursor: wait; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: var(--bg-canvas);
+  /* Warm gradient canvas — gives depth without distracting. Noise-
+     free; the parchment feel comes from the tonal shift alone. */
+  background:
+    radial-gradient(1200px 900px at 12% -20%, rgba(253, 244, 228, 0.9), transparent 60%),
+    radial-gradient(1400px 1000px at 95% 110%, rgba(224, 212, 189, 0.55), transparent 55%),
+    linear-gradient(180deg, var(--bg-canvas-top) 0%, var(--bg-canvas-bot) 100%);
+  background-attachment: fixed;
   color: var(--ink);
   margin: 0;
   padding: 22px 24px 28px;
@@ -727,40 +738,71 @@ body {
     0 0 0 1px var(--rule);
 }
 
-/* Left/right carets for mouse users. Float over the stage edges. */
+/* Nav pills — floating previous/next navigation that shows the name
+   of the adjacent board alongside the arrow. Much more discoverable
+   than a bare caret. */
 .boards-nav {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 38px;
-  height: 60px;
+  top: 18px;
   z-index: 5;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  font-size: 26px;
-  line-height: 1;
-  font-weight: 300;
+  gap: 7px;
+  max-width: 220px;
+  padding: 7px 14px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  font-weight: 700;
   color: var(--ink-soft);
-  background: rgba(255, 255, 255, 0.9);
+  background: #fff;
   border: 1px solid var(--rule-strong);
-  border-radius: 6px;
+  border-radius: 999px;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
-  transition: background 0.18s ease, color 0.18s ease, opacity 0.18s ease;
-  padding: 0;
-  font-family: inherit;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    opacity 0.18s ease,
+    transform 0.18s ease,
+    border-color 0.18s ease;
+  font-family: var(--mono);
 }
 .boards-nav:hover:not(:disabled) {
-  background: #fff;
-  color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+  border-color: var(--brand);
+  transform: translateY(-1px);
 }
 .boards-nav:disabled {
-  opacity: 0.25;
-  cursor: not-allowed;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0);
 }
-.boards-nav-prev { left: 8px; }
-.boards-nav-next { right: 8px; }
+.boards-nav-arrow {
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--brand);
+  transition: color 0.18s ease;
+}
+.boards-nav:hover:not(:disabled) .boards-nav-arrow { color: #fff; }
+.boards-nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-size: 11.5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: inherit;
+  font-weight: 600;
+}
+.boards-nav-label:empty { display: none; }
+.boards-nav-prev { left: 18px; }
+.boards-nav-next { right: 18px; }
 
 /* Optimistic "pending" flash: clicked an action, server hasn't
    confirmed yet. A persistent colored wash + a floating label so
@@ -851,12 +893,26 @@ body {
 }
 .queue-header h2 {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: var(--track-display);
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-transform: none;
   color: var(--brand);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.2;
+}
+.queue-header h2::before {
+  /* Small mono eyebrow keeps the "instrument panel" flavor while the
+     title itself reads at human scale. */
+  content: "queue";
+  display: block;
   font-family: var(--mono);
+  font-size: var(--size-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 700;
+  margin-bottom: 3px;
 }
 .queue-meta {
   display: flex;
@@ -945,6 +1001,27 @@ button.action-primary:disabled {
   overflow-y: hidden;
   padding-bottom: 6px;
   scrollbar-width: thin;
+  /* Scroll-snap so horizontal scroll feels intentional and columns
+     park at clean positions instead of ragged mid-card offsets. */
+  scroll-snap-type: x proximity;
+  /* has-more-left / has-more-right get toggled by JS on scroll. The
+     inset shadows stay fixed at the container edges while the
+     content scrolls behind them — the classic "there's more this
+     way" affordance. */
+  transition: box-shadow 0.2s ease;
+}
+.queue-body.has-more-left {
+  box-shadow:
+    inset 18px 0 18px -14px rgba(28, 26, 23, 0.28);
+}
+.queue-body.has-more-right {
+  box-shadow:
+    inset -18px 0 18px -14px rgba(28, 26, 23, 0.28);
+}
+.queue-body.has-more-left.has-more-right {
+  box-shadow:
+    inset 18px 0 18px -14px rgba(28, 26, 23, 0.28),
+    inset -18px 0 18px -14px rgba(28, 26, 23, 0.28);
 }
 .queue-body::-webkit-scrollbar { height: 8px; }
 .queue-body::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 4px; }
@@ -959,6 +1036,7 @@ button.action-primary:disabled {
   margin-bottom: 0;
   padding: 0 2px 4px;
   scrollbar-width: thin;
+  scroll-snap-align: start;
 }
 .state::-webkit-scrollbar { width: 6px; }
 .state::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 3px; }

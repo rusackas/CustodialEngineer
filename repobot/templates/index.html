@@ -74,9 +74,15 @@
 
   <section class="boards-stage" aria-label="Board of boards">
     <button type="button" class="boards-nav boards-nav-prev"
-            aria-label="Previous board" data-board-nav="-1">‹</button>
+            aria-label="Previous board" data-board-nav="-1">
+      <span class="boards-nav-arrow" aria-hidden="true">‹</span>
+      <span class="boards-nav-label" data-board-nav-label="prev"></span>
+    </button>
     <button type="button" class="boards-nav boards-nav-next"
-            aria-label="Next board" data-board-nav="1">›</button>
+            aria-label="Next board" data-board-nav="1">
+      <span class="boards-nav-label" data-board-nav-label="next"></span>
+      <span class="boards-nav-arrow" aria-hidden="true">›</span>
+    </button>
     <div class="boards-reel" id="boards-reel">
     {% for queue in queues %}
       {% set q_items = state.queues.get(queue.id, {}).get('items', []) %}
@@ -1204,6 +1210,32 @@
     }
     window.refreshQueues = refreshQueues;
 
+    // ============== Horizontal scroll shadows ================
+    // Each .queue-body can scroll horizontally when its state columns
+    // outgrow the board's width. Toggle inset shadow on the edges so
+    // the user can see there's more out of view. Updates on scroll,
+    // resize, active-board change, and after HTMX swaps.
+    function refreshQueueScrollHints() {
+      document.querySelectorAll('.queue-body').forEach(qb => {
+        const THRESH = 4;
+        const canLeft = qb.scrollLeft > THRESH;
+        const canRight = qb.scrollLeft + qb.clientWidth <
+                         qb.scrollWidth - THRESH;
+        qb.classList.toggle('has-more-left', canLeft);
+        qb.classList.toggle('has-more-right', canRight);
+      });
+    }
+    document.addEventListener('scroll', (e) => {
+      if (e.target && e.target.classList
+          && e.target.classList.contains('queue-body')) {
+        refreshQueueScrollHints();
+      }
+    }, true);  // capture — scroll events don't bubble
+    window.addEventListener('resize', refreshQueueScrollHints);
+    document.body.addEventListener('htmx:afterSwap',
+                                   () => requestAnimationFrame(refreshQueueScrollHints));
+    requestAnimationFrame(refreshQueueScrollHints);
+
     // ============== Queue settings modal ================
     // Clicking a queue's gear opens its settings modal. One modal
     // per queue is pre-rendered at the bottom of <body>; we just flip
@@ -1270,11 +1302,26 @@
         t.setAttribute('aria-selected', on ? 'true' : 'false');
         t.classList.toggle('is-active', on);
       });
-      // Enable/disable the nav carets based on position.
+      // Enable/disable the nav pills and fill their labels with the
+      // prev/next board's title so you can see where you're headed.
       const prev = document.querySelector('.boards-nav-prev');
       const next = document.querySelector('.boards-nav-next');
-      if (prev) prev.disabled = index <= 0;
-      if (next) next.disabled = index >= bs.length - 1;
+      if (prev) {
+        prev.disabled = index <= 0;
+        const lbl = prev.querySelector('[data-board-nav-label]');
+        if (lbl) {
+          const t = tabs[index - 1];
+          lbl.textContent = t ? t.querySelector('.boards-tab-title').textContent : '';
+        }
+      }
+      if (next) {
+        next.disabled = index >= bs.length - 1;
+        const lbl = next.querySelector('[data-board-nav-label]');
+        if (lbl) {
+          const t = tabs[index + 1];
+          lbl.textContent = t ? t.querySelector('.boards-tab-title').textContent : '';
+        }
+      }
       const active = bs[index];
       if (!active) return;
       // Translate the reel so the active board sits centered in the
@@ -1297,6 +1344,13 @@
       const tab = tabs[index];
       if (tab) tab.scrollIntoView({
         block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      // After layout settles, recompute scroll-hint shadows on the
+      // newly-active queue body (stage width may have changed).
+      requestAnimationFrame(() => {
+        if (typeof refreshQueueScrollHints === 'function') {
+          refreshQueueScrollHints();
+        }
+      });
     }
 
     // Restore last-active board, default to first (or the first one
