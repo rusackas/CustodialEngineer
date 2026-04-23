@@ -1,0 +1,46 @@
+{# One row in the inbox stream. Slim, one-line, monospace-heavy.
+   Reads `item` (the annotated dict from inbox.attention_stream) —
+   `_queue_id`, `_queue_title`, `_rank_name` are pre-set. #}
+{% set author_login = ((item.raw or {}).get('author') or {}).get('login') %}
+{% set _is_draft = (item.raw or {}).get('isDraft') %}
+{% set _pr_icon = 'git-pull-request-draft' if _is_draft else 'git-pull-request' %}
+{% set tn = item.triage_notes or {} %}
+{% set _finding_count = (tn.blockers | length if tn.blockers else 0)
+                      + (tn.concerns | length if tn.concerns else 0)
+                      + (tn.open_questions | length if tn.open_questions else 0)
+                      + (tn.bot_flags | length if tn.bot_flags else 0) %}
+{% set lr = item.last_result or {} %}
+{% set rank = item._rank_name %}
+<button type="button" class="inbox-row inbox-rank-{{ rank }}"
+        data-queue="{{ item._queue_id }}"
+        data-item="{{ item.id }}"
+        data-inspect-url="/inspect/{{ item._queue_id }}/{{ item.id }}"
+        hx-get="/inspect/{{ item._queue_id }}/{{ item.id }}"
+        hx-target="#inspector-content"
+        hx-swap="morph:innerHTML"
+        title="Open in inspector">
+  <span class="inbox-dot" aria-hidden="true"></span>
+  <span class="inbox-pr-state pr-state-{{ 'draft' if _is_draft else 'open' }}">{{ icon(_pr_icon, size=13) }}</span>
+  <span class="inbox-num">#{{ item.number }}</span>
+  <span class="inbox-title">{{ item.title }}</span>
+  {% if author_login %}
+    <span class="inbox-author">@{{ author_login }}</span>
+  {% endif %}
+  <span class="inbox-queue inbox-queue-{{ item._queue_id }}">{{ item._queue_title }}</span>
+  <span class="inbox-state">{{ item.state }}</span>
+  {% if rank == 'needs_human' %}
+    <span class="inbox-flag inbox-flag-needs_human">needs you</span>
+  {% elif rank == 'interrupted' %}
+    <span class="inbox-flag inbox-flag-interrupted">interrupted</span>
+  {% elif rank == 'error' %}
+    <span class="inbox-flag inbox-flag-error">{{ lr.status or 'error' }}</span>
+  {% elif rank == 'triaging' %}
+    <span class="inbox-flag inbox-flag-triaging"><span class="spinner"></span>triaging</span>
+  {% elif rank == 'running' %}
+    <span class="inbox-flag inbox-flag-running"><span class="spinner"></span>running</span>
+  {% elif rank == 'idle_session' %}
+    <span class="inbox-flag inbox-flag-idle">idle</span>
+  {% elif _finding_count %}
+    <span class="inbox-findings">{{ _finding_count }} findings</span>
+  {% endif %}
+</button>

@@ -1,0 +1,31 @@
+{# Inbox stream: a single cross-queue list sorted by attention. Polls
+   via HTMX on the parent wrapper; this partial is content-only. #}
+{% if stream %}
+  {% set last_rank = namespace(v=None) %}
+  {% for item in stream %}
+    {% if item._rank_name != last_rank.v %}
+      <div class="inbox-section-label">
+        {% set labels = {
+          'needs_human': 'needs you',
+          'interrupted': 'interrupted',
+          'error': 'errors',
+          'verdict': 'triage · ready to act',
+          'idle_session': 'idle sessions',
+          'running': 'in flight',
+          'triaging': 'triaging',
+          'awaiting': 'parked',
+          'done': 'done',
+        } %}
+        <span class="inbox-section-name">{{ labels.get(item._rank_name, item._rank_name) }}</span>
+        <span class="inbox-section-rule"></span>
+      </div>
+      {% set last_rank.v = item._rank_name %}
+    {% endif %}
+    {% include "_inbox_row.html" %}
+  {% endfor %}
+{% else %}
+  <div class="inbox-empty">
+    <div class="inbox-empty-mark">◯</div>
+    <div class="inbox-empty-text">Nothing wants your attention right now.</div>
+  </div>
+{% endif %}

@@ -51,7 +51,85 @@
     </div>
   </header>
 
-  <div class="board">
+  <nav class="view-bar" aria-label="Workspace view">
+    <div class="view-mode" role="tablist">
+      <button type="button" class="view-mode-btn" data-view-mode="inbox"
+              aria-controls="workspace-inbox" aria-selected="true">inbox</button>
+      <button type="button" class="view-mode-btn" data-view-mode="board"
+              aria-controls="workspace-board" aria-selected="false">board</button>
+    </div>
+    <div class="view-filters" role="group" aria-label="Filters">
+      <details class="filter-dropdown" data-filter="queue">
+        <summary>queue <span class="filter-caret">▾</span></summary>
+        <div class="filter-menu">
+          {% for q in queues %}
+            <label class="filter-option">
+              <input type="checkbox" name="queue" value="{{ q.id }}" checked />
+              <span>{{ q.title }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
+      <details class="filter-dropdown" data-filter="rank">
+        <summary>show <span class="filter-caret">▾</span></summary>
+        <div class="filter-menu">
+          {% for r, label in [
+            ('needs_human', 'needs you'),
+            ('interrupted', 'interrupted'),
+            ('error', 'errors'),
+            ('verdict', 'triage · ready'),
+            ('idle_session', 'idle sessions'),
+            ('running', 'in flight'),
+            ('triaging', 'triaging'),
+            ('awaiting', 'parked'),
+            ('done', 'done'),
+          ] %}
+            <label class="filter-option">
+              <input type="checkbox" name="rank" value="{{ r }}"
+                     {% if r != 'done' %}checked{% endif %} />
+              <span>{{ label }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
+    <div class="view-bar-spacer"></div>
+    <div class="view-bar-hint">
+      <kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> inspect · <kbd>?</kbd> help
+    </div>
+  </nav>
+
+  <main class="workspace" id="workspace">
+    <section class="workspace-pane workspace-inbox" id="workspace-inbox">
+      <div class="inbox-stream-wrap"
+           id="inbox-stream"
+           hx-get="/fragments/inbox"
+           hx-trigger="load, every 3s"
+           hx-swap="morph:innerHTML">
+        <div class="inbox-loading">Loading…</div>
+      </div>
+    </section>
+    <section class="workspace-pane workspace-inspector" id="workspace-inspector">
+      <div class="inspector-panel">
+        <div class="inspector-head">
+          <span class="inspector-eyebrow">inspector</span>
+          <button type="button" class="inspector-close"
+                  data-close-inspector aria-label="Close inspector">{{ icon('x', size=14) }}</button>
+        </div>
+        <div class="inspector-content" id="inspector-content">
+          <div class="inspector-empty">
+            <div class="inspector-empty-mark">◇</div>
+            <div class="inspector-empty-text">Select a row to inspect it.</div>
+            <div class="inspector-empty-hint">
+              <kbd>j</kbd>/<kbd>k</kbd> to move · <kbd>Enter</kbd> to open · <kbd>Esc</kbd> to deselect
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="board" id="workspace-board">
     {% for queue in queues %}
       {% set q_items = state.queues.get(queue.id, {}).get('items', []) %}
       {% set done_state = queue.done_state or 'done' %}
@@ -983,6 +1061,149 @@
         .forEach(el => htmx.trigger(el, 'htmx:trigger'));
     }
     window.refreshQueues = refreshQueues;
+
+    // ============== Workspace view switching ================
+    // Inbox-vs-board toggle. Persisted in localStorage; default inbox.
+    const STORAGE_KEY = 'ce.view';
+    function setView(mode) {
+      if (mode !== 'inbox' && mode !== 'board') mode = 'inbox';
+      document.body.dataset.view = mode;
+      try { localStorage.setItem(STORAGE_KEY, mode); } catch {}
+      document.querySelectorAll('.view-mode-btn').forEach(b => {
+        b.setAttribute('aria-selected',
+          b.dataset.viewMode === mode ? 'true' : 'false');
+      });
+    }
+    const savedView = (() => {
+      try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
+    })();
+    setView(savedView || 'inbox');
+    document.querySelectorAll('.view-mode-btn').forEach(b => {
+      b.addEventListener('click', () => setView(b.dataset.viewMode));
+    });
+
+    // ============== Inbox keyboard navigation ================
+    function inboxRows() {
+      return Array.from(document.querySelectorAll('.inbox-row'));
+    }
+    function selectedRow() {
+      return document.querySelector('.inbox-row.is-selected');
+    }
+    function moveSelection(delta) {
+      const rows = inboxRows();
+      if (!rows.length) return;
+      const cur = selectedRow();
+      const i = cur ? rows.indexOf(cur) : -1;
+      const next = rows[Math.max(0, Math.min(rows.length - 1, i + delta))];
+      if (!next) return;
+      selectRow(next, { scroll: true });
+    }
+    function selectRow(row, opts = {}) {
+      inboxRows().forEach(r => {
+        r.classList.remove('is-selected');
+        r.setAttribute('aria-selected', 'false');
+      });
+      row.classList.add('is-selected');
+      row.setAttribute('aria-selected', 'true');
+      if (opts.scroll) {
+        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+      // Kick the inspector load via HTMX. The row already has hx-get.
+      htmx.trigger(row, 'click');
+    }
+    function deselectRow() {
+      const cur = selectedRow();
+      if (cur) {
+        cur.classList.remove('is-selected');
+        cur.setAttribute('aria-selected', 'false');
+      }
+      const c = document.getElementById('inspector-content');
+      if (c) {
+        c.innerHTML =
+          '<div class="inspector-empty">' +
+          '<div class="inspector-empty-mark">◇</div>' +
+          '<div class="inspector-empty-text">Select a row to inspect it.</div>' +
+          '</div>';
+      }
+    }
+    document.addEventListener('click', (e) => {
+      const row = e.target.closest('.inbox-row');
+      if (row && !e.target.closest('button, a, input, label, summary')) {
+        selectRow(row);
+      }
+      if (e.target.closest('[data-close-inspector]')) deselectRow();
+    });
+
+    // Keybindings: j/k/↓/↑ move, Enter focuses inspector, Esc deselects,
+    // g i / g b switch mode, ? toggles help.
+    let _gPending = false;
+    document.addEventListener('keydown', (e) => {
+      // Ignore when typing.
+      const a = document.activeElement;
+      const typing = a && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
+      if (typing) return;
+      // Ignore when a modal is open; Escape in modals is handled separately.
+      const modalOpen =
+        (commentModal && commentModal.classList.contains('is-open')) ||
+        (planModal && planModal.classList.contains('is-open')) ||
+        (draftsModal && draftsModal.classList.contains('is-open')) ||
+        (reviewersModal && reviewersModal.classList.contains('is-open')) ||
+        (modal && modal.classList.contains('is-open'));
+      if (modalOpen) return;
+      if (drawer && drawer.classList.contains('is-open')) return;
+
+      if (_gPending) {
+        _gPending = false;
+        if (e.key === 'i') { setView('inbox'); e.preventDefault(); return; }
+        if (e.key === 'b') { setView('board'); e.preventDefault(); return; }
+      }
+
+      switch (e.key) {
+        case 'j':
+        case 'ArrowDown':
+          if (document.body.dataset.view === 'inbox') {
+            moveSelection(1); e.preventDefault();
+          }
+          break;
+        case 'k':
+        case 'ArrowUp':
+          if (document.body.dataset.view === 'inbox') {
+            moveSelection(-1); e.preventDefault();
+          }
+          break;
+        case 'Escape':
+          if (document.body.dataset.view === 'inbox') deselectRow();
+          break;
+        case 'g':
+          _gPending = true;
+          setTimeout(() => { _gPending = false; }, 800);
+          break;
+      }
+    });
+
+    // ============== Filter chips ================
+    // Filter dropdowns re-query the inbox fragment with querystring
+    // params reflecting current checkbox state.
+    function applyInboxFilters() {
+      const wrap = document.getElementById('inbox-stream');
+      if (!wrap) return;
+      const queues = Array.from(
+        document.querySelectorAll('.filter-dropdown[data-filter="queue"] input:checked')
+      ).map(i => i.value);
+      const ranks = Array.from(
+        document.querySelectorAll('.filter-dropdown[data-filter="rank"] input:checked')
+      ).map(i => i.value);
+      const includeDone = ranks.includes('done') ? '1' : '0';
+      const params = new URLSearchParams();
+      if (queues.length) params.set('queue', queues.join(','));
+      if (ranks.length) params.set('rank', ranks.join(','));
+      params.set('include_done', includeDone);
+      const url = '/fragments/inbox?' + params.toString();
+      wrap.setAttribute('hx-get', url);
+      htmx.trigger(wrap, 'htmx:trigger');
+    }
+    document.querySelectorAll('.filter-dropdown input[type="checkbox"]')
+      .forEach(cb => cb.addEventListener('change', applyInboxFilters));
 
     // After any hx-boost / hx-post form submission completes, nudge
     // the polling loop so the UI reflects the change immediately

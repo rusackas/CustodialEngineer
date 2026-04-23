@@ -1,0 +1,31 @@
+{# Inspector panel content — one card rendered in full width. The
+   inbox row's hx-get replaces the inner div; the outer panel chrome
+   lives in index.html so it survives swaps. #}
+{% if item %}
+  {% set is_queued = (item.last_result or {}).get('status') == 'queued' %}
+  {% set live = live_by_item.get(queue.id ~ ':' ~ (item.id | string)) %}
+  {% set tl = item.tokens_lifetime or {} %}
+  {% set tll = (tl.get('input_tokens', 0) + tl.get('output_tokens', 0)
+               + tl.get('cache_creation_input_tokens', 0) + tl.get('cache_read_input_tokens', 0)) %}
+  {% set sid = item.session_id or item.triage_session_id %}
+  {% set author_login = ((item.raw or {}).get('author') or {}).get('login') %}
+  {% set st = item.state %}
+  {% set done_state = queue.done_state or 'done' %}
+  {% set awaiting_state = queue.awaiting_state %}
+  <div class="inspector-breadcrumb">
+    <span class="inspector-queue">{{ queue.title }}</span>
+    <span class="inspector-sep">·</span>
+    <span class="inspector-state">{{ item.state }}</span>
+  </div>
+  {% include "_card.html" %}
+{% else %}
+  <div class="inspector-empty">
+    <div class="inspector-empty-mark">◇</div>
+    <div class="inspector-empty-text">Select a row to inspect it.</div>
+    <div class="inspector-empty-hint">
+      <kbd>j</kbd>/<kbd>k</kbd> or <kbd>↑</kbd>/<kbd>↓</kbd> to move ·
+      <kbd>Enter</kbd> to open ·
+      <kbd>Esc</kbd> to deselect
+    </div>
+  </div>
+{% endif %}
