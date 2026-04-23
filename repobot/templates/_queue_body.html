@@ -38,7 +38,7 @@
                 {% if bucket_cards %}
                   <details class="state-bucket state-bucket-{{ bucket_key }}"
                            id="bucket-{{ queue.id }}-{{ st | replace(' ', '_') | replace(':', '') }}-{{ bucket_key }}"
-                           {% if bucket_key != 'queue' and bucket_key != 'done' %}open{% endif %}>
+                           open>
                     <summary>
                       <span class="state-bucket-label">{{ bucket_label }}</span>
                       <span class="state-bucket-count">{{ bucket_cards | length }}</span>
