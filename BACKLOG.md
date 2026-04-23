@@ -65,15 +65,19 @@ line. No ceremony — this isn't a roadmap.
 
 ## Done
 
-- ~~Inbox-first IA (frontend-design skill): default view is now a
-  single attention-ranked stream across all queues with a right-
-  docked inspector panel. Replaces the 2D kanban as the primary
-  surface. Slim one-line rows (priority dot / PR icon / #NNNN /
-  title / author / queue chip / state flag), morph-swap inspector
-  content, j/k/enter/esc/gi/gb keyboard, filter chips for
-  queue+rank. Board view preserved via the toggle. Scales to N
-  queues without horizontal scroll becoming unusable.~~
-  2026-04-23
+- ~~Board-of-boards IA: one kanban visible at a time, adjacent
+  boards peek in from the sides (coverflow-style), tabs across
+  the top switch between queues, each queue renders its state
+  columns horizontally as a proper kanban. Attention badge on
+  each tab counts rank 0..3 items. Keyboard ←/→/h/l and 1..9
+  for fast switching; active-tab index persists in localStorage.
+  Scraps the earlier inbox+inspector approach in favor of
+  context-rich per-queue boards.~~ 2026-04-23
+
+- ~~Inbox-first IA (first attempt, scrapped): attention-ranked
+  row stream + right-side inspector. Clicking rows to open
+  inspector felt tedious; rows lacked context for decisions.
+  Replaced by board-of-boards above.~~ 2026-04-23
 
 - ~~HTMX migration: full-page reloads replaced with partial fragment
   swaps using Idiomorph for DOM-identity-preserving updates. Drawer
