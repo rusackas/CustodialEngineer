@@ -515,6 +515,97 @@ body {
 }
 .settings-modal-dot { color: var(--ink-faint); }
 
+/* Tab strip inside the settings modal. Form | Raw YAML. */
+.settings-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg-panel);
+}
+.settings-tab {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.settings-tab:hover { color: var(--ink); }
+.settings-tab.is-active {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+}
+
+.settings-tab-pane { display: none; }
+.settings-tab-pane.is-active { display: block; }
+
+/* Inline "info" affordance next to a field label — the title attribute
+   on the <label> is the actual tooltip; this is the visual cue. */
+.field-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 2px;
+  font-size: 9px;
+  color: var(--ink-mute);
+  border: 1px solid var(--rule-strong);
+  border-radius: 50%;
+  cursor: help;
+  font-family: var(--mono);
+  line-height: 1;
+  font-weight: 500;
+  vertical-align: middle;
+}
+label:hover .field-info {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
+/* YAML textarea — monospace, roomy. */
+.settings-yaml-textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--ink);
+  width: 100%;
+  resize: vertical;
+  min-height: 280px;
+  tab-size: 2;
+}
+.settings-yaml-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  background: var(--bg-card);
+}
+.settings-yaml-error {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  padding: 6px 9px;
+  border-radius: 3px;
+  margin-top: 2px;
+  min-height: 0;
+  display: none;
+  white-space: pre-wrap;
+}
+.settings-yaml-error:not(:empty) { display: block; }
+
 .settings-section {
   padding: 14px 18px;
   border-bottom: 1px dashed var(--rule-strong);

@@ -79,3 +79,75 @@ def update_queue_definition(queue_id: str, updates: dict) -> dict:
         y.dump(doc, f)
     os.replace(tmp, CONFIG_PATH)
     return dict(target)
+
+
+def _yaml_roundtrip():
+    """Shared ruamel.yaml instance for the roundtrip-preserving edits."""
+    from ruamel.yaml import YAML
+    y = YAML()
+    y.preserve_quotes = True
+    y.width = 10_000
+    y.indent(mapping=2, sequence=4, offset=2)
+    return y
+
+
+def get_queue_block_yaml(queue_id: str) -> str:
+    """Serialize just one queue's block from config.yaml as a YAML
+    string, preserving ordering + style. Used by the settings-modal's
+    raw editor so the user sees the exact shape they can round-trip."""
+    import io
+    y = _yaml_roundtrip()
+    with open(CONFIG_PATH) as f:
+        doc = y.load(f)
+    queues = doc.get("queues") or []
+    target = next((q for q in queues if q.get("id") == queue_id), None)
+    if target is None:
+        raise KeyError(queue_id)
+    buf = io.StringIO()
+    y.dump(target, buf)
+    return buf.getvalue()
+
+
+def replace_queue_block(queue_id: str, yaml_text: str) -> dict:
+    """Parse a YAML string as one queue block and replace the matching
+    entry in config.yaml. Validates:
+      - parses as a mapping
+      - required keys present (id, title, initial_state, states)
+      - id matches the URL parameter (can't rename via YAML save)
+    Raises ValueError with a human-readable explanation on any
+    validation failure. Returns the new queue block on success.
+    """
+    y = _yaml_roundtrip()
+    try:
+        parsed = y.load(yaml_text)
+    except Exception as exc:
+        raise ValueError(f"YAML parse error: {exc}")
+    if not isinstance(parsed, dict):
+        raise ValueError("YAML must describe a single queue mapping")
+    required = {"id", "title", "initial_state", "states"}
+    missing = required - set(parsed.keys())
+    if missing:
+        raise ValueError(
+            "missing required keys: " + ", ".join(sorted(missing)))
+    if parsed.get("id") != queue_id:
+        raise ValueError(
+            f"id mismatch — YAML says `{parsed.get('id')}`, "
+            f"expected `{queue_id}`. Queue IDs can't be renamed "
+            f"via the settings UI (state file is keyed by id).")
+
+    with open(CONFIG_PATH) as f:
+        doc = y.load(f)
+    queues = doc.get("queues") or []
+    for i, q in enumerate(queues):
+        if q.get("id") == queue_id:
+            queues[i] = parsed
+            break
+    else:
+        raise KeyError(queue_id)
+
+    import os
+    tmp = CONFIG_PATH.with_suffix(".yaml.tmp")
+    with open(tmp, "w") as f:
+        y.dump(doc, f)
+    os.replace(tmp, CONFIG_PATH)
+    return dict(parsed)

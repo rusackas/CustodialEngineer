@@ -148,117 +148,157 @@
           <button type="button" class="modal-close" data-close-settings>{{ icon('x', size=16) }}</button>
         </div>
 
-        <section class="settings-section">
-          <div class="settings-section-title">Runtime</div>
-          <div class="settings-section-help">
-            Hot-applies to the live board. Doesn't touch <code>config.yaml</code>.
-          </div>
-          <form method="post"
-                action="/queues/{{ queue.id }}/settings"
-                class="settings-form settings-form-static">
-            <div class="settings-grid">
-              <label>
-                <span>Max in flight</span>
-                <input type="number" name="max_in_flight" min="0" max="500"
-                       value="{{ eff_max }}" required />
-              </label>
-              <label>
-                <span>Worker slots</span>
-                <input type="number" name="worker_slots" min="1"
-                       max="{{ s.cap or 8 }}"
-                       value="{{ eff_slots }}" required />
-              </label>
-            </div>
-            <label class="settings-toggle">
-              <input type="checkbox" name="intake_paused" value="1"
-                     {% if queue.intake_paused %}checked{% endif %} />
-              <span>Pause intake</span>
-            </label>
-            <div class="settings-hint">Worker slots cap concurrent triage per tick (≤ global cap {{ s.cap or 8 }}).</div>
-            <button type="submit">Save runtime</button>
-          </form>
-        </section>
+        {# Tab strip. JS flips .is-active on the matching button + pane. #}
+        <div class="settings-tabs" role="tablist">
+          <button type="button" class="settings-tab is-active"
+                  role="tab" aria-selected="true"
+                  data-settings-tab="form">Form</button>
+          <button type="button" class="settings-tab"
+                  role="tab" aria-selected="false"
+                  data-settings-tab="yaml">Raw YAML</button>
+        </div>
 
-        <section class="settings-section">
-          <div class="settings-section-title">Query</div>
-          <div class="settings-section-help">
-            Writes to <code>config.yaml</code>, wipes this queue's
-            cards, re-fetches. State machine and id stay untouched.
-          </div>
-          <form method="post"
-                action="/queues/{{ queue.id }}/definition"
-                class="settings-form settings-form-static">
-            <label>
-              <span>Title</span>
-              <input type="text" name="title" value="{{ queue.title }}" />
-            </label>
-            <div class="settings-grid">
-              <label>
-                <span>Author</span>
-                <input type="text" name="q_author"
-                       value="{{ _q.get('author', '') }}"
-                       placeholder="self, app/dependabot, a-login" />
-              </label>
-              <label>
-                <span>State</span>
-                <select name="q_state">
-                  {% set _st = _q.get('state', 'open') %}
-                  {% for opt in ['open', 'closed', 'merged', 'all'] %}
-                    <option value="{{ opt }}"
-                      {% if _st == opt %}selected{% endif %}>{{ opt }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-              <label>
-                <span>Review requested</span>
-                <input type="text" name="q_review_requested"
-                       value="{{ _q.get('review_requested', '') }}"
-                       placeholder="self or a-login" />
-              </label>
-              <label>
-                <span>Assignee</span>
-                <input type="text" name="q_assignee"
-                       value="{{ _q.get('assignee', '') }}"
-                       placeholder="self or a-login" />
-              </label>
-              <label>
-                <span>Milestone</span>
-                <input type="text" name="q_milestone"
-                       value="{{ _q.get('milestone', '') }}"
-                       placeholder="milestone name" />
-              </label>
-              <label>
-                <span>Labels</span>
-                <input type="text" name="q_labels"
-                       value="{{ (_q.get('labels') or []) | join(', ') }}"
-                       placeholder="comma-separated" />
-              </label>
+        <div class="settings-tab-pane is-active" data-settings-pane="form">
+          <section class="settings-section">
+            <div class="settings-section-title">Runtime</div>
+            <div class="settings-section-help">
+              Hot-applies to the live board. Doesn't touch <code>config.yaml</code>.
             </div>
-            <button type="submit">Save &amp; refetch</button>
-          </form>
-        </section>
+            <form method="post"
+                  action="/queues/{{ queue.id }}/settings"
+                  class="settings-form settings-form-static">
+              <div class="settings-grid">
+                <label title="Max non-done items to keep in this queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub — excess done cards age out.">
+                  <span>Max in flight <span class="field-info">ⓘ</span></span>
+                  <input type="number" name="max_in_flight" min="0" max="500"
+                         value="{{ eff_max }}" required />
+                </label>
+                <label title="How many Claude triage sessions this queue may run per refresh tick. Capped by the global session cap ({{ s.cap or 8 }}). Use a lower number to deprioritize a noisy queue.">
+                  <span>Worker slots <span class="field-info">ⓘ</span></span>
+                  <input type="number" name="worker_slots" min="1"
+                         max="{{ s.cap or 8 }}"
+                         value="{{ eff_slots }}" required />
+                </label>
+              </div>
+              <label class="settings-toggle"
+                     title="When paused, no new items are pulled from GitHub. Existing cards continue to refresh, triage, and run actions normally.">
+                <input type="checkbox" name="intake_paused" value="1"
+                       {% if queue.intake_paused %}checked{% endif %} />
+                <span>Pause intake</span>
+              </label>
+              <div class="settings-hint">Worker slots cap concurrent triage per tick (≤ global cap {{ s.cap or 8 }}).</div>
+              <button type="submit">Save runtime</button>
+            </form>
+          </section>
 
-        <section class="settings-section settings-section-meta">
-          <div class="settings-section-title">State machine</div>
-          <div class="settings-section-help">
-            Read-only — editing these shapes the board's columns and
-            requires a restart. Edit <code>config.yaml</code> directly.
-          </div>
-          <dl class="settings-kv">
-            <dt>initial_state</dt>
-            <dd><code>{{ queue.initial_state }}</code></dd>
-            <dt>done_state</dt>
-            <dd><code>{{ queue.done_state or 'done' }}</code></dd>
-            {% if queue.awaiting_state %}
-              <dt>awaiting_state</dt>
-              <dd><code>{{ queue.awaiting_state }}</code></dd>
-            {% endif %}
-            <dt>states</dt>
-            <dd>
-              {% for s in queue.states %}<code>{{ s }}</code>{% if not loop.last %} · {% endif %}{% endfor %}
-            </dd>
-          </dl>
-        </section>
+          <section class="settings-section">
+            <div class="settings-section-title">Query</div>
+            <div class="settings-section-help">
+              Writes to <code>config.yaml</code>, wipes this queue's
+              cards, re-fetches. State machine and id stay untouched.
+            </div>
+            <form method="post"
+                  action="/queues/{{ queue.id }}/definition"
+                  class="settings-form settings-form-static">
+              <label title="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'">
+                <span>Title <span class="field-info">ⓘ</span></span>
+                <input type="text" name="title" value="{{ queue.title }}" />
+              </label>
+              <div class="settings-grid">
+                <label title="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self' (you), 'app/dependabot' (a bot), 'rusackas' (a specific user). Leave blank for any author.">
+                  <span>Author <span class="field-info">ⓘ</span></span>
+                  <input type="text" name="q_author"
+                         value="{{ _q.get('author', '') }}"
+                         placeholder="self, app/dependabot, rusackas" />
+                </label>
+                <label title="The PR state to pull.&#10;&#10;'open' is the usual choice. 'closed' is useful for a retrospective queue; 'merged' for a recent-landings feed.">
+                  <span>State <span class="field-info">ⓘ</span></span>
+                  <select name="q_state">
+                    {% set _st = _q.get('state', 'open') %}
+                    {% for opt in ['open', 'closed', 'merged', 'all'] %}
+                      <option value="{{ opt }}"
+                        {% if _st == opt %}selected{% endif %}>{{ opt }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label title="Pull PRs where this login is a requested reviewer.&#10;&#10;Example: 'self' to get a 'my review queue'. Also works with team slugs like 'apache/superset-committers'.">
+                  <span>Review requested <span class="field-info">ⓘ</span></span>
+                  <input type="text" name="q_review_requested"
+                         value="{{ _q.get('review_requested', '') }}"
+                         placeholder="self or a-login" />
+                </label>
+                <label title="Pull PRs assigned to this login.&#10;&#10;Example: 'self' for your assigned work. Combine with state='open' for an in-progress feed.">
+                  <span>Assignee <span class="field-info">ⓘ</span></span>
+                  <input type="text" name="q_assignee"
+                         value="{{ _q.get('assignee', '') }}"
+                         placeholder="self or a-login" />
+                </label>
+                <label title="Filter by milestone name.&#10;&#10;Example: 'v5.1' for PRs targeting the v5.1 release. Exact match.">
+                  <span>Milestone <span class="field-info">ⓘ</span></span>
+                  <input type="text" name="q_milestone"
+                         value="{{ _q.get('milestone', '') }}"
+                         placeholder="milestone name" />
+                </label>
+                <label title="Filter by labels (comma-separated, all must match).&#10;&#10;Examples: 'bug', 'good first issue, help wanted', 'needs-review'">
+                  <span>Labels <span class="field-info">ⓘ</span></span>
+                  <input type="text" name="q_labels"
+                         value="{{ (_q.get('labels') or []) | join(', ') }}"
+                         placeholder="bug, needs-review" />
+                </label>
+              </div>
+              <button type="submit">Save &amp; refetch</button>
+            </form>
+          </section>
+
+          <section class="settings-section settings-section-meta">
+            <div class="settings-section-title">State machine</div>
+            <div class="settings-section-help">
+              Read-only here. Editing these shapes the board's columns
+              and requires the YAML tab (or a direct <code>config.yaml</code> edit)
+              + a server restart if you add/remove states.
+            </div>
+            <dl class="settings-kv">
+              <dt>initial_state</dt>
+              <dd><code>{{ queue.initial_state }}</code></dd>
+              <dt>done_state</dt>
+              <dd><code>{{ queue.done_state or 'done' }}</code></dd>
+              {% if queue.awaiting_state %}
+                <dt>awaiting_state</dt>
+                <dd><code>{{ queue.awaiting_state }}</code></dd>
+              {% endif %}
+              <dt>states</dt>
+              <dd>
+                {% for s in queue.states %}<code>{{ s }}</code>{% if not loop.last %} · {% endif %}{% endfor %}
+              </dd>
+            </dl>
+          </section>
+        </div>
+
+        <div class="settings-tab-pane" data-settings-pane="yaml"
+             data-raw-url="/queues/{{ queue.id }}/definition/raw">
+          <section class="settings-section">
+            <div class="settings-section-title">Raw YAML</div>
+            <div class="settings-section-help">
+              Escape hatch for anything the form can't express. Edit
+              the queue's full <code>config.yaml</code> block below;
+              the <code>id</code> field can't change (the state file
+              is keyed by it). Save writes back to <code>config.yaml</code>,
+              clears this queue's cards, and re-fetches.
+            </div>
+            <form method="post"
+                  action="/queues/{{ queue.id }}/definition/raw"
+                  class="settings-form settings-form-static settings-form-yaml">
+              <textarea name="yaml_text"
+                        class="settings-yaml-textarea"
+                        spellcheck="false"
+                        data-yaml-editor
+                        rows="20"
+                        placeholder="Loading queue definition…"></textarea>
+              <div class="settings-yaml-error" data-yaml-error></div>
+              <button type="submit">Save &amp; refetch</button>
+            </form>
+          </section>
+        </div>
       </div>
     </div>
   {% endfor %}
@@ -1270,9 +1310,43 @@
         });
       m.classList.add('is-open');
       m.setAttribute('aria-hidden', 'false');
+      // Reset to the Form tab every open.
+      setSettingsTab(m, 'form');
       // Focus the first interactive control for keyboard users.
       const firstInput = m.querySelector('input, select, button');
       if (firstInput) setTimeout(() => firstInput.focus(), 30);
+    }
+
+    function setSettingsTab(modal, which) {
+      modal.querySelectorAll('[data-settings-tab]').forEach(btn => {
+        const on = btn.dataset.settingsTab === which;
+        btn.classList.toggle('is-active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      modal.querySelectorAll('[data-settings-pane]').forEach(pane => {
+        pane.classList.toggle('is-active',
+          pane.dataset.settingsPane === which);
+      });
+      if (which === 'yaml') {
+        const pane = modal.querySelector('[data-settings-pane="yaml"]');
+        loadYamlEditor(pane);
+      }
+    }
+
+    async function loadYamlEditor(pane) {
+      if (!pane || pane.dataset.yamlLoaded === '1') return;
+      const ta = pane.querySelector('[data-yaml-editor]');
+      if (!ta) return;
+      try {
+        const r = await fetch(pane.dataset.rawUrl,
+                              { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        ta.value = d.yaml || '';
+        pane.dataset.yamlLoaded = '1';
+      } catch (err) {
+        ta.placeholder = 'Failed to load YAML: ' + err.message;
+      }
     }
     function closeSettingsModals() {
       document.querySelectorAll('[data-settings-modal].is-open')
@@ -1287,9 +1361,34 @@
         openSettingsModal(trigger.dataset.settingsTarget);
         return;
       }
+      const tabBtn = e.target.closest('[data-settings-tab]');
+      if (tabBtn) {
+        const modal = tabBtn.closest('[data-settings-modal]');
+        if (modal) setSettingsTab(modal, tabBtn.dataset.settingsTab);
+        return;
+      }
       if (e.target.closest('[data-close-settings]')) {
         closeSettingsModals();
       }
+    });
+
+    // YAML save: let the form POST normally via hx-boost, but catch
+    // validation errors (400) and show them inline in the modal
+    // instead of replacing the page.
+    document.body.addEventListener('htmx:responseError', (evt) => {
+      const form = evt.detail && evt.detail.elt;
+      if (!form || !form.classList.contains('settings-form-yaml')) return;
+      const pane = form.closest('[data-settings-pane]');
+      const err = pane && pane.querySelector('[data-yaml-error]');
+      if (!err) return;
+      let detail = 'Save failed.';
+      try {
+        const parsed = JSON.parse(evt.detail.xhr.responseText);
+        if (parsed && parsed.detail) detail = parsed.detail;
+      } catch {}
+      err.textContent = detail;
+      // Prevent the generic "Response error" toast HTMX would show.
+      evt.stopPropagation();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape'

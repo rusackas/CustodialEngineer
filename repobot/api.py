@@ -17,7 +17,13 @@ from .actions import (
     continue_action,
     dispatch,
 )
-from .config import PROJECT_ROOT, load_config, update_queue_definition
+from .config import (
+    PROJECT_ROOT,
+    get_queue_block_yaml,
+    load_config,
+    replace_queue_block,
+    update_queue_definition,
+)
 from .queues import (
     _mutate,
     _now,
@@ -757,6 +763,47 @@ def update_queue_definition_endpoint(
         daemon=True,
     ).start()
 
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.get("/queues/{queue_id}/definition/raw")
+def queue_definition_raw(queue_id: str):
+    """Return the queue's config.yaml block as a YAML string. Used
+    by the settings modal's YAML tab to load the editor with the
+    current content."""
+    try:
+        return JSONResponse({"yaml": get_queue_block_yaml(queue_id)})
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown queue")
+
+
+@app.post("/queues/{queue_id}/definition/raw")
+def update_queue_definition_raw(queue_id: str,
+                                yaml_text: str = Form(...)):
+    """Replace the queue's entire block in config.yaml from a raw
+    YAML string. Validation: must parse, must be a mapping, must
+    include the required keys, and the id must match the URL param
+    (renaming via YAML save isn't allowed because the state file is
+    keyed by id)."""
+    try:
+        replace_queue_block(queue_id, yaml_text)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown queue")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Same post-save behavior as the structured form: clear items
+    # and kick a fresh fetch so the new definition takes effect.
+    def _clear(state):
+        bucket = state.get("queues", {}).get(queue_id)
+        if bucket:
+            bucket["items"] = []
+    _mutate(_clear)
+    threading.Thread(
+        target=run_queue, args=(queue_id,),
+        kwargs={"wait_for_triage": False},
+        daemon=True,
+    ).start()
     return RedirectResponse(url="/", status_code=303)
 
 
