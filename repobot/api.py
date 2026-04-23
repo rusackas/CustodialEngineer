@@ -87,10 +87,70 @@ async def htmx_swallow_redirects(request: Request, call_next):
     return response
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+from datetime import datetime, timezone
 from markupsafe import Markup as _Markup
+
 templates.env.globals["icon"] = lambda name, **kw: _Markup(_icons.render(name, **kw))
 templates.env.globals["rank_bucket"] = _inbox.rank_bucket
 templates.env.globals["BUCKETS"] = _inbox.BUCKETS
+
+
+def _parse_iso(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _time_ago(iso: str | None) -> str:
+    """Humanize an ISO timestamp into relative English. Empty on None.
+    Granularity deliberately low — "3 weeks ago" is more scannable
+    than "19 days ago" when you're looking at a card."""
+    dt = _parse_iso(iso)
+    if dt is None:
+        return ""
+    now = datetime.now(timezone.utc)
+    delta = now - dt
+    secs = delta.total_seconds()
+    if secs < 0:
+        return "just now"
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        mins = int(secs // 60)
+        return f"{mins} minute{'s' if mins != 1 else ''} ago"
+    if secs < 86400:
+        hours = int(secs // 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(secs // 86400)
+    if days == 1:
+        return "yesterday"
+    if days < 14:
+        return f"{days} days ago"
+    if days < 60:
+        weeks = days // 7
+        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+    if days < 365:
+        months = days // 30
+        return f"{months} month{'s' if months != 1 else ''} ago"
+    years = days // 365
+    return f"{years} year{'s' if years != 1 else ''} ago"
+
+
+def _exact_time(iso: str | None) -> str:
+    """Format an ISO timestamp as a tooltip-friendly local-ish string,
+    e.g. 'Apr 21, 2026 · 14:30 UTC'. Always UTC to avoid timezone
+    mismatches between the user and the server."""
+    dt = _parse_iso(iso)
+    if dt is None:
+        return ""
+    return dt.astimezone(timezone.utc).strftime("%b %d, %Y · %H:%M UTC")
+
+
+templates.env.globals["time_ago"] = _time_ago
+templates.env.globals["exact_time"] = _exact_time
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 

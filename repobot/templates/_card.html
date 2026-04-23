@@ -21,6 +21,19 @@
                     {% if author_login %}
                       <span class="card-author" title="PR author">@{{ author_login }}</span>
                     {% endif %}
+                    {% set _created = (item.raw or {}).get('createdAt') %}
+                    {% set _updated = (item.raw or {}).get('updatedAt') %}
+                    {% if _created %}
+                      <span class="card-ts tip" data-tip="Opened {{ exact_time(_created) }}">
+                        opened {{ time_ago(_created) }}
+                      </span>
+                    {% endif %}
+                    {% if _updated and _updated != _created %}
+                      <span class="card-ts-sep">·</span>
+                      <span class="card-ts tip" data-tip="Last updated {{ exact_time(_updated) }}">
+                        updated {{ time_ago(_updated) }}
+                      </span>
+                    {% endif %}
                     <span class="card-meta-spacer"></span>
                     <div class="card-title-chips">
                       <form method="post"
@@ -42,7 +55,10 @@
                 </header>
                 {% if st == awaiting_state %}
                   <div class="parked-meta" title="Auto-unparks on the next PR update (review, comment, push, CI result).">
-                    parked{% if item.parked_at %} · since {{ item.parked_at[:10] }}{% endif %}
+                    parked
+                    {% if item.parked_at %}
+                      · <span class="tip" data-tip="Parked {{ exact_time(item.parked_at) }}">{{ time_ago(item.parked_at) }}</span>
+                    {% endif %}
                   </div>
                 {% else %}
                 {% if item.proposal %}

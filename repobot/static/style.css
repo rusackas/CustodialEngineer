@@ -547,6 +547,61 @@ body {
 .settings-tab-pane { display: none; }
 .settings-tab-pane.is-active { display: block; }
 
+/* Reusable styled tooltip. Any element with `.tip[data-tip="..."]`
+   gets a dark-bubble tooltip above it on hover or keyboard focus.
+   Falls back to nothing when the browser doesn't support ::after
+   on the element (rare). */
+.tip[data-tip] {
+  position: relative;
+  cursor: help;
+}
+.tip[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  min-width: 120px;
+  max-width: 280px;
+  padding: 7px 10px;
+  background: var(--ink);
+  color: var(--bg-card);
+  border-radius: 5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11.5px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.45;
+  white-space: pre-line;
+  text-align: left;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.22);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 200;
+}
+.tip[data-tip]::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border: 5px solid transparent;
+  border-top-color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 201;
+}
+.tip[data-tip]:hover::after,
+.tip[data-tip]:focus-visible::after,
+.tip[data-tip]:hover::before,
+.tip[data-tip]:focus-visible::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* Inline "info" affordance next to a field label.
    - Visual: single Octicon `info` glyph in ink-mute (no outer ring —
      the SVG already has its own circle).
@@ -1490,6 +1545,17 @@ button.clear-done:hover { background: #ffd7d5; }
   background: transparent;
   margin: 0;
   white-space: nowrap;
+}
+.card-ts {
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+}
+.card-ts-sep {
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  padding: 0 1px;
 }
 .card-title-chips {
   display: inline-flex;
