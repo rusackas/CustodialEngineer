@@ -209,6 +209,18 @@ def index(request: Request):
                 break
         live_by_item[f"{qid}:{iid}"] = ls
 
+    # Per-queue count of "needs your attention" items. Ranks 0..3 are
+    # the ones that actually want a click (needs_human / interrupted /
+    # error / verdict-ready). Used for the tab badges.
+    queue_attention_counts: dict[str, int] = {}
+    for q in queues_cfg:
+        qid = q["id"]
+        n = 0
+        for item in state.get("queues", {}).get(qid, {}).get("items", []):
+            if _inbox.attention_rank(item, q) <= 3:
+                n += 1
+        queue_attention_counts[qid] = n
+
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -219,6 +231,7 @@ def index(request: Request):
             "pending": pending,
             "stats": stats_data,
             "live_by_item": live_by_item,
+            "queue_attention_counts": queue_attention_counts,
         },
     )
 
@@ -429,46 +442,6 @@ def _ctx_for_queue(request: Request, queue_id: str) -> dict:
         "done_state": done_state,
         "awaiting_state": awaiting_state,
     }
-
-
-@app.get("/fragments/inbox", response_class=HTMLResponse)
-def inbox_stream(request: Request,
-                 queue: str | None = None,
-                 rank: str | None = None,
-                 include_done: int = 0):
-    """Attention-ranked cross-queue stream for the inbox view.
-    Query params:
-      `queue`  — comma-separated queue ids to include; default: all
-      `rank`   — comma-separated rank names to include; default: all non-done
-      `include_done` — 1 to surface done items too
-    """
-    queues_cfg = get_queues_config()
-    state = load_state()
-    queue_ids = [q.strip() for q in queue.split(",")] if queue else None
-    rank_names = [r.strip() for r in rank.split(",")] if rank else None
-    stream = _inbox.attention_stream(
-        queues_cfg, state,
-        include_done=bool(include_done),
-        queue_ids=queue_ids,
-        rank_names=rank_names,
-    )
-    return templates.TemplateResponse(
-        request, "_inbox_stream.html",
-        {"request": request, "stream": stream},
-    )
-
-
-@app.get("/inspect/{queue_id}/{item_id}", response_class=HTMLResponse)
-def inspect(request: Request, queue_id: str, item_id: int):
-    """Render one card fully, for the inspector panel. Uses the same
-    _card.html the board uses — styling differentiates based on the
-    `.inspector` ancestor context."""
-    ctx = _ctx_for_queue(request, queue_id)
-    item = next((i for i in ctx["q_items"] if i.get("id") == item_id), None)
-    if item is None:
-        raise HTTPException(status_code=404, detail="item not found")
-    ctx["item"] = item
-    return templates.TemplateResponse(request, "_inspector.html", ctx)
 
 
 @app.get("/queues/{queue_id}/body", response_class=HTMLResponse)

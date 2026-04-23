@@ -425,112 +425,79 @@ body {
   vertical-align: 2px;
 }
 
-/* ============================== workspace ==============================
-   Two views of the same data, toggled by `body[data-view]`:
-   - inbox:  a single attention-ranked stream + right-side inspector
-   - board:  the existing 2D kanban (kept for spatial overview)
-   The JS flips a class/attribute; CSS here handles visibility.
+/* ============================== board of boards ======================
+   One queue board visible at a time; adjacent boards peek in from
+   the sides with reduced opacity + slight scale, like a physical
+   stack of dossiers fanned out on a table. Tabs up top, keyboard
+   ←/→/1..9 also move between them.
    ------------------------------------------------------------------- */
 
-.view-bar {
+.boards-tabs {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 8px 2px;
-  margin: 0 0 14px;
-  font-size: 11.5px;
-  color: var(--ink-soft);
-  flex-wrap: wrap;
-}
-.view-mode {
-  display: inline-flex;
-  background: transparent;
-  border: 1px solid var(--rule-strong);
-  border-radius: 4px;
-  padding: 2px;
-}
-.view-mode-btn {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: var(--track-eyebrow);
-  text-transform: uppercase;
-  padding: 4px 12px;
-  background: transparent;
-  border: none;
-  color: var(--ink-mute);
-  cursor: pointer;
-  border-radius: 2px;
-  font-weight: 600;
-}
-.view-mode-btn[aria-selected="true"] {
-  background: var(--brand);
-  color: #fff;
-}
-.view-mode-btn:hover:not([aria-selected="true"]) {
-  color: var(--ink);
-  background: rgba(148, 163, 184, 0.15);
-}
-
-.view-filters { display: inline-flex; gap: 6px; }
-.filter-dropdown { position: relative; }
-.filter-dropdown summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 4px 9px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: var(--track-eyebrow);
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  border: 1px solid var(--rule-strong);
-  border-radius: 3px;
-  user-select: none;
-  font-weight: 600;
-}
-.filter-dropdown summary::-webkit-details-marker { display: none; }
-.filter-dropdown[open] summary { color: var(--ink); border-color: var(--ink-mute); }
-.filter-dropdown .filter-caret { color: var(--ink-faint); margin-left: 2px; }
-.filter-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
-  min-width: 200px;
-  background: #fff;
-  border: 1px solid var(--rule-strong);
-  border-radius: 6px;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
+  align-items: flex-end;
   gap: 2px;
+  margin-bottom: 14px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--rule-strong);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
-.filter-option {
-  display: flex;
+.boards-tabs::-webkit-scrollbar { display: none; }
+
+.boards-tab {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 9px 14px 11px;
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: transparent;
+  border: none;
   cursor: pointer;
-  border-radius: 3px;
-  text-transform: none;
-  letter-spacing: normal;
+  position: relative;
+  white-space: nowrap;
+  margin-bottom: -1px; /* overlaps the container border */
+  border-bottom: 2px solid transparent;
+  transition: color 0.18s ease, border-color 0.18s ease;
 }
-.filter-option:hover { background: var(--bg-inset); }
-.filter-option input { margin: 0; }
-
-.view-bar-spacer { flex: 1; }
-.view-bar-hint {
+.boards-tab:hover { color: var(--ink); }
+.boards-tab.is-active,
+.boards-tab[aria-selected="true"] {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+}
+.boards-tab-title { font-size: inherit; }
+.boards-tab-badge {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  padding: 1px 6px;
+  min-width: 16px;
+  text-align: center;
+  background: var(--warn);
+  color: #fff;
+  border-radius: 8px;
+  text-transform: none;
+}
+.boards-tab.is-active .boards-tab-badge { background: var(--accent); }
+.boards-tabs-spacer { flex: 1 0 auto; min-width: 10px; }
+.boards-tabs-hint {
+  padding: 0 6px 8px;
   font-family: var(--mono);
   font-size: 10px;
   color: var(--ink-mute);
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
-.view-bar-hint kbd {
+.boards-tabs-hint kbd {
   font-family: var(--mono);
   font-size: 9.5px;
   padding: 1px 5px;
@@ -541,353 +508,57 @@ body {
   color: var(--ink);
 }
 
-.workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 460px;
-  gap: 18px;
-  align-items: stretch;
+.boards-stage {
+  position: relative;
+  overflow: hidden;
+  padding: 4px 0 20px;
   min-height: 60vh;
 }
-.workspace-pane { min-width: 0; }
-.workspace-inbox {
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid var(--rule);
-  border-top: 2px solid var(--brand);
-  border-radius: 0 0 6px 6px;
-  padding: 2px;
-  overflow: hidden;
-}
-.inbox-stream-wrap {
+.boards-reel {
   display: flex;
-  flex-direction: column;
-  min-height: 200px;
-}
-.inbox-loading, .inbox-empty {
-  padding: 40px 20px;
-  text-align: center;
-  color: var(--ink-mute);
-  font-family: var(--mono);
-  font-size: 11px;
-}
-.inbox-empty-mark {
-  font-size: 22px;
-  margin-bottom: 8px;
-  color: var(--ink-faint);
-}
-.inbox-empty-text { font-size: 12px; }
-
-.inbox-section-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 12px 4px;
-  font-family: var(--mono);
-  font-size: var(--size-eyebrow);
-  color: var(--ink-mute);
-  text-transform: uppercase;
-  letter-spacing: var(--track-eyebrow);
-  font-weight: 700;
-}
-.inbox-section-rule {
-  flex: 1;
-  height: 1px;
-  background: var(--rule);
-}
-
-.inbox-row {
-  --rank-tone: var(--ink-faint);
-  --rank-wash: transparent;
-  display: grid;
-  /* rail·pr-icon · num · title · author · queue · flag · action */
-  grid-template-columns: 14px 18px 56px minmax(0, 1fr) auto auto auto auto;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px 7px 14px;
-  font-size: 12px;
-  color: var(--ink);
-  border: none;
-  background: var(--rank-wash);
-  width: 100%;
-  text-align: left;
-  cursor: pointer;
-  border-radius: 0;
-  position: relative;
-  border-bottom: 1px solid var(--rule);
-  font-family: inherit;
-  transition: background 0.15s ease;
-}
-.inbox-row:last-child { border-bottom: none; }
-.inbox-row::before {
-  /* Left rail colored to the rank — always present, width varies. */
-  content: "";
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 3px;
-  background: var(--rank-tone);
-  opacity: 0.55;
-}
-.inbox-row:hover { background: rgba(148, 163, 184, 0.14); }
-.inbox-row[aria-selected="true"],
-.inbox-row.is-selected {
-  background: var(--accent-soft);
-}
-.inbox-row[aria-selected="true"]::before,
-.inbox-row.is-selected::before {
-  background: var(--accent);
-  opacity: 1;
-}
-.inbox-row:focus { outline: none; }
-.inbox-row:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--accent);
-}
-
-/* Rank-driven color: dot, rail, and a subtle row wash. */
-.inbox-rank-needs_human  { --rank-tone: var(--danger); --rank-wash: #fef2f2; }
-.inbox-rank-interrupted  { --rank-tone: #f97316;       --rank-wash: #fff7ed; }
-.inbox-rank-error        { --rank-tone: var(--danger); --rank-wash: #fef2f2; }
-.inbox-rank-verdict      { --rank-tone: var(--warn);   --rank-wash: transparent; }
-.inbox-rank-idle_session { --rank-tone: #f59e0b;       --rank-wash: #fffbeb; }
-.inbox-rank-running      { --rank-tone: var(--accent); --rank-wash: #eef4fb; }
-.inbox-rank-triaging     { --rank-tone: var(--accent); --rank-wash: #eef4fb; }
-.inbox-rank-awaiting     { --rank-tone: #94a3b8;       --rank-wash: #f8fafc; }
-.inbox-rank-done         { --rank-tone: var(--ok);     --rank-wash: #ecfdf5; }
-
-.inbox-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--rank-tone);
-  justify-self: center;
-}
-/* Pulse on active-work rows so the spinner isn't the only motion. */
-.inbox-rank-running .inbox-dot,
-.inbox-rank-triaging .inbox-dot {
-  animation: inbox-pulse 1.4s ease-in-out infinite;
-}
-@keyframes inbox-pulse {
-  0%, 100% { opacity: 1;   transform: scale(1); }
-  50%      { opacity: 0.5; transform: scale(0.75); }
-}
-
-.inbox-row-action {
-  display: inline-flex;
-  margin: 0;
-  justify-self: end;
-}
-.inbox-action-btn {
-  font-size: 11px;
-  padding: 3px 10px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  white-space: nowrap;
-}
-.inbox-action-placeholder {
-  min-width: 1px;
-}
-
-/* Optimistic pending state: row flashes as "queued" the moment the
-   action button is clicked, before the polling tick comes back with
-   the server-side state change. Visually pre-empts the 3s lag. */
-.inbox-row.is-pending {
-  --rank-wash: var(--accent-soft);
-  --rank-tone: var(--accent);
-}
-.inbox-row.is-pending .inbox-action-btn {
-  opacity: 0.6;
-  cursor: wait;
-}
-.inbox-row.is-pending::after {
-  content: "queued…";
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-family: var(--mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: var(--track-eyebrow);
-  color: var(--accent-strong);
-  font-weight: 700;
-  padding: 2px 7px;
-  background: #fff;
-  border: 1px solid var(--accent);
-  border-radius: 3px;
-}
-
-.inbox-pr-state {
-  display: inline-flex;
-  align-items: center;
-  line-height: 0;
-}
-.inbox-pr-state.pr-state-open { color: #1a7f37; }
-.inbox-pr-state.pr-state-draft { color: #6e7781; }
-
-.inbox-num {
-  font-family: var(--mono);
-  font-weight: 600;
-  color: var(--accent);
-  font-size: 11.5px;
-}
-.inbox-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-  color: var(--ink);
-}
-.inbox-author {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink-soft);
-  white-space: nowrap;
-}
-.inbox-queue {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  text-transform: uppercase;
-  letter-spacing: var(--track-eyebrow);
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 2px;
-  background: var(--bg-inset);
-  color: var(--ink-soft);
-  white-space: nowrap;
-}
-.inbox-state {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--ink-mute);
-  text-transform: lowercase;
-  letter-spacing: -0.005em;
-  white-space: nowrap;
-}
-.inbox-findings, .inbox-flag {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: var(--track-eyebrow);
-  padding: 2px 7px;
-  border-radius: 3px;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.inbox-findings { background: var(--warn-soft); color: var(--warn); }
-.inbox-flag-needs_human { background: var(--danger-soft); color: var(--danger); }
-.inbox-flag-interrupted { background: #fff7ed; color: #c2410c; }
-.inbox-flag-error       { background: var(--danger-soft); color: var(--danger); }
-.inbox-flag-triaging    { background: var(--accent-soft); color: var(--accent-strong); }
-.inbox-flag-running     { background: var(--accent-soft); color: var(--accent-strong); }
-.inbox-flag-idle        { background: #fef3c7; color: #92400e; }
-
-/* ============================== inspector ==============================
-   Right-docked panel. One card shown in full width; morph-swap when
-   row selection changes.
-   ------------------------------------------------------------------- */
-.workspace-inspector { position: sticky; top: 0; align-self: flex-start; }
-.inspector-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-  max-height: calc(100vh - 180px);
-  overflow-y: auto;
-  position: relative;
-}
-.inspector-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--rule);
-}
-.inspector-eyebrow {
-  font-family: var(--mono);
-  font-size: var(--size-eyebrow);
-  text-transform: uppercase;
-  letter-spacing: var(--track-eyebrow);
-  font-weight: 700;
-  color: var(--ink-mute);
-}
-.inspector-close {
-  background: transparent;
-  border: none;
-  color: var(--ink-mute);
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
-  line-height: 0;
-}
-.inspector-close:hover { background: var(--bg-inset); color: var(--ink); }
-.inspector-content { padding: 14px; }
-.inspector-empty {
-  padding: 60px 20px;
-  text-align: center;
-  color: var(--ink-mute);
-}
-.inspector-empty-mark {
-  font-size: 26px;
-  color: var(--ink-faint);
-  margin-bottom: 10px;
-}
-.inspector-empty-text {
-  font-size: 13px;
-  color: var(--ink-soft);
-  margin-bottom: 14px;
-}
-.inspector-empty-hint {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink-mute);
-  line-height: 1.6;
-}
-.inspector-empty-hint kbd {
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 1px 5px;
-  background: #fff;
-  border: 1px solid var(--rule-strong);
-  border-bottom-width: 2px;
-  border-radius: 3px;
-  color: var(--ink);
-}
-.inspector-breadcrumb {
-  font-family: var(--mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: var(--track-eyebrow);
-  color: var(--ink-mute);
-  margin-bottom: 10px;
-  font-weight: 600;
-}
-.inspector-sep { color: var(--ink-faint); margin: 0 6px; }
-
-/* Inspector scoping: the card inside the inspector drops its margins
-   and shadow since the panel already provides the container. */
-.inspector-content .card {
-  box-shadow: none;
-  border-radius: 0;
-  padding: 0;
-  margin: 0;
-}
-.inspector-content .card::before { display: none; } /* no left rail */
-
-/* View toggle: show/hide inbox vs board. */
-body[data-view="inbox"] .board { display: none; }
-body[data-view="board"] .workspace { display: none; }
-body[data-view="board"] .view-bar-hint { display: none; }
-
-.board {
-  display: flex;
-  gap: 18px;
   align-items: flex-start;
-  overflow-x: auto;
-  padding-bottom: 24px;
+  gap: 24px;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+  padding: 6px 0;
+}
+
+/* Each queue is a fixed-width panel in the reel. Non-active boards
+   fade + scale; the active one sits centered and crisp. */
+.boards-reel > .queue {
+  flex: 0 0 min(920px, 86vw);
+  max-width: none;
+  transition:
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.45s ease,
+    filter 0.45s ease;
+  transform: scale(0.93);
+  opacity: 0.38;
+  filter: saturate(0.55);
+  pointer-events: none;
+}
+.boards-reel > .queue.is-active {
+  transform: scale(1);
+  opacity: 1;
+  filter: none;
+  pointer-events: auto;
+  box-shadow:
+    0 10px 28px -14px rgba(15, 23, 42, 0.25),
+    0 0 0 1px var(--rule);
+}
+
+/* Optimistic "pending" flash on cards when any action button is
+   clicked — same idea the inbox rows used, reapplied to the card
+   context. Morph-swap on the next poll clears the class naturally. */
+.card.card-pending {
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    0 1px 3px rgba(15, 23, 42, 0.08);
+  background: linear-gradient(
+    90deg,
+    var(--accent-soft) 0%,
+    var(--bg-card) 40%,
+    var(--bg-card) 100%);
 }
 
 /* ============================ queue ============================
@@ -896,15 +567,18 @@ body[data-view="board"] .view-bar-hint { display: none; }
    distinguishing band without boxing it.
    ------------------------------------------------------------ */
 .queue {
-  background: var(--bg-queue);
+  background: var(--bg-card);
   border: 1px solid var(--rule);
   border-top: none;
   border-radius: 0 0 6px 6px;
-  padding: 12px 12px 14px;
-  min-width: 340px;
-  max-width: 380px;
-  flex: 0 0 auto;
+  padding: 14px 16px 18px;
   position: relative;
+  /* Width comes from .boards-reel > .queue; no intrinsic constraint. */
+  min-width: 0;
+  max-width: none;
+  flex: unset;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
 }
 .queue::before {
   content: "";
@@ -1009,9 +683,44 @@ button.action-primary:disabled {
    The column's own state-token color drives both the token and
    the rule via CSS variables.
    ------------------------------------------------------------ */
+/* States inside a queue lay out as horizontal columns — that's the
+   per-board kanban. Each column scrolls independently so one busy
+   column can't push another off-screen. */
+.queue-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+}
+.queue-body::-webkit-scrollbar { height: 8px; }
+.queue-body::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 4px; }
+
 .state {
   --state-tone: var(--state-triage);
-  margin-bottom: 16px;
+  flex: 0 0 320px;
+  min-width: 0;
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-bottom: 0;
+  padding: 0 2px 4px;
+  scrollbar-width: thin;
+}
+.state::-webkit-scrollbar { width: 6px; }
+.state::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 3px; }
+.state > h3 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: linear-gradient(
+    to bottom,
+    var(--bg-card) 0%,
+    var(--bg-card) 80%,
+    rgba(255, 255, 255, 0) 100%);
+  padding-bottom: 8px;
 }
 .state-triage   { --state-tone: var(--state-triage); }
 .state-progress { --state-tone: var(--state-progress); }
