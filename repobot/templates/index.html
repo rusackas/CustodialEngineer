@@ -134,15 +134,31 @@
   <nav class="boards-tabs" role="tablist" aria-label="Queues">
     {% for queue in queues %}
       {% set att = (queue_attention_counts or {}).get(queue.id, 0) %}
-      <button type="button" class="boards-tab"
-              role="tab"
-              data-board-index="{{ loop.index0 }}"
-              data-queue-id="{{ queue.id }}"
-              aria-selected="{{ 'true' if loop.index0 == 0 else 'false' }}">
-        <span class="boards-tab-title">{{ queue.title }}</span>
-        <span class="boards-tab-badge {% if not att %}boards-tab-badge-zero{% endif %}">{{ att }}</span>
-      </button>
+      <div class="boards-tab-wrap">
+        <button type="button" class="boards-tab"
+                role="tab"
+                data-board-index="{{ loop.index0 }}"
+                data-queue-id="{{ queue.id }}"
+                aria-selected="{{ 'true' if loop.index0 == 0 else 'false' }}">
+          <span class="boards-tab-title">{{ queue.title }}</span>
+          <span class="boards-tab-badge {% if not att %}boards-tab-badge-zero{% endif %}">{{ att }}</span>
+        </button>
+        <button type="button" class="boards-tab-hide"
+                data-hide-queue="{{ queue.id }}"
+                title="Hide this queue from the tab bar (temporary, per-browser)"
+                aria-label="Hide queue {{ queue.title }}">
+          {{ icon('eye-closed', size=12) }}
+        </button>
+      </div>
     {% endfor %}
+    <details class="boards-hidden-menu" data-boards-hidden-menu hidden>
+      <summary title="Show hidden queues">
+        {{ icon('eye', size=12) }}
+        <span data-hidden-count>0</span> hidden
+      </summary>
+      <div class="boards-hidden-popover" role="menu"
+           data-boards-hidden-popover></div>
+    </details>
     <button type="button" class="boards-tab-add"
             data-settings-target="new-queue-modal"
             title="Add a new queue"
@@ -1830,10 +1846,87 @@
     // from the sides. Tabs at top drive the active index; arrow
     // keys + 1..9 jump too. Active index persisted to localStorage.
     const BOARD_STORAGE_KEY = 'ce.active-board';
+    const HIDDEN_QUEUES_KEY = 'ce.hidden-queues';
     const reel = document.getElementById('boards-reel');
     const tabs = Array.from(document.querySelectorAll('.boards-tab'));
+    const tabWraps = Array.from(document.querySelectorAll('.boards-tab-wrap'));
     const boards = () => Array.from(reel ? reel.children : []);
     let _activeIndex = 0;
+
+    // Hidden queues are a per-browser display preference — we never
+    // touch config.yaml for this. Stored as a JSON array of queue ids
+    // in localStorage; an empty set means nothing is hidden.
+    function loadHidden() {
+      try {
+        const raw = localStorage.getItem(HIDDEN_QUEUES_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        return new Set(Array.isArray(arr) ? arr : []);
+      } catch { return new Set(); }
+    }
+    function saveHidden(set) {
+      try {
+        localStorage.setItem(HIDDEN_QUEUES_KEY, JSON.stringify([...set]));
+      } catch {}
+    }
+    function isHidden(index) {
+      const t = tabs[index];
+      return !!(t && t.dataset.hidden === '1');
+    }
+    function nextVisible(start, dir) {
+      const n = tabs.length;
+      if (!n) return start;
+      let i = start;
+      for (let step = 0; step < n; step++) {
+        i = (i + dir + n) % n;
+        if (!isHidden(i)) return i;
+      }
+      return start;
+    }
+    function applyHidden() {
+      const hidden = loadHidden();
+      const menu = document.querySelector('[data-boards-hidden-menu]');
+      const popover = document.querySelector('[data-boards-hidden-popover]');
+      const countEl = document.querySelector('[data-hidden-count]');
+      const bs = boards();
+      tabs.forEach((tab, i) => {
+        const qid = tab.dataset.queueId;
+        const hide = hidden.has(qid);
+        const wrap = tabWraps[i];
+        tab.dataset.hidden = hide ? '1' : '0';
+        if (wrap) wrap.classList.toggle('boards-tab-wrap-hidden', hide);
+        const board = bs[i];
+        if (board) board.classList.toggle('boards-board-hidden', hide);
+      });
+      // Build the "N hidden" popover contents.
+      if (popover) {
+        popover.innerHTML = '';
+        tabs.forEach((tab, i) => {
+          if (!isHidden(i)) return;
+          const qid = tab.dataset.queueId;
+          const title = tab.querySelector('.boards-tab-title').textContent;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'boards-hidden-item';
+          btn.dataset.showQueue = qid;
+          btn.setAttribute('role', 'menuitem');
+          btn.innerHTML =
+            '<span class="boards-hidden-item-title"></span>' +
+            '<span class="boards-hidden-item-show">show</span>';
+          btn.querySelector('.boards-hidden-item-title').textContent = title;
+          popover.appendChild(btn);
+        });
+      }
+      if (menu) {
+        if (hidden.size > 0) menu.removeAttribute('hidden');
+        else { menu.setAttribute('hidden', ''); menu.open = false; }
+      }
+      if (countEl) countEl.textContent = String(hidden.size);
+      // If the active board just got hidden, hop to the next visible.
+      if (isHidden(_activeIndex)) {
+        const next = nextVisible(_activeIndex, 1);
+        if (next !== _activeIndex) activateBoard(next);
+      }
+    }
 
     function activateBoard(index, { animate = true } = {}) {
       const bs = boards();
@@ -1920,9 +2013,40 @@
     document.querySelectorAll('[data-board-nav]').forEach(btn => {
       btn.addEventListener('click', () => {
         const delta = parseInt(btn.dataset.boardNav, 10) || 0;
-        activateBoard(_activeIndex + delta);
+        if (!delta) return;
+        activateBoard(nextVisible(_activeIndex, delta > 0 ? 1 : -1));
       });
     });
+
+    // Hide / show queue-tab handlers. Per-browser only — stored in
+    // localStorage, never mutates config.yaml.
+    document.addEventListener('click', (e) => {
+      const hideBtn = e.target.closest('[data-hide-queue]');
+      if (hideBtn) {
+        const qid = hideBtn.dataset.hideQueue;
+        const set = loadHidden();
+        set.add(qid);
+        saveHidden(set);
+        applyHidden();
+        e.stopPropagation();
+        return;
+      }
+      const showBtn = e.target.closest('[data-show-queue]');
+      if (showBtn) {
+        const qid = showBtn.dataset.showQueue;
+        const set = loadHidden();
+        set.delete(qid);
+        saveHidden(set);
+        applyHidden();
+        // Close the popover.
+        const menu = showBtn.closest('[data-boards-hidden-menu]');
+        if (menu) menu.open = false;
+        e.stopPropagation();
+      }
+    });
+    // Initial application — runs after activateBoard's init so it can
+    // hop off a hidden board if needed.
+    applyHidden();
 
     // Keybindings: ←/→ / h/l move between boards. 1..9 shortcuts
     // removed since we expect to scale past 9 queues.
@@ -1942,10 +2066,10 @@
       switch (e.key) {
         case 'ArrowLeft':
         case 'h':
-          activateBoard(_activeIndex - 1); e.preventDefault(); break;
+          activateBoard(nextVisible(_activeIndex, -1)); e.preventDefault(); break;
         case 'ArrowRight':
         case 'l':
-          activateBoard(_activeIndex + 1); e.preventDefault(); break;
+          activateBoard(nextVisible(_activeIndex, 1)); e.preventDefault(); break;
       }
     });
 

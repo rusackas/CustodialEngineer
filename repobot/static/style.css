@@ -1405,6 +1405,129 @@ body {
 }
 .boards-tab.is-active .boards-tab-badge { background: var(--accent); color: var(--bg-card); border-color: var(--accent); }
 .boards-tab.is-active .boards-tab-badge-zero { background: transparent; color: var(--brand); border-color: var(--brand); }
+
+/* Wraps the tab + a tiny "hide" eyeball button. The button appears
+   on wrap hover/focus so it doesn't clutter the bar by default. */
+.boards-tab-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+.boards-tab-wrap-hidden { display: none; }
+.boards-tab-hide {
+  position: absolute;
+  top: 4px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  color: var(--ink-mute);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.14s ease, transform 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+  z-index: 3;
+}
+.boards-tab-hide .icon { vertical-align: 0; }
+.boards-tab-wrap:hover .boards-tab-hide,
+.boards-tab-hide:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.boards-tab-hide:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* "N hidden" pill at the end of the tab row, with a popover listing
+   the queues you can restore. Uses <details> so Esc/outside-click
+   close is browser-native. */
+.boards-hidden-menu {
+  position: relative;
+  align-self: center;
+  margin-left: 6px;
+  margin-bottom: -1px;
+}
+.boards-hidden-menu > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: var(--bg-inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.boards-hidden-menu > summary::-webkit-details-marker { display: none; }
+.boards-hidden-menu > summary:hover { color: var(--ink); background: var(--bg-panel); }
+.boards-hidden-menu[open] > summary { color: var(--brand); border-color: var(--brand); }
+.boards-hidden-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 220px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.boards-hidden-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 12px;
+}
+.boards-hidden-item:hover { background: var(--bg-inset); }
+.boards-hidden-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.boards-hidden-item-show {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--brand);
+  font-weight: 700;
+}
+
+/* Boards in the reel that correspond to hidden tabs — fully removed
+   so they don't affect layout or the translate math. */
+.boards-board-hidden { display: none !important; }
+
 .boards-tab-add {
   display: inline-flex;
   align-items: center;
