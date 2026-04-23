@@ -2146,17 +2146,90 @@
     });
 
 
-    // Flash the card's action button row as "pending" on click so
-    // the user sees motion before the next 3s polling tick morph-
-    // swaps the real state in.
-    document.addEventListener('click', (e) => {
-      const actionForm = e.target.closest('.actions form, .card-session-footer form');
-      if (!actionForm) return;
-      const card = actionForm.closest('.card');
-      if (card) {
-        card.classList.add('card-pending');
-        setTimeout(() => card.classList.remove('card-pending'), 10000);
+    // Mark the card as busy the moment an action is clicked. Stays
+    // busy until morph swaps it (most cases — it's either replaced
+    // in place or deleted). If the server is slow, the timeout
+    // fallback clears it so a stuck card isn't stuck forever.
+    const BUSY_TIMEOUT_MS = 20000;
+    function markCardBusy(card, label) {
+      if (!card || card.classList.contains('card-busy')) return;
+      card.classList.add('card-busy');
+      card.setAttribute('aria-busy', 'true');
+      if (!card.querySelector('.card-busy-badge')) {
+        const badge = document.createElement('div');
+        badge.className = 'card-busy-badge';
+        badge.innerHTML = '<span class="spinner"></span><span>' +
+          (label || 'working') + '…</span>';
+        card.appendChild(badge);
       }
+      setTimeout(() => {
+        card.classList.remove('card-busy');
+        card.removeAttribute('aria-busy');
+        const b = card.querySelector('.card-busy-badge');
+        if (b) b.remove();
+      }, BUSY_TIMEOUT_MS);
+    }
+    // Submit listener in the bubble phase: if an earlier interceptor
+    // (editable-body / reviewer-picker) called stopImmediatePropagation
+    // this won't fire — so modal-gated submits don't mark the card
+    // busy until the modal actually confirms.
+    document.addEventListener('submit', (e) => {
+      const form = e.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (!form.matches('.actions form, .card-session-footer form')) return;
+      const card = form.closest('.card');
+      if (!card) return;
+      const btn = form.querySelector('button[data-action]')
+                || form.querySelector('button[type=submit]')
+                || form.querySelector('button');
+      const label = btn && btn.dataset.action ? btn.dataset.action : 'working';
+      markCardBusy(card, label);
+    });
+
+    // Slick exit for busy cards that get removed by the morph swap.
+    // Before morph runs, scan the swap target for busy cards; if the
+    // incoming markup doesn't contain a matching data-item-id, clone
+    // the card into a position:fixed overlay pinned to its current
+    // spot. Morph removes the original; we fade out the clone.
+    document.body.addEventListener('htmx:beforeSwap', (evt) => {
+      const target = evt.detail && evt.detail.target;
+      const xhr = evt.detail && evt.detail.xhr;
+      if (!target || !xhr) return;
+      // Only matters when a card could leave the DOM — queue-body
+      // swaps target the queue board or inner body. Skip anything else.
+      const busyCards = target.querySelectorAll('.card.card-busy[data-item-id]');
+      if (!busyCards.length) return;
+      // Parse the incoming markup once to collect the item-ids that
+      // will still be present after the swap.
+      let incomingIds = null;
+      try {
+        const tmpl = document.createElement('template');
+        tmpl.innerHTML = xhr.responseText || '';
+        incomingIds = new Set(
+          Array.from(tmpl.content.querySelectorAll('.card[data-item-id]'))
+            .map(c => c.dataset.itemId));
+      } catch { return; }
+      busyCards.forEach((card) => {
+        if (incomingIds.has(card.dataset.itemId)) return;
+        const rect = card.getBoundingClientRect();
+        const clone = card.cloneNode(true);
+        clone.classList.add('card-exiting');
+        clone.classList.remove('card-busy');
+        clone.removeAttribute('data-item-id');
+        clone.style.top = rect.top + 'px';
+        clone.style.left = rect.left + 'px';
+        clone.style.width = rect.width + 'px';
+        clone.style.height = rect.height + 'px';
+        document.body.appendChild(clone);
+        requestAnimationFrame(() => {
+          clone.classList.add('is-fading');
+        });
+        clone.addEventListener('transitionend', () => clone.remove(),
+                               { once: true });
+        // Belt-and-suspenders: hard-remove in case transitionend
+        // doesn't fire (reduced motion, bg tab, etc.).
+        setTimeout(() => clone.remove(), 700);
+      });
     });
 
     // After any hx-boost / hx-post form submission completes, nudge
