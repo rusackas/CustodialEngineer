@@ -766,6 +766,37 @@ label:hover .field-info {
 }
 .boards-tab.is-active .boards-tab-badge { background: var(--accent); color: #fff; border-color: var(--accent); }
 .boards-tab.is-active .boards-tab-badge-zero { background: transparent; color: var(--brand); border-color: var(--brand); }
+.boards-tab-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px 11px;
+  margin-left: 4px;
+  margin-bottom: -1px;
+  background: transparent;
+  border: 1px dashed var(--rule-strong);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.boards-tab-add:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: var(--accent-soft);
+}
+.boards-tab-add-plus {
+  font-size: 15px;
+  line-height: 1;
+  font-weight: 400;
+  letter-spacing: 0;
+}
 .boards-tabs-spacer { flex: 1 0 auto; min-width: 10px; }
 .boards-tabs-hint {
   padding: 0 6px 8px;

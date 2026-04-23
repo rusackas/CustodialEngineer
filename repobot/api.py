@@ -19,8 +19,10 @@ from .actions import (
 )
 from .config import (
     PROJECT_ROOT,
+    add_queue_block,
     get_queue_block_yaml,
     load_config,
+    new_queue_template,
     replace_queue_block,
     update_queue_definition,
 )
@@ -763,6 +765,96 @@ def update_queue_definition_endpoint(
         daemon=True,
     ).start()
 
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.get("/queues/new/template")
+def queue_new_template():
+    """Return a YAML template for a brand-new queue, used to seed the
+    new-queue modal's Raw YAML editor."""
+    return JSONResponse({"yaml": new_queue_template()})
+
+
+def _post_add_queue(parsed: dict):
+    """Shared body for the two new-queue endpoints. Writes to
+    config.yaml, pre-creates the queue's state bucket, and kicks a
+    fetch so the new queue shows up populated within a poll tick."""
+    try:
+        added = add_queue_block(parsed)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    qid = added["id"]
+
+    # Pre-create the state bucket so downstream set_item_* calls have
+    # something to insert into.
+    def _ensure(state):
+        state.setdefault("queues", {}).setdefault(
+            qid, {"items": [], "created_at": _now()})
+    _mutate(_ensure)
+
+    threading.Thread(
+        target=run_queue, args=(qid,),
+        kwargs={"wait_for_triage": False},
+        daemon=True,
+    ).start()
+    return qid
+
+
+@app.post("/queues/new/form")
+def queue_new_form(
+    id: str = Form(...),
+    title: str = Form(...),
+    max_in_flight: int = Form(10),
+    q_author: str = Form(""),
+    q_state: str = Form("open"),
+    q_review_requested: str = Form(""),
+    q_labels: str = Form(""),
+    q_assignee: str = Form(""),
+    q_milestone: str = Form(""),
+):
+    """Create a new queue from the structured form. Uses sensible
+    defaults for the state machine (in triage / in progress /
+    awaiting update / done). For custom state machines, use the
+    Raw YAML tab instead."""
+    query: dict = {}
+    if q_author.strip(): query["author"] = q_author.strip()
+    if q_state.strip(): query["state"] = q_state.strip()
+    if q_review_requested.strip():
+        query["review_requested"] = q_review_requested.strip()
+    if q_assignee.strip(): query["assignee"] = q_assignee.strip()
+    if q_milestone.strip(): query["milestone"] = q_milestone.strip()
+    labels = [l.strip() for l in q_labels.split(",") if l.strip()]
+    if labels: query["labels"] = labels
+
+    parsed = {
+        "id": id.strip(),
+        "title": title.strip(),
+        "max_in_flight": int(max_in_flight),
+        "initial_state": "in triage",
+        "done_state": "done",
+        "awaiting_state": "awaiting update",
+        "states": ["in triage", "in progress", "awaiting update", "done"],
+        "query": query,
+    }
+    _post_add_queue(parsed)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/queues/new/raw")
+def queue_new_raw(yaml_text: str = Form(...)):
+    """Create a new queue from raw YAML. Full control over state
+    machine, query, labels, etc."""
+    from ruamel.yaml import YAML
+    y = YAML()
+    try:
+        parsed = y.load(yaml_text)
+    except Exception as exc:
+        raise HTTPException(status_code=400,
+                            detail=f"YAML parse error: {exc}")
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400,
+                            detail="YAML must describe a single queue mapping")
+    _post_add_queue(parsed)
     return RedirectResponse(url="/", status_code=303)
 
 

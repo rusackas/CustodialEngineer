@@ -108,6 +108,75 @@ def get_queue_block_yaml(queue_id: str) -> str:
     return buf.getvalue()
 
 
+_QUEUE_ID_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9_\-]{0,63}$")
+
+
+def add_queue_block(parsed: dict) -> dict:
+    """Append a new queue block to config.yaml. Validates:
+      - parsed is a mapping
+      - `id` is slug-shaped and not already in use
+      - required keys present (id, title, initial_state, states)
+    Returns the added queue dict. Raises ValueError on validation
+    failure. Uses ruamel.yaml so the rest of the file's formatting
+    and comments are preserved."""
+    if not isinstance(parsed, dict):
+        raise ValueError("queue definition must be a mapping")
+    required = {"id", "title", "initial_state", "states"}
+    missing = required - set(parsed.keys())
+    if missing:
+        raise ValueError(
+            "missing required keys: " + ", ".join(sorted(missing)))
+    qid = str(parsed.get("id") or "").strip()
+    if not qid:
+        raise ValueError("id is required")
+    if not _QUEUE_ID_RE.match(qid):
+        raise ValueError(
+            f"id `{qid}` must be lowercase alphanumeric with "
+            f"dashes or underscores (e.g. `my-queue`, 1-64 chars).")
+
+    y = _yaml_roundtrip()
+    with open(CONFIG_PATH) as f:
+        doc = y.load(f)
+    queues = doc.get("queues") or []
+    if any(q.get("id") == qid for q in queues):
+        raise ValueError(f"queue id `{qid}` already exists")
+    queues.append(parsed)
+    doc["queues"] = queues
+
+    import os
+    tmp = CONFIG_PATH.with_suffix(".yaml.tmp")
+    with open(tmp, "w") as f:
+        y.dump(doc, f)
+    os.replace(tmp, CONFIG_PATH)
+    return dict(parsed)
+
+
+def new_queue_template(qid: str = "my-queue",
+                       title: str = "My Queue") -> str:
+    """Serialize a sensible default queue block as YAML — used to
+    seed the new-queue modal's Raw YAML tab."""
+    import io
+    y = _yaml_roundtrip()
+    from ruamel.yaml.comments import CommentedMap, CommentedSeq
+    block = CommentedMap()
+    block["id"] = qid
+    block["title"] = title
+    block["max_in_flight"] = 10
+    block["initial_state"] = "in triage"
+    block["done_state"] = "done"
+    block["awaiting_state"] = "awaiting update"
+    states = CommentedSeq(["in triage", "in progress",
+                           "awaiting update", "done"])
+    block["states"] = states
+    query = CommentedMap()
+    query["author"] = "self"
+    query["state"] = "open"
+    block["query"] = query
+    buf = io.StringIO()
+    y.dump(block, buf)
+    return buf.getvalue()
+
+
 def replace_queue_block(queue_id: str, yaml_text: str) -> dict:
     """Parse a YAML string as one queue block and replace the matching
     entry in config.yaml. Validates:

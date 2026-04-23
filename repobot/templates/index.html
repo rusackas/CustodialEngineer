@@ -66,6 +66,13 @@
         <span class="boards-tab-badge {% if not att %}boards-tab-badge-zero{% endif %}">{{ att }}</span>
       </button>
     {% endfor %}
+    <button type="button" class="boards-tab-add"
+            data-settings-target="new-queue-modal"
+            title="Add a new queue"
+            aria-label="Add a new queue">
+      <span class="boards-tab-add-plus">+</span>
+      <span class="boards-tab-add-label">new queue</span>
+    </button>
     <div class="boards-tabs-spacer"></div>
     <div class="boards-tabs-hint">
       <kbd>←</kbd><kbd>→</kbd> switch
@@ -302,6 +309,128 @@
       </div>
     </div>
   {% endfor %}
+
+  {# New-queue modal. Same tab idiom as the per-queue settings modal
+     but starts blank / from a template. On save, creates the queue,
+     clears no state (there isn't any yet), and kicks a fetch. #}
+  <div id="new-queue-modal" class="modal settings-modal"
+       aria-hidden="true" data-settings-modal>
+    <div class="modal-backdrop" data-close-settings></div>
+    <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3>New queue</h3>
+          <div class="settings-modal-sub">
+            <span>adds a block to <code>config.yaml</code></span>
+          </div>
+        </div>
+        <button type="button" class="modal-close" data-close-settings>{{ icon('x', size=16) }}</button>
+      </div>
+
+      <div class="settings-tabs" role="tablist">
+        <button type="button" class="settings-tab is-active"
+                role="tab" aria-selected="true"
+                data-settings-tab="form">Form</button>
+        <button type="button" class="settings-tab"
+                role="tab" aria-selected="false"
+                data-settings-tab="yaml">Raw YAML</button>
+      </div>
+
+      <div class="settings-tab-pane is-active" data-settings-pane="form">
+        <section class="settings-section">
+          <div class="settings-section-title">Identity &amp; query</div>
+          <div class="settings-section-help">
+            Form mode uses the standard state machine (in triage → in
+            progress → awaiting update → done). For a custom state
+            machine, switch to the Raw YAML tab.
+          </div>
+          <form method="post" action="/queues/new/form"
+                class="settings-form settings-form-static"
+                hx-boost="false">
+            <div class="settings-grid">
+              <label title="Stable identifier used as the state-file key and URL slug. Lowercase a-z, 0-9, dashes, underscores. Can't be changed later without manual state migration.&#10;&#10;Examples: 'my-prs', 'stale-issues', 'needs-triage'">
+                <span>ID <span class="field-info">ⓘ</span></span>
+                <input type="text" name="id"
+                       pattern="[a-z0-9][a-z0-9_\-]{0,63}"
+                       required
+                       placeholder="e.g. my-queue" />
+              </label>
+              <label title="Display name shown in tabs, nav pills, and the board header.&#10;&#10;Examples: 'My PRs', 'Dependabot PRs', 'Stale Issues'">
+                <span>Title <span class="field-info">ⓘ</span></span>
+                <input type="text" name="title"
+                       required
+                       placeholder="e.g. My Queue" />
+              </label>
+              <label title="Max non-done items to keep in the queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub.">
+                <span>Max in flight <span class="field-info">ⓘ</span></span>
+                <input type="number" name="max_in_flight" min="0" max="500"
+                       value="10" required />
+              </label>
+              <label title="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self', 'app/dependabot', 'rusackas'. Leave blank for any author.">
+                <span>Author <span class="field-info">ⓘ</span></span>
+                <input type="text" name="q_author"
+                       placeholder="self, app/dependabot, rusackas" />
+              </label>
+              <label title="The PR state to pull. 'open' is usual.">
+                <span>State <span class="field-info">ⓘ</span></span>
+                <select name="q_state">
+                  {% for opt in ['open', 'closed', 'merged', 'all'] %}
+                    <option value="{{ opt }}"
+                      {% if opt == 'open' %}selected{% endif %}>{{ opt }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label title="Pull PRs where this login is a requested reviewer.&#10;&#10;Example: 'self' for a 'my review queue'.">
+                <span>Review requested <span class="field-info">ⓘ</span></span>
+                <input type="text" name="q_review_requested"
+                       placeholder="self or a-login" />
+              </label>
+              <label title="Pull PRs assigned to this login.">
+                <span>Assignee <span class="field-info">ⓘ</span></span>
+                <input type="text" name="q_assignee"
+                       placeholder="self or a-login" />
+              </label>
+              <label title="Filter by milestone name (exact match).">
+                <span>Milestone <span class="field-info">ⓘ</span></span>
+                <input type="text" name="q_milestone"
+                       placeholder="milestone name" />
+              </label>
+              <label title="Filter by labels — comma-separated, all must match.&#10;&#10;Example: 'bug, needs-review'">
+                <span>Labels <span class="field-info">ⓘ</span></span>
+                <input type="text" name="q_labels"
+                       placeholder="bug, needs-review" />
+              </label>
+            </div>
+            <button type="submit">Create queue</button>
+          </form>
+        </section>
+      </div>
+
+      <div class="settings-tab-pane" data-settings-pane="yaml"
+           data-raw-url="/queues/new/template">
+        <section class="settings-section">
+          <div class="settings-section-title">Raw YAML</div>
+          <div class="settings-section-help">
+            Full control. Edit the template below and save to add the
+            queue. State machine, query, and all other fields are at
+            your disposal.
+          </div>
+          <form method="post" action="/queues/new/raw"
+                class="settings-form settings-form-static settings-form-yaml"
+                hx-boost="false">
+            <textarea name="yaml_text"
+                      class="settings-yaml-textarea"
+                      spellcheck="false"
+                      data-yaml-editor
+                      rows="20"
+                      placeholder="Loading template…"></textarea>
+            <div class="settings-yaml-error" data-yaml-error></div>
+            <button type="submit">Create queue</button>
+          </form>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <div id="plan-modal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-plan></div>
