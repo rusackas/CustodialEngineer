@@ -89,6 +89,12 @@ line. No ceremony — this isn't a roadmap.
 
 ## Done
 
+- ~~HTMX migration: full-page reloads replaced with partial fragment
+  swaps using Idiomorph for DOM-identity-preserving updates. Drawer
+  + modals now survive refresh ticks; open <details>, focused
+  inputs, and scroll position persist across polls. Forms use
+  hx-boost; server middleware converts 303 redirects to 204 under
+  HX-Request (plain browsers still redirect normally).~~ 2026-04-23
 - ~~Wider UI design pass (frontend-design skill): "instrument panel /
   observatory" direction. Cool steel canvas, archival-blue brand
   color, burnt-ochre attention. Header reworked: ◆ CUSTODIAL·ENGINEER

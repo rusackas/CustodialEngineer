@@ -1306,6 +1306,34 @@ button.clear-done:hover { background: #ffd7d5; }
   overflow-wrap: anywhere;
 }
 
+/* GitHub-style block alerts: > [!NOTE] / WARNING / TIP / etc. */
+.md-alert {
+  margin: 0.75em 0;
+  padding: 8px 12px 8px 14px;
+  border-left: 4px solid var(--ink-faint);
+  border-radius: 0 4px 4px 0;
+  background: #f8fafc;
+  color: var(--ink-soft);
+}
+.md-alert p:first-child { margin-top: 0; }
+.md-alert p:last-child { margin-bottom: 0; }
+.md-alert-note      { border-left-color: #3b82f6; background: #eff6ff; color: #1e3a8a; }
+.md-alert-tip       { border-left-color: #059669; background: #ecfdf5; color: #065f46; }
+.md-alert-important { border-left-color: #8b5cf6; background: #f5f3ff; color: #4c1d95; }
+.md-alert-warning   { border-left-color: #d97706; background: #fffbeb; color: #78350f; }
+.md-alert-caution   { border-left-color: #dc2626; background: #fef2f2; color: #7f1d1d; }
+
+/* Task list checkboxes — markdown-it emits disabled inputs. */
+.drawer-md input[type="checkbox"] {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.drawer-md ul.contains-task-list,
+.drawer-md ul.contains-task-list ul {
+  list-style: none;
+  padding-left: 18px;
+}
+
 .drawer-empty { color: #94a3b8; font-style: italic; }
 
 .drawer-comments {

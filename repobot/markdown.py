@@ -58,10 +58,40 @@ def _autolink_issue_refs(html: str, owner: str, name: str) -> str:
     return "".join(parts)
 
 
+_ALERT_RE = re.compile(
+    r'^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\n((?:> .*\n?)*)',
+    re.MULTILINE,
+)
+
+
+def _convert_github_alerts(text: str) -> str:
+    """Convert GitHub's `> [!NOTE]` / `> [!WARNING]` etc. block syntax
+    into a marked blockquote that survives markdown-it rendering. We
+    inject a tiny HTML wrapper with a class the CSS can style; the
+    rest of the blockquote content continues to be rendered as
+    markdown."""
+    def repl(m: re.Match) -> str:
+        kind = m.group(1).lower()
+        body = m.group(2)
+        # Strip the leading "> " from each continuation line.
+        body_md = "\n".join(
+            line[2:] if line.startswith("> ") else line.lstrip("> ")
+            for line in body.splitlines()
+        )
+        # Use HTML so markdown-it wraps the content in a <div>, which
+        # bleach allows. The inner body still needs markdown processing,
+        # but markdown-it only treats indented / code-fence blocks as
+        # code — plain HTML blocks pass through. To let markdown render
+        # the body, we emit a fake blockquote with a class marker.
+        return f'<div class="md-alert md-alert-{kind}">\n\n{body_md}\n\n</div>\n'
+    return _ALERT_RE.sub(repl, text)
+
+
 def render(body: str | None, *, owner: str = "", name: str = "") -> str:
     """Render markdown → sanitized HTML string. Empty / None → ''."""
     if not body:
         return ""
+    body = _convert_github_alerts(body)
     html = _md.render(body)
     if owner and name:
         html = _autolink_issue_refs(html, owner, name)

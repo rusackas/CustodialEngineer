@@ -404,7 +404,7 @@
         openDrawer(link.dataset.drawerQueue, link.dataset.drawerItem);
         return;
       }
-      if (e.target.matches('[data-close-drawer]')) closeDrawer();
+      if (e.target.closest('[data-close-drawer]')) closeDrawer();
     });
 
     document.addEventListener('keydown', (e) => {
@@ -993,6 +993,28 @@
       if (cfg && cfg.verb && cfg.verb !== 'get') {
         refreshQueues();
       }
+    });
+
+    // Preserve <details> open/closed state across swaps. Idiomorph
+    // preserves element identity but reapplies the incoming markup's
+    // attributes, so an `open` details gets collapsed every time the
+    // server returns it closed. Snapshot opens before the swap, reapply
+    // after. Targets any <details id="..."> inside the swapped region.
+    document.body.addEventListener('htmx:beforeSwap', (evt) => {
+      const target = evt.detail && evt.detail.target;
+      if (!target) return;
+      const ids = [];
+      target.querySelectorAll('details[id][open]').forEach(d => ids.push(d.id));
+      target._preserveOpen = ids;
+    });
+    document.body.addEventListener('htmx:afterSwap', (evt) => {
+      const target = evt.detail && evt.detail.target;
+      if (!target || !target._preserveOpen) return;
+      for (const id of target._preserveOpen) {
+        const d = target.querySelector('#' + CSS.escape(id));
+        if (d) d.setAttribute('open', '');
+      }
+      target._preserveOpen = null;
     });
 
     // HTMX polling handles refresh. Nudge modals/drawer/popover to

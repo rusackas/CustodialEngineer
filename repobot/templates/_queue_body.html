@@ -114,7 +114,8 @@
                     {% if tn.get(key) %}{% set _find.has_buckets = true %}{% endif %}
                   {% endfor %}
                   {% if _find.has_meta or _find.has_buckets or tn.log_excerpt %}
-                    <details class="review-findings">
+                    <details class="review-findings"
+                             id="findings-{{ queue.id }}-{{ item.id }}">
                       <summary>
                         <span class="findings-label">findings</span>
                         <span class="findings-preview">
