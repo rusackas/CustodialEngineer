@@ -37,18 +37,6 @@ line. No ceremony — this isn't a roadmap.
   an update (stamp this on each refresh). Also: small design pass —
   the current pill is plain text. (Proposed 2026-04-22.)
 
-- **Worktree count in header stats** — next to the token-usage pill,
-  show how many per-PR worktrees currently exist on disk. Pairs with
-  the existing delete-on-done cleanup — gives visibility into how
-  much workspace the bot is holding open. `worktree.existing_worktree_numbers()`
-  already exists; just needs to be added to `sessions.stats()` and
-  rendered in the header. (Proposed 2026-04-22.)
-
-- **Show PR/issue author on card header** — next to the number +
-  title. Author login is already available via `raw.author.login` on
-  fetched items. Extends to issues when we add that queue. Keeps it
-  obvious whose work each card is. (Proposed 2026-04-22.)
-
 - **Persist session transcripts across reboots** — after a restart the
   in-memory session registry is empty, so the `session` button
   disappears from every card even though `tokens_lifetime` persists.
@@ -56,12 +44,6 @@ line. No ceremony — this isn't a roadmap.
   (indexed by SDK session id) so the transcript modal can rehydrate
   from a file when memory is gone. (Proposed 2026-04-22 — #38019
   showed the UX gap: 278k tok pill with no session button.)
-
-- **Triage skills should always include `prompt` in `actions`** —
-  the human-escape-hatch button disappears when the skill omits
-  it (seen on #38019). Update `triage-my-pr`, `triage-review-requested`,
-  `triage-dependabot-pr` to require it; also defensively add it in
-  the dispatcher if the skill forgot. (Proposed 2026-04-22.)
 
 - **`nudge-author` heuristic too conservative** — PR #37120 in
   review-requested didn't get a nudge-author button despite being
@@ -71,12 +53,6 @@ line. No ceremony — this isn't a roadmap.
   + failing CI" reliably triggers nudge-author with a terse body
   that enumerates what needs fixing (no hand-holding). (Proposed
   2026-04-22.)
-
-- **Dedupe `skip` button on cards** — some cards render two skip
-  buttons because the skill emits `skip` in `actions` AND the
-  template adds one unconditionally. Either dedupe in the template
-  or stop emitting `skip` from skills (always-on is cleaner).
-  (Proposed 2026-04-22.)
 
 - **`fix-precommit-review` (other people's PRs)** — pre-commit fix
   action for PRs in the review-requested queue. Needs: (1) worktree
