@@ -178,20 +178,19 @@
                   action="/queues/{{ queue.id }}/settings"
                   class="settings-form settings-form-static">
               <div class="settings-grid">
-                <label title="Max non-done items to keep in this queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub — excess done cards age out.">
-                  <span>Max in flight <span class="field-info">ⓘ</span></span>
+                <label>
+                  <span>Max in flight <span class="field-info" data-tip="Max non-done items to keep in this queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub — excess done cards age out." aria-label="Max non-done items to keep in this queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub — excess done cards age out." tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <input type="number" name="max_in_flight" min="0" max="500"
                          value="{{ eff_max }}" required />
                 </label>
-                <label title="How many Claude triage sessions this queue may run per refresh tick. Capped by the global session cap ({{ s.cap or 8 }}). Use a lower number to deprioritize a noisy queue.">
-                  <span>Worker slots <span class="field-info">ⓘ</span></span>
+                <label>
+                  <span>Worker slots <span class="field-info" data-tip="How many Claude triage sessions this queue may run per refresh tick. Capped by the global session cap ({{ s.cap or 8 }}). Use a lower number to deprioritize a noisy queue." aria-label="How many Claude triage sessions this queue may run per refresh tick. Capped by the global session cap ({{ s.cap or 8 }}). Use a lower number to deprioritize a noisy queue." tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <input type="number" name="worker_slots" min="1"
                          max="{{ s.cap or 8 }}"
                          value="{{ eff_slots }}" required />
                 </label>
               </div>
-              <label class="settings-toggle"
-                     title="When paused, no new items are pulled from GitHub. Existing cards continue to refresh, triage, and run actions normally.">
+              <label class="settings-toggle">
                 <input type="checkbox" name="intake_paused" value="1"
                        {% if queue.intake_paused %}checked{% endif %} />
                 <span>Pause intake</span>
@@ -210,19 +209,19 @@
             <form method="post"
                   action="/queues/{{ queue.id }}/definition"
                   class="settings-form settings-form-static">
-              <label title="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'">
-                <span>Title <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>Title <span class="field-info" data-tip="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" aria-label="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="title" value="{{ queue.title }}" />
               </label>
               <div class="settings-grid">
-                <label title="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self' (you), 'app/dependabot' (a bot), 'rusackas' (a specific user). Leave blank for any author.">
-                  <span>Author <span class="field-info">ⓘ</span></span>
+                <label>
+                  <span>Author <span class="field-info" data-tip="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self' (you), 'app/dependabot' (a bot), 'rusackas' (a specific user). Leave blank for any author." aria-label="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self' (you), 'app/dependabot' (a bot), 'rusackas' (a specific user). Leave blank for any author." tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <input type="text" name="q_author"
                          value="{{ _q.get('author', '') }}"
                          placeholder="self, app/dependabot, rusackas" />
                 </label>
-                <label title="The PR state to pull.&#10;&#10;'open' is the usual choice. 'closed' is useful for a retrospective queue; 'merged' for a recent-landings feed.">
-                  <span>State <span class="field-info">ⓘ</span></span>
+                <label>
+                  <span>State <span class="field-info" data-tip="The PR state to pull.&#10;&#10;'open' is the usual choice. 'closed' is useful for a retrospective queue; 'merged' for a recent-landings feed." aria-label="The PR state to pull.&#10;&#10;'open' is the usual choice. 'closed' is useful for a retrospective queue; 'merged' for a recent-landings feed." tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <select name="q_state">
                     {% set _st = _q.get('state', 'open') %}
                     {% for opt in ['open', 'closed', 'merged', 'all'] %}
@@ -231,26 +230,26 @@
                     {% endfor %}
                   </select>
                 </label>
-                <label title="Pull PRs where this login is a requested reviewer.&#10;&#10;Example: 'self' to get a 'my review queue'. Also works with team slugs like 'apache/superset-committers'.">
-                  <span>Review requested <span class="field-info">ⓘ</span></span>
+                <label>
+                  <span>Review requested <span class="field-info" data-tip="Pull PRs where this login is a requested reviewer.&#10;&#10;Example: 'self' to get a 'my review queue'. Also works with team slugs like 'apache/superset-committers'." aria-label="Pull PRs where this login is a requested reviewer.&#10;&#10;Example: 'self' to get a 'my review queue'. Also works with team slugs like 'apache/superset-committers'." tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <input type="text" name="q_review_requested"
                          value="{{ _q.get('review_requested', '') }}"
                          placeholder="self or a-login" />
                 </label>
-                <label title="Pull PRs assigned to this login.&#10;&#10;Example: 'self' for your assigned work. Combine with state='open' for an in-progress feed.">
-                  <span>Assignee <span class="field-info">ⓘ</span></span>
+                <label>
+                  <span>Assignee <span class="field-info" data-tip="Pull PRs assigned to this login.&#10;&#10;Example: 'self' for your assigned work. Combine with state='open' for an in-progress feed." aria-label="Pull PRs assigned to this login.&#10;&#10;Example: 'self' for your assigned work. Combine with state='open' for an in-progress feed." tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <input type="text" name="q_assignee"
                          value="{{ _q.get('assignee', '') }}"
                          placeholder="self or a-login" />
                 </label>
-                <label title="Filter by milestone name.&#10;&#10;Example: 'v5.1' for PRs targeting the v5.1 release. Exact match.">
-                  <span>Milestone <span class="field-info">ⓘ</span></span>
+                <label>
+                  <span>Milestone <span class="field-info" data-tip="Filter by milestone name.&#10;&#10;Example: 'v5.1' for PRs targeting the v5.1 release. Exact match." aria-label="Filter by milestone name.&#10;&#10;Example: 'v5.1' for PRs targeting the v5.1 release. Exact match." tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <input type="text" name="q_milestone"
                          value="{{ _q.get('milestone', '') }}"
                          placeholder="milestone name" />
                 </label>
-                <label title="Filter by labels (comma-separated, all must match).&#10;&#10;Examples: 'bug', 'good first issue, help wanted', 'needs-review'">
-                  <span>Labels <span class="field-info">ⓘ</span></span>
+                <label>
+                  <span>Labels <span class="field-info" data-tip="Filter by labels (comma-separated, all must match).&#10;&#10;Examples: 'bug', 'good first issue, help wanted', 'needs-review'" aria-label="Filter by labels (comma-separated, all must match).&#10;&#10;Examples: 'bug', 'good first issue, help wanted', 'needs-review'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <input type="text" name="q_labels"
                          value="{{ (_q.get('labels') or []) | join(', ') }}"
                          placeholder="bug, needs-review" />
@@ -378,31 +377,31 @@
                 class="settings-form settings-form-static"
                 hx-boost="false">
             <div class="settings-grid">
-              <label title="Stable identifier used as the state-file key and URL slug. Lowercase a-z, 0-9, dashes, underscores. Can't be changed later without manual state migration.&#10;&#10;Examples: 'my-prs', 'stale-issues', 'needs-triage'">
-                <span>ID <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>ID <span class="field-info" data-tip="Stable identifier used as the state-file key and URL slug. Lowercase a-z, 0-9, dashes, underscores. Can't be changed later without manual state migration.&#10;&#10;Examples: 'my-prs', 'stale-issues', 'needs-triage'" aria-label="Stable identifier used as the state-file key and URL slug. Lowercase a-z, 0-9, dashes, underscores. Can't be changed later without manual state migration.&#10;&#10;Examples: 'my-prs', 'stale-issues', 'needs-triage'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="id"
                        pattern="[a-z0-9][a-z0-9_\-]{0,63}"
                        required
                        placeholder="e.g. my-queue" />
               </label>
-              <label title="Display name shown in tabs, nav pills, and the board header.&#10;&#10;Examples: 'My PRs', 'Dependabot PRs', 'Stale Issues'">
-                <span>Title <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>Title <span class="field-info" data-tip="Display name shown in tabs, nav pills, and the board header.&#10;&#10;Examples: 'My PRs', 'Dependabot PRs', 'Stale Issues'" aria-label="Display name shown in tabs, nav pills, and the board header.&#10;&#10;Examples: 'My PRs', 'Dependabot PRs', 'Stale Issues'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="title"
                        required
                        placeholder="e.g. My Queue" />
               </label>
-              <label title="Max non-done items to keep in the queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub.">
-                <span>Max in flight <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>Max in flight <span class="field-info" data-tip="Max non-done items to keep in the queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub." aria-label="Max non-done items to keep in the queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub." tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="number" name="max_in_flight" min="0" max="500"
                        value="10" required />
               </label>
-              <label title="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self', 'app/dependabot', 'rusackas'. Leave blank for any author.">
-                <span>Author <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>Author <span class="field-info" data-tip="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self', 'app/dependabot', 'rusackas'. Leave blank for any author." aria-label="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self', 'app/dependabot', 'rusackas'. Leave blank for any author." tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="q_author"
                        placeholder="self, app/dependabot, rusackas" />
               </label>
-              <label title="The PR state to pull. 'open' is usual.">
-                <span>State <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>State <span class="field-info" data-tip="The PR state to pull. 'open' is usual." aria-label="The PR state to pull. 'open' is usual." tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <select name="q_state">
                   {% for opt in ['open', 'closed', 'merged', 'all'] %}
                     <option value="{{ opt }}"
@@ -410,23 +409,23 @@
                   {% endfor %}
                 </select>
               </label>
-              <label title="Pull PRs where this login is a requested reviewer.&#10;&#10;Example: 'self' for a 'my review queue'.">
-                <span>Review requested <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>Review requested <span class="field-info" data-tip="Pull PRs where this login is a requested reviewer.&#10;&#10;Example: 'self' for a 'my review queue'." aria-label="Pull PRs where this login is a requested reviewer.&#10;&#10;Example: 'self' for a 'my review queue'." tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="q_review_requested"
                        placeholder="self or a-login" />
               </label>
-              <label title="Pull PRs assigned to this login.">
-                <span>Assignee <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>Assignee <span class="field-info" data-tip="Pull PRs assigned to this login." aria-label="Pull PRs assigned to this login." tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="q_assignee"
                        placeholder="self or a-login" />
               </label>
-              <label title="Filter by milestone name (exact match).">
-                <span>Milestone <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>Milestone <span class="field-info" data-tip="Filter by milestone name (exact match)." aria-label="Filter by milestone name (exact match)." tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="q_milestone"
                        placeholder="milestone name" />
               </label>
-              <label title="Filter by labels — comma-separated, all must match.&#10;&#10;Example: 'bug, needs-review'">
-                <span>Labels <span class="field-info">ⓘ</span></span>
+              <label>
+                <span>Labels <span class="field-info" data-tip="Filter by labels — comma-separated, all must match.&#10;&#10;Example: 'bug, needs-review'" aria-label="Filter by labels — comma-separated, all must match.&#10;&#10;Example: 'bug, needs-review'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="q_labels"
                        placeholder="bug, needs-review" />
               </label>

@@ -547,28 +547,79 @@ body {
 .settings-tab-pane { display: none; }
 .settings-tab-pane.is-active { display: block; }
 
-/* Inline "info" affordance next to a field label — the title attribute
-   on the <label> is the actual tooltip; this is the visual cue. */
+/* Inline "info" affordance next to a field label.
+   - Visual: single Octicon `info` glyph in ink-mute (no outer ring —
+     the SVG already has its own circle).
+   - Tooltip: a custom ::after popover fed by `data-tip`, styled in
+     the app palette. No more OS-level title tooltips. */
 .field-info {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
-  margin-left: 2px;
-  font-size: 9px;
+  margin-left: 4px;
   color: var(--ink-mute);
-  border: 1px solid var(--rule-strong);
-  border-radius: 50%;
   cursor: help;
-  font-family: var(--mono);
-  line-height: 1;
-  font-weight: 500;
-  vertical-align: middle;
+  vertical-align: -2px;
+  border-radius: 50%;
+  line-height: 0;
+  transition: color 0.15s ease;
 }
-label:hover .field-info {
+.field-info:hover,
+.field-info:focus-visible {
   color: var(--brand);
-  border-color: var(--brand);
+  outline: none;
+}
+.field-info .icon {
+  display: block;
+  vertical-align: baseline;
+}
+.field-info[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  min-width: 180px;
+  max-width: 280px;
+  padding: 8px 10px;
+  background: var(--ink);
+  color: var(--bg-card);
+  border-radius: 5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11.5px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.45;
+  white-space: pre-line;
+  text-align: left;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.22);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 200;
+}
+.field-info[data-tip]::before {
+  /* small arrow pointing down to the icon */
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border: 5px solid transparent;
+  border-top-color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 201;
+}
+.field-info[data-tip]:hover::after,
+.field-info[data-tip]:focus-visible::after,
+.field-info[data-tip]:hover::before,
+.field-info[data-tip]:focus-visible::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 /* YAML textarea — monospace, roomy. */
