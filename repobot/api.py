@@ -56,6 +56,16 @@ STATIC_DIR = PROJECT_ROOT / "repobot" / "static"
 app = FastAPI(title="repobot")
 
 
+def _reload_or_redirect(request: Request) -> Response:
+    """Success response for settings / config-write endpoints. HTMX
+    clients get a 204 + HX-Refresh so the whole page re-renders
+    (tabs, header, queue-meta can all be affected by the write);
+    non-HTMX clients get the usual 303 back to `/`."""
+    if request.headers.get("HX-Request"):
+        return Response(status_code=204, headers={"HX-Refresh": "true"})
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.middleware("http")
 async def htmx_swallow_redirects(request: Request, call_next):
     """With hx-boost on the body, every form submit is XHR. A 303
@@ -680,7 +690,8 @@ def session_resume(session_id: str):
 
 
 @app.post("/settings/global")
-def update_global(max_concurrent: int = Form(...),
+def update_global(request: Request,
+                  max_concurrent: int = Form(...),
                   auto_resume_on_boot: str = Form("")):
     """Bump (or trim) the global session cap. Applies live via semaphore
     resize — new/queued sessions pick up the new cap immediately; existing
@@ -699,7 +710,7 @@ def update_global(max_concurrent: int = Form(...),
         sessions.resize_semaphore(int(max_concurrent))
     except Exception as exc:
         print(f"[settings] semaphore resize failed: {exc}")
-    return RedirectResponse(url="/", status_code=303)
+    return _reload_or_redirect(request)
 
 
 @app.get("/queues/{queue_id}/definition")
@@ -720,6 +731,7 @@ def queue_definition(queue_id: str):
 
 @app.post("/queues/{queue_id}/definition")
 def update_queue_definition_endpoint(
+    request: Request,
     queue_id: str,
     title: str = Form(""),
     repo_owner: str = Form(""),
@@ -787,7 +799,7 @@ def update_queue_definition_endpoint(
         daemon=True,
     ).start()
 
-    return RedirectResponse(url="/", status_code=303)
+    return _reload_or_redirect(request)
 
 
 @app.post("/queues/compose")
@@ -938,7 +950,8 @@ def queue_definition_raw(queue_id: str):
 
 
 @app.post("/queues/{queue_id}/definition/raw")
-def update_queue_definition_raw(queue_id: str,
+def update_queue_definition_raw(request: Request,
+                                queue_id: str,
                                 yaml_text: str = Form(...)):
     """Replace the queue's entire block in config.yaml from a raw
     YAML string. Validation: must parse, must be a mapping, must
@@ -964,11 +977,12 @@ def update_queue_definition_raw(queue_id: str,
         kwargs={"wait_for_triage": False},
         daemon=True,
     ).start()
-    return RedirectResponse(url="/", status_code=303)
+    return _reload_or_redirect(request)
 
 
 @app.post("/queues/{queue_id}/settings")
-def update_queue_settings(queue_id: str,
+def update_queue_settings(request: Request,
+                          queue_id: str,
                           max_in_flight: int = Form(...),
                           worker_slots: int = Form(...),
                           intake_paused: str = Form("")):
@@ -988,4 +1002,4 @@ def update_queue_settings(queue_id: str,
     update_queue_setting(queue_id, "worker_slots", int(worker_slots))
     update_queue_setting(queue_id, "intake_paused",
                          intake_paused.lower() in ("1", "true", "on", "yes"))
-    return RedirectResponse(url="/", status_code=303)
+    return _reload_or_redirect(request)

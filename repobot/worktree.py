@@ -33,18 +33,33 @@ def worktree_path_for(pr_number: int) -> Path:
 
 
 def ensure_worktree(pr_number: int, head_ref: str) -> Path:
-    """Create (or reuse) a worktree checked out at origin/{head_ref}."""
+    """Create (or reuse) a worktree for the PR.
+
+    Fetches the PR's head via GitHub's `refs/pull/{N}/head` ref instead
+    of the branch name. That ref is created for every PR (fork or
+    in-repo) and is reachable from `origin` regardless of where the
+    branch itself lives, so cross-fork PRs work the same as maintainer
+    PRs. The worktree is checked out on a local branch named
+    `{head_ref}` so pushes still target that name on origin for PRs
+    whose branch does live in origin; for fork PRs, push-back is a
+    separate concern handled by `fix-precommit-review`-class actions.
+    """
     target = worktree_path_for(pr_number)
+    # Namespaced local ref so the PR head doesn't clash with any
+    # local branch named the same.
+    pr_ref = f"refs/ce-pr/{pr_number}"
+    _git("fetch", "origin",
+         f"+refs/pull/{pr_number}/head:{pr_ref}")
+
     if (target / ".git").exists():
-        _git("fetch", "origin", head_ref)
-        _git("reset", "--hard", f"origin/{head_ref}", cwd=target)
+        _git("reset", "--hard", pr_ref, cwd=target)
+        # Make sure the local branch tracks the fetched ref.
+        _git("checkout", "-B", head_ref, pr_ref, cwd=target)
         return target
 
     WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
-    _git("fetch", "origin", head_ref)
-    _git("worktree", "add", "--force", str(target), f"origin/{head_ref}")
-    # Put the worktree on a local branch matching head_ref so pushes are natural.
-    _git("checkout", "-B", head_ref, f"origin/{head_ref}", cwd=target)
+    _git("worktree", "add", "--force", "-B", head_ref,
+         str(target), pr_ref)
     return target
 
 
