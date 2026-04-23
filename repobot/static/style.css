@@ -158,6 +158,10 @@ select:focus-visible {
   --neutral-ink: #475569;
   --neutral-border: #cbd5e1;
 
+  /* Body background halos — the warm parchment glow. */
+  --body-halo-1: rgba(253, 244, 228, 0.9);
+  --body-halo-2: rgba(224, 212, 189, 0.55);
+
   /* Card aliases (legacy — kept pointing at shared vars) */
   --card-mono: var(--font-mono);
   --card-rule: var(--rule-dashed);
@@ -244,6 +248,9 @@ select:focus-visible {
   --neutral-ink: #cbd5e1;
   --neutral-border: rgba(148, 163, 184, 0.3);
 
+  --body-halo-1: rgba(59, 130, 246, 0.08);
+  --body-halo-2: rgba(123, 168, 255, 0.05);
+
   --card-rule: var(--rule-dashed);
   --card-rail: var(--rule-strong);
 }
@@ -319,6 +326,9 @@ select:focus-visible {
   --neutral-soft: #e7eef7;
   --neutral-ink: #3d4e6c;
   --neutral-border: #c4cde0;
+
+  --body-halo-1: rgba(219, 228, 244, 0.85);
+  --body-halo-2: rgba(197, 215, 240, 0.55);
 
   --card-rule: var(--rule-dashed);
   --card-rail: var(--rule-strong);
@@ -396,6 +406,9 @@ select:focus-visible {
   --neutral-ink: #bdb5a7;
   --neutral-border: rgba(168, 162, 158, 0.3);
 
+  --body-halo-1: rgba(251, 191, 36, 0.06);
+  --body-halo-2: rgba(244, 207, 107, 0.04);
+
   --card-rule: var(--rule-dashed);
   --card-rail: var(--rule-strong);
 }
@@ -460,11 +473,12 @@ button.loading { opacity: 0.6; cursor: wait; }
 
 body {
   font-family: var(--font-body);
-  /* Warm gradient canvas — gives depth without distracting. Noise-
-     free; the parchment feel comes from the tonal shift alone. */
+  /* Warm gradient canvas — gives depth without distracting. The two
+     halo colors are themed tokens so dark palettes can disable or
+     invert them. */
   background:
-    radial-gradient(1200px 900px at 12% -20%, rgba(253, 244, 228, 0.9), transparent 60%),
-    radial-gradient(1400px 1000px at 95% 110%, rgba(224, 212, 189, 0.55), transparent 55%),
+    radial-gradient(1200px 900px at 12% -20%, var(--body-halo-1, transparent), transparent 60%),
+    radial-gradient(1400px 1000px at 95% 110%, var(--body-halo-2, transparent), transparent 55%),
     linear-gradient(180deg, var(--bg-canvas-top) 0%, var(--bg-canvas-bot) 100%);
   background-attachment: fixed;
   color: var(--ink);
@@ -532,7 +546,7 @@ body {
   font-weight: 700;
   color: var(--warn);
   background: var(--warn-soft);
-  border: 1px solid rgba(180, 83, 9, 0.25);
+  border: 1px solid var(--warn);
   border-radius: 3px;
 }
 
@@ -826,8 +840,8 @@ body {
   user-select: none;
 }
 .settings-gear > summary::-webkit-details-marker { display: none; }
-.settings-gear > summary:hover { background: rgba(15, 23, 42, 0.08); color: var(--ink); }
-.settings-gear[open] > summary { background: rgba(15, 23, 42, 0.12); color: var(--ink); }
+.settings-gear > summary:hover { background: var(--bg-inset); color: var(--ink); }
+.settings-gear[open] > summary { background: var(--bg-inset); color: var(--ink); }
 .settings-gear-global > summary { color: var(--brand); }
 /* When multiple forms live in the same gear dropdown, we wrap them
    in .settings-popover (carries the absolute positioning + shell
@@ -839,10 +853,10 @@ body {
   right: 0;
   z-index: 130;
   min-width: 240px;
-  background: white;
+  background: var(--bg-card);
   border: 1px solid var(--rule-strong);
   border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(9, 30, 66, 0.22);
+  box-shadow: var(--shadow-pop);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -856,10 +870,10 @@ body {
   right: 0;
   z-index: 130;
   min-width: 220px;
-  background: white;
+  background: var(--bg-card);
   border: 1px solid var(--rule-strong);
   border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(9, 30, 66, 0.22);
+  box-shadow: var(--shadow-pop);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -946,7 +960,7 @@ body {
   border-radius: 5px;
   line-height: 0;
 }
-.settings-gear-btn:hover { background: rgba(15, 23, 42, 0.06); color: var(--ink); }
+.settings-gear-btn:hover { background: var(--bg-inset); color: var(--ink); }
 
 /* Settings modal — roomier than a popover, grows with complexity.
    Uses the standard .modal/.modal-body chrome so Esc / backdrop
@@ -1033,7 +1047,7 @@ body {
   line-height: 1.45;
   white-space: pre-line;
   text-align: left;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.22);
+  box-shadow: var(--shadow-pop);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.14s ease, transform 0.14s ease;
@@ -1107,7 +1121,7 @@ body {
   line-height: 1.45;
   white-space: pre-line;
   text-align: left;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.22);
+  box-shadow: var(--shadow-pop);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.14s ease, transform 0.14s ease;
@@ -1481,10 +1495,7 @@ body {
   filter: none;
   pointer-events: auto;
   z-index: 2;
-  box-shadow:
-    0 20px 40px -18px rgba(15, 23, 42, 0.28),
-    0 6px 14px -6px rgba(15, 23, 42, 0.12),
-    0 0 0 1px var(--rule);
+  box-shadow: var(--shadow-modal), 0 0 0 1px var(--rule);
 }
 
 /* Nav pills — floating previous/next navigation that shows the name
@@ -1509,7 +1520,7 @@ body {
   border: 1px solid var(--rule-strong);
   border-radius: 999px;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-card);
   transition:
     background 0.18s ease,
     color 0.18s ease,
@@ -1589,20 +1600,20 @@ body {
   background: var(--accent);
   color: var(--bg-card);
   border-radius: 3px;
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
+  box-shadow: 0 2px 6px var(--accent-soft);
   pointer-events: none;
   z-index: 4;
 }
 @keyframes card-pending-pulse {
   0%, 100% {
     box-shadow:
-      0 0 0 0 rgba(37, 99, 235, 0.25),
-      0 1px 3px rgba(15, 23, 42, 0.08);
+      0 0 0 0 var(--accent-soft),
+      var(--shadow-card);
   }
   50% {
     box-shadow:
-      0 0 0 4px rgba(37, 99, 235, 0.08),
-      0 1px 3px rgba(15, 23, 42, 0.08);
+      0 0 0 4px var(--accent-soft),
+      var(--shadow-card);
   }
 }
 
@@ -1692,23 +1703,23 @@ button.skip { background: var(--bg-inset); color: var(--ink-mute); }
 button.await-update {
   background: var(--warn-soft);
   color: var(--warn);
-  border-color: rgba(180, 83, 9, 0.35);
+  border-color: var(--warn);
 }
 button.await-update:hover {
-  background: rgba(254, 243, 199, 0.8);
+  background: var(--warn-soft);
   filter: brightness(0.97);
 }
 button.delete {
   background: var(--danger-soft);
   color: var(--danger);
-  border-color: rgba(185, 28, 28, 0.3);
+  border-color: var(--danger);
 }
 
 .parked-meta {
   font-size: 11px;
   color: var(--warn);
   background: var(--warn-soft);
-  border: 1px solid rgba(180, 83, 9, 0.25);
+  border: 1px solid var(--warn);
   border-radius: 4px;
   padding: 4px 8px;
   margin-top: 6px;
@@ -1716,7 +1727,7 @@ button.delete {
 button.continue {
   background: var(--warn-soft);
   color: var(--warn);
-  border-color: rgba(180, 83, 9, 0.35);
+  border-color: var(--warn);
 }
 button.delete:hover { background: var(--danger-soft); }
 button.action-primary {
@@ -1765,16 +1776,16 @@ button.action-primary:disabled {
 }
 .queue-body.has-more-left {
   box-shadow:
-    inset 18px 0 18px -14px rgba(28, 26, 23, 0.28);
+    inset 18px 0 18px -14px rgba(var(--shadow-ink), 0.28);
 }
 .queue-body.has-more-right {
   box-shadow:
-    inset -18px 0 18px -14px rgba(28, 26, 23, 0.28);
+    inset -18px 0 18px -14px rgba(var(--shadow-ink), 0.28);
 }
 .queue-body.has-more-left.has-more-right {
   box-shadow:
-    inset 18px 0 18px -14px rgba(28, 26, 23, 0.28),
-    inset -18px 0 18px -14px rgba(28, 26, 23, 0.28);
+    inset 18px 0 18px -14px rgba(var(--shadow-ink), 0.28),
+    inset -18px 0 18px -14px rgba(var(--shadow-ink), 0.28);
 }
 .queue-body::-webkit-scrollbar { height: 8px; }
 .queue-body::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 4px; }
@@ -1852,7 +1863,7 @@ button.action-primary:disabled {
 }
 .state-done h3 { color: var(--state-done); }
 .state-done .count {
-  border-color: rgba(4, 120, 87, 0.25);
+  border-color: var(--ok);
   color: var(--state-done);
 }
 
@@ -1886,7 +1897,7 @@ button.action-primary:disabled {
     to bottom,
     var(--bg-card) 0%,
     var(--bg-card) 80%,
-    rgba(255, 255, 255, 0) 100%);
+    transparent 100%);
   z-index: 1;
 }
 .state-bucket > summary::-webkit-details-marker { display: none; }
@@ -1945,9 +1956,7 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
   border-radius: 7px;
   padding: 11px 14px 12px 16px;
   margin-bottom: 10px;
-  box-shadow:
-    0 1px 2px rgba(9, 30, 66, 0.06),
-    0 0 0 1px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 .card::before {
@@ -2216,7 +2225,7 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
   line-height: 1.4;
 }
 .finding-bucket li code {
-  background: rgba(3, 105, 161, 0.08);
+  background: var(--bg-inset);
   padding: 0 3px;
   border-radius: 2px;
   font-family: var(--font-mono);
@@ -2289,14 +2298,15 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
   font-size: 11px;
   padding: 3px 10px;
   border: 1px solid currentColor;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--bg-card);
   color: inherit;
   border-radius: 3px;
   cursor: pointer;
   font-weight: 600;
+  opacity: 0.85;
 }
 .result-continue:hover {
-  background: rgba(255, 255, 255, 0.85);
+  opacity: 1;
 }
 
 .reviewers-list {
@@ -2402,7 +2412,7 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
 .drawer-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(15, 23, 42, 0.35);
+  background: rgba(var(--shadow-ink), 0.35);
   opacity: 0;
   transition: opacity 0.18s ease;
 }
@@ -2412,7 +2422,7 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
   top: 0; right: 0; bottom: 0;
   width: min(760px, 75vw);
   background: var(--bg-card);
-  box-shadow: -8px 0 24px rgba(15, 23, 42, 0.18);
+  box-shadow: -8px 0 24px rgba(var(--shadow-ink), 0.35);
   transform: translateX(100%);
   transition: transform 0.2s ease;
   display: flex;
@@ -2945,7 +2955,7 @@ button.plan-discard:hover { background: var(--bg-inset); }
 .drafts-modal-reply:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(3, 102, 214, 0.15);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 .drafts-modal-resolve {
   display: inline-flex;
@@ -3009,7 +3019,7 @@ button.plan-discard:hover { background: var(--bg-inset); }
   outline: none;
   border-color: var(--accent);
 }
-button.prompt-run { background: var(--accent); color: white; border-color: var(--accent); }
+button.prompt-run { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 button.prompt-run:hover { background: var(--accent-strong); }
 
 .card-session-footer {
@@ -3158,7 +3168,7 @@ button.resume:hover { background: var(--warn); opacity: 0.85; }
 .modal-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(9, 30, 66, 0.55);
+  background: rgba(var(--shadow-ink), 0.55);
 }
 .modal-body {
   position: absolute;
@@ -3167,9 +3177,10 @@ button.resume:hover { background: var(--warn); opacity: 0.85; }
   transform: translateX(-50%);
   width: min(780px, 92vw);
   height: 86vh;
-  background: white;
+  background: var(--bg-card);
+  color: var(--ink);
   border-radius: 10px;
-  box-shadow: 0 10px 40px rgba(9, 30, 66, 0.35);
+  box-shadow: var(--shadow-modal);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3369,7 +3380,7 @@ button.resume:hover { background: var(--warn); opacity: 0.85; }
   gap: 8px;
   padding: 10px 14px;
   border-top: 1px solid var(--bg-inset);
-  background: white;
+  background: var(--bg-card);
 }
 .modal-send textarea {
   flex: 1;
@@ -3380,12 +3391,14 @@ button.resume:hover { background: var(--warn); opacity: 0.85; }
   font-size: 12px;
   resize: vertical;
   box-sizing: border-box;
+  background: var(--bg-card);
+  color: var(--ink);
 }
 .modal-send textarea:focus { outline: none; border-color: var(--accent); }
 .modal-send textarea:disabled { background: var(--bg-inset); color: var(--ink-mute); }
 button.modal-send-btn {
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
   border-color: var(--accent);
   font-size: 12px;
   padding: 6px 14px;
