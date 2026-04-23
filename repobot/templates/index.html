@@ -95,7 +95,7 @@
     </div>
     <div class="view-bar-spacer"></div>
     <div class="view-bar-hint">
-      <kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> inspect · <kbd>?</kbd> help
+      <kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> inspect · <kbd>g</kbd><kbd>b</kbd> board
     </div>
   </nav>
 
@@ -1130,6 +1130,19 @@
       const row = e.target.closest('.inbox-row');
       if (row && !e.target.closest('button, a, input, label, summary')) {
         selectRow(row);
+      }
+      // Inline action clicked: flash the row optimistically so the
+      // user sees motion before the next polling tick arrives with
+      // the real new state.
+      const actionForm = e.target.closest('.inbox-row-action');
+      if (actionForm) {
+        const r = actionForm.closest('.inbox-row');
+        if (r) {
+          r.classList.add('is-pending');
+          // Safety net: clear after 10s so a row doesn't get stuck
+          // pending if something went sideways.
+          setTimeout(() => r.classList.remove('is-pending'), 10000);
+        }
       }
       if (e.target.closest('[data-close-inspector]')) deselectRow();
     });

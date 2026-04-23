@@ -65,6 +65,16 @@ line. No ceremony — this isn't a roadmap.
 
 ## Done
 
+- ~~Inbox-first IA (frontend-design skill): default view is now a
+  single attention-ranked stream across all queues with a right-
+  docked inspector panel. Replaces the 2D kanban as the primary
+  surface. Slim one-line rows (priority dot / PR icon / #NNNN /
+  title / author / queue chip / state flag), morph-swap inspector
+  content, j/k/enter/esc/gi/gb keyboard, filter chips for
+  queue+rank. Board view preserved via the toggle. Scales to N
+  queues without horizontal scroll becoming unusable.~~
+  2026-04-23
+
 - ~~HTMX migration: full-page reloads replaced with partial fragment
   swaps using Idiomorph for DOM-identity-preserving updates. Drawer
   + modals now survive refresh ticks; open <details>, focused
