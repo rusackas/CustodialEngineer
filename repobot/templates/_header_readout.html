@@ -46,3 +46,18 @@
             <span class="readout-value">{{ s.worktrees }}</span>
           </span>
         {% endif %}
+        {% if rate_limit and rate_limit.core %}
+          {% set core = rate_limit.core %}
+          {% set gql = rate_limit.graphql %}
+          {# Tone the pill by core remaining: <10% danger, <25% warn. #}
+          {% set pct = (core.remaining / core.limit * 100) if core.limit else 100 %}
+          {% set tone = 'readout-danger' if pct < 10 else ('readout-warn' if pct < 25 else '') %}
+          <span class="readout-item {{ tone }}"
+                title="GitHub REST rate limit: {{ core.remaining }}/{{ core.limit }} remaining ({{ core.used }} used this hour). GraphQL: {{ gql.remaining }}/{{ gql.limit }} remaining ({{ gql.used }} used). Both windows reset hourly.">
+            <span class="readout-label">gh api</span>
+            <span class="readout-value">{{ core.remaining }}<span class="readout-sep">/</span>{{ core.limit }}
+              <span class="readout-dim">rest</span>
+              {% if gql %}· {{ gql.remaining }}<span class="readout-sep">/</span>{{ gql.limit }} <span class="readout-dim">gql</span>{% endif %}
+            </span>
+          </span>
+        {% endif %}

@@ -325,6 +325,7 @@ def index(request: Request):
             "stats": stats_data,
             "live_by_item": live_by_item,
             "queue_attention_counts": queue_attention_counts,
+            "rate_limit": github.rate_limit_snapshot(),
         },
     )
 
@@ -560,7 +561,8 @@ def header_readout(request: Request):
            + tt.get("cache_read_input_tokens", 0))
     return templates.TemplateResponse(
         request, "_header_readout.html",
-        {"request": request, "s": stats_data, "ttl": ttl},
+        {"request": request, "s": stats_data, "ttl": ttl,
+         "rate_limit": github.rate_limit_snapshot()},
     )
 
 

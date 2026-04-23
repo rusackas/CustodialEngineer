@@ -86,6 +86,59 @@ def _gh_json(cmd: list[str], retries: int = 2) -> list | dict:
     raise RuntimeError(f"gh failed: {' '.join(cmd)}\n{last_err}")
 
 
+# Rate-limit snapshot. `gh api rate_limit` is itself exempt from the
+# rate limit, so polling it is free. Cached for 30s anyway to keep
+# per-tick work cheap and steady.
+_rate_limit_cache: dict = {"at": 0.0, "data": None}
+_RATE_LIMIT_TTL = 30.0
+
+
+def rate_limit_snapshot(force: bool = False) -> dict | None:
+    """Return a compact view of the GitHub REST + GraphQL rate limits.
+
+    Shape: `{core: {used, limit, remaining, reset_at}, graphql: {...}}`.
+    Returns None if the `gh` call fails (e.g., offline, missing token).
+    Never raises — this is an observability helper, not load-bearing.
+    """
+    now = time.time()
+    if (not force
+            and _rate_limit_cache["data"] is not None
+            and now - _rate_limit_cache["at"] < _RATE_LIMIT_TTL):
+        return _rate_limit_cache["data"]
+    try:
+        result = subprocess.run(
+            ["gh", "api", "rate_limit"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return _rate_limit_cache["data"]
+        raw = json.loads(result.stdout).get("resources", {})
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return _rate_limit_cache["data"]
+
+    def _pick(key: str) -> dict | None:
+        r = raw.get(key)
+        if not isinstance(r, dict):
+            return None
+        limit = r.get("limit") or 0
+        remaining = r.get("remaining") or 0
+        return {
+            "used": r.get("used", max(limit - remaining, 0)),
+            "limit": limit,
+            "remaining": remaining,
+            "reset_at": r.get("reset"),
+        }
+
+    data = {
+        "core": _pick("core"),
+        "graphql": _pick("graphql"),
+        "search": _pick("search"),
+    }
+    _rate_limit_cache["at"] = now
+    _rate_limit_cache["data"] = data
+    return data
+
+
 def list_prs(author: str, state: str = "open", limit: int = 50) -> list[dict]:
     return _gh_json([
         "gh", "pr", "list",
