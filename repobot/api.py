@@ -768,6 +768,47 @@ def update_queue_definition_endpoint(
     return RedirectResponse(url="/", status_code=303)
 
 
+@app.post("/queues/compose")
+def queue_compose(
+    prompt: str = Form(...),
+    current_yaml: str = Form(""),
+):
+    """Run the compose-queue skill on a natural-language prompt,
+    return the generated YAML for the user to review. Does NOT
+    write to config.yaml — that's still the explicit Save click.
+    """
+    if not prompt or not prompt.strip():
+        raise HTTPException(status_code=400, detail="empty prompt")
+    queues_cfg = get_queues_config()
+    existing_ids = [q.get("id") for q in queues_cfg if q.get("id")]
+    context = {
+        "prompt": prompt.strip(),
+        "current_yaml": current_yaml or "",
+        "existing_ids": existing_ids,
+    }
+    try:
+        session_id, result = sessions.run_session_blocking(
+            "compose-queue", context,
+            cwd=str(PROJECT_ROOT),
+            kind="compose",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"compose failed: {exc}")
+    status = result.get("status")
+    yaml_out = result.get("yaml")
+    message = result.get("message") or ""
+    if status == "error" or not yaml_out:
+        raise HTTPException(
+            status_code=400,
+            detail=message or "compose skill returned no YAML"
+        )
+    return JSONResponse({
+        "yaml": yaml_out,
+        "message": message,
+        "session_id": session_id,
+    })
+
+
 @app.get("/queues/new/template")
 def queue_new_template():
     """Return a YAML template for a brand-new queue, used to seed the

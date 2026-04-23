@@ -163,6 +163,9 @@
           <button type="button" class="settings-tab"
                   role="tab" aria-selected="false"
                   data-settings-tab="yaml">Raw YAML</button>
+          <button type="button" class="settings-tab"
+                  role="tab" aria-selected="false"
+                  data-settings-tab="prompt">Prompt</button>
         </div>
 
         <div class="settings-tab-pane is-active" data-settings-pane="form">
@@ -306,6 +309,33 @@
             </form>
           </section>
         </div>
+
+        <div class="settings-tab-pane" data-settings-pane="prompt"
+             data-compose-context="edit">
+          <section class="settings-section">
+            <div class="settings-section-title">Prompt</div>
+            <div class="settings-section-help">
+              Describe what you want to change in plain English.
+              Claude will draft the YAML for you; you'll land in the
+              Raw YAML tab to review before saving.
+            </div>
+            <form class="settings-form settings-form-static settings-form-prompt"
+                  data-compose-form>
+              <textarea name="prompt"
+                        class="settings-prompt-textarea"
+                        rows="4"
+                        placeholder="e.g. Only show PRs labeled &quot;needs-review&quot;, and limit to 20 at a time."></textarea>
+              <div class="settings-yaml-error" data-compose-error></div>
+              <div class="settings-compose-actions">
+                <button type="submit" class="settings-compose-btn"
+                        data-compose-submit>
+                  {{ icon('rocket', size=12) }} Compose
+                </button>
+                <span class="settings-compose-status" data-compose-status></span>
+              </div>
+            </form>
+          </section>
+        </div>
       </div>
     </div>
   {% endfor %}
@@ -426,6 +456,33 @@
                       placeholder="Loading template…"></textarea>
             <div class="settings-yaml-error" data-yaml-error></div>
             <button type="submit">Create queue</button>
+          </form>
+        </section>
+      </div>
+
+      <div class="settings-tab-pane" data-settings-pane="prompt"
+           data-compose-context="new">
+        <section class="settings-section">
+          <div class="settings-section-title">Prompt</div>
+          <div class="settings-section-help">
+            Describe the queue you want in plain English. Claude will
+            draft the YAML; you'll land in the Raw YAML tab to review
+            before creating.
+          </div>
+          <form class="settings-form settings-form-static settings-form-prompt"
+                data-compose-form>
+            <textarea name="prompt"
+                      class="settings-prompt-textarea"
+                      rows="4"
+                      placeholder="e.g. All open PRs from @dependabot with failing CI, capped at 15."></textarea>
+            <div class="settings-yaml-error" data-compose-error></div>
+            <div class="settings-compose-actions">
+              <button type="submit" class="settings-compose-btn"
+                      data-compose-submit>
+                {{ icon('rocket', size=12) }} Compose
+              </button>
+              <span class="settings-compose-status" data-compose-status></span>
+            </div>
           </form>
         </section>
       </div>
@@ -1500,6 +1557,87 @@
         closeSettingsModals();
       }
     });
+
+    // Prompt → compose-queue skill → populate YAML tab. Intercepts
+    // the compose form submit, POSTs to /queues/compose, drops the
+    // result into the sibling YAML tab's editor, and switches the
+    // user to the YAML tab so they can review before Save.
+    document.addEventListener('submit', (e) => {
+      const form = e.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (!form.hasAttribute('data-compose-form')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      runCompose(form);
+    }, true);
+
+    async function runCompose(form) {
+      const modal = form.closest('[data-settings-modal]');
+      if (!modal) return;
+      const pane = form.closest('[data-settings-pane]');
+      const promptTa = form.querySelector('textarea[name="prompt"]');
+      const errorEl = pane.querySelector('[data-compose-error]');
+      const statusEl = pane.querySelector('[data-compose-status]');
+      const btn = pane.querySelector('[data-compose-submit]');
+      const prompt = (promptTa && promptTa.value || '').trim();
+      if (!prompt) return;
+
+      const yamlPane = modal.querySelector(
+        '[data-settings-pane="yaml"]');
+      const yamlTa = yamlPane
+        && yamlPane.querySelector('[data-yaml-editor]');
+      // For edit mode, seed the skill with the current YAML so it
+      // can preserve fields the prompt doesn't mention.
+      let currentYaml = '';
+      if (pane.dataset.composeContext === 'edit' && yamlTa) {
+        // Make sure the YAML tab has been loaded at least once.
+        if (yamlPane.dataset.yamlLoaded !== '1') {
+          await loadYamlEditor(yamlPane);
+        }
+        currentYaml = yamlTa.value || '';
+      }
+
+      if (errorEl) errorEl.textContent = '';
+      if (statusEl) {
+        statusEl.innerHTML =
+          '<span class="spinner"></span> thinking…';
+      }
+      if (btn) { btn.disabled = true; btn.classList.add('loading'); }
+
+      const fd = new FormData();
+      fd.append('prompt', prompt);
+      if (currentYaml) fd.append('current_yaml', currentYaml);
+
+      try {
+        const r = await fetch('/queues/compose',
+          { method: 'POST', body: fd, credentials: 'same-origin' });
+        if (!r.ok) {
+          let detail = 'Compose failed.';
+          try {
+            const j = await r.json();
+            if (j.detail) detail = j.detail;
+          } catch {}
+          if (errorEl) errorEl.textContent = detail;
+          return;
+        }
+        const data = await r.json();
+        // Drop the YAML into the sibling YAML editor and mark it
+        // loaded so the tab switch doesn't re-fetch the template.
+        if (yamlTa && data.yaml) {
+          yamlTa.value = data.yaml;
+          yamlPane.dataset.yamlLoaded = '1';
+        }
+        if (statusEl) {
+          statusEl.textContent = data.message || 'composed';
+        }
+        // Flip to the YAML tab so the user can review / edit / save.
+        setSettingsTab(modal, 'yaml');
+      } catch (err) {
+        if (errorEl) errorEl.textContent = 'Network error: ' + err.message;
+      } finally {
+        if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
+      }
+    }
 
     // YAML save: let the form POST normally via hx-boost, but catch
     // validation errors (400) and show them inline in the modal

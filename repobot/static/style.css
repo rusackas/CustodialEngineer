@@ -606,6 +606,60 @@ label:hover .field-info {
 }
 .settings-yaml-error:not(:empty) { display: block; }
 
+/* Prompt tab — natural-language → compose-queue skill. */
+.settings-prompt-textarea {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--ink);
+  width: 100%;
+  resize: vertical;
+  min-height: 80px;
+}
+.settings-prompt-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.settings-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+.settings-compose-btn {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.settings-compose-btn:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+.settings-compose-btn:disabled { opacity: 0.6; cursor: wait; }
+.settings-compose-btn.loading { opacity: 0.6; cursor: wait; }
+.settings-compose-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-compose-status .spinner {
+  width: 10px;
+  height: 10px;
+  margin: 0;
+}
+
 .settings-section {
   padding: 14px 18px;
   border-bottom: 1px dashed var(--rule-strong);
