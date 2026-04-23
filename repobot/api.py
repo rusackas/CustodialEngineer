@@ -489,13 +489,16 @@ def drawer(request: Request, queue_id: str, item_id: int):
     pr_number = item.get("number")
     if not pr_number:
         raise HTTPException(status_code=400, detail="item has no PR number")
+    # Resolve the repo for this item: stamped on `raw.repo` at fetch
+    # time; fall back to the queue's configured repo.
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    slug = github.item_repo_slug(item) or github.queue_repo_slug(qcfg)
     try:
-        pr = github.fetch_pr_for_drawer(int(pr_number))
+        with github.repo_scope(slug):
+            pr = github.fetch_pr_for_drawer(int(pr_number))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
-    cfg = load_config()
-    owner = cfg["repo"]["owner"]
-    name = cfg["repo"]["name"]
+    owner, name = slug.split("/", 1)
     body_html = md.render(pr.get("body"), owner=owner, name=name)
     comments = []
     for c in pr.get("comments") or []:
@@ -521,8 +524,11 @@ def reviewer_candidates(queue_id: str, item_id: int):
     pr_number = item.get("number")
     if not pr_number:
         raise HTTPException(status_code=400, detail="item has no PR number")
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    slug = github.item_repo_slug(item) or github.queue_repo_slug(qcfg)
     try:
-        candidates = github.suggest_reviewers(int(pr_number))
+        with github.repo_scope(slug):
+            candidates = github.suggest_reviewers(int(pr_number))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return JSONResponse({"candidates": candidates})
@@ -585,9 +591,12 @@ def submit_request_reviewers(queue_id: str, item_id: int,
         })
         return RedirectResponse(url="/", status_code=303)
 
+    qcfg_lookup = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    slug = github.item_repo_slug(item) or github.queue_repo_slug(qcfg_lookup)
     if to_request:
         try:
-            github.request_reviewers(int(pr_number), to_request)
+            with github.repo_scope(slug):
+                github.request_reviewers(int(pr_number), to_request)
             actions_taken.append(
                 "requested review from "
                 + ", ".join("@" + r for r in to_request))
@@ -596,7 +605,8 @@ def submit_request_reviewers(queue_id: str, item_id: int,
 
     if to_nudge and comment:
         try:
-            github.post_pr_comment(int(pr_number), comment)
+            with github.repo_scope(slug):
+                github.post_pr_comment(int(pr_number), comment)
             actions_taken.append(
                 "posted nudge comment (@"
                 + ", @".join(to_nudge) + ")")
@@ -712,6 +722,8 @@ def queue_definition(queue_id: str):
 def update_queue_definition_endpoint(
     queue_id: str,
     title: str = Form(""),
+    repo_owner: str = Form(""),
+    repo_name: str = Form(""),
     q_author: str = Form(""),
     q_state: str = Form("open"),
     q_review_requested: str = Form(""),
@@ -743,6 +755,16 @@ def update_queue_definition_endpoint(
     updates: dict = {"query": query_updates}
     if title.strip():
         updates["title"] = title.strip()
+    # Per-queue repo override. Both fields must be filled in to set;
+    # both empty clears any override (queue falls back to top-level).
+    owner = repo_owner.strip()
+    name = repo_name.strip()
+    if owner and name:
+        updates["repo"] = {"owner": owner, "name": name}
+    elif not owner and not name:
+        # Explicit clear (empty both fields) → remove the override.
+        updates["repo"] = None
+    # Mixed (one filled, one empty) is ambiguous — ignore.
     try:
         update_queue_definition(queue_id, updates)
     except (KeyError, ValueError) as exc:
@@ -846,6 +868,8 @@ def queue_new_form(
     id: str = Form(...),
     title: str = Form(...),
     max_in_flight: int = Form(10),
+    repo_owner: str = Form(""),
+    repo_name: str = Form(""),
     q_author: str = Form(""),
     q_state: str = Form("open"),
     q_review_requested: str = Form(""),
@@ -877,6 +901,9 @@ def queue_new_form(
         "states": ["in triage", "in progress", "awaiting update", "done"],
         "query": query,
     }
+    if repo_owner.strip() and repo_name.strip():
+        parsed["repo"] = {"owner": repo_owner.strip(),
+                          "name": repo_name.strip()}
     _post_add_queue(parsed)
     return RedirectResponse(url="/", status_code=303)
 

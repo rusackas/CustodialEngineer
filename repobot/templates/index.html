@@ -213,6 +213,21 @@
                 <span>Title <span class="field-info" data-tip="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" aria-label="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="title" value="{{ queue.title }}" />
               </label>
+              {% set _r = queue.repo or {} %}
+              <div class="settings-grid">
+                <label>
+                  <span>Repo owner <span class="field-info" data-tip="GitHub org/user that owns this repo.&#10;&#10;Leave blank to use the top-level repo.owner from config.yaml. Both owner AND name must be set to override; both blank clears the override." aria-label="GitHub org/user that owns this repo. Leave blank to use top-level config default. Both owner and name must be set together to override." tabindex="0">{{ icon('info', size=12) }}</span></span>
+                  <input type="text" name="repo_owner"
+                         value="{{ _r.get('owner', '') }}"
+                         placeholder="e.g. apache" />
+                </label>
+                <label>
+                  <span>Repo name <span class="field-info" data-tip="Repo name within the owner.&#10;&#10;Leave blank to use top-level config default. Example: 'superset', 'airflow'." aria-label="Repo name within the owner. Leave blank to use top-level config default. Example: 'superset', 'airflow'." tabindex="0">{{ icon('info', size=12) }}</span></span>
+                  <input type="text" name="repo_name"
+                         value="{{ _r.get('name', '') }}"
+                         placeholder="e.g. superset" />
+                </label>
+              </div>
               <div class="settings-grid">
                 <label>
                   <span>Author <span class="field-info" data-tip="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self' (you), 'app/dependabot' (a bot), 'rusackas' (a specific user). Leave blank for any author." aria-label="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self' (you), 'app/dependabot' (a bot), 'rusackas' (a specific user). Leave blank for any author." tabindex="0">{{ icon('info', size=12) }}</span></span>
@@ -394,6 +409,16 @@
                 <span>Max in flight <span class="field-info" data-tip="Max non-done items to keep in the queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub." aria-label="Max non-done items to keep in the queue at once. Each auto-refresh tick tops the queue back up to this number from GitHub." tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="number" name="max_in_flight" min="0" max="500"
                        value="10" required />
+              </label>
+              <label>
+                <span>Repo owner <span class="field-info" data-tip="GitHub org/user that owns this repo.&#10;&#10;Leave blank to use the top-level repo.owner from config.yaml. Both owner AND name must be set to override." aria-label="GitHub org/user that owns this repo. Leave blank to use top-level config default." tabindex="0">{{ icon('info', size=12) }}</span></span>
+                <input type="text" name="repo_owner"
+                       placeholder="e.g. apache (blank = use top-level)" />
+              </label>
+              <label>
+                <span>Repo name <span class="field-info" data-tip="Repo name within the owner.&#10;&#10;Example: 'superset', 'airflow'. Leave blank to inherit." aria-label="Repo name within the owner. Leave blank to inherit top-level config default." tabindex="0">{{ icon('info', size=12) }}</span></span>
+                <input type="text" name="repo_name"
+                       placeholder="e.g. superset (blank = use top-level)" />
               </label>
               <label>
                 <span>Author <span class="field-info" data-tip="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self', 'app/dependabot', 'rusackas'. Leave blank for any author." aria-label="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self', 'app/dependabot', 'rusackas'. Leave blank for any author." tabindex="0">{{ icon('info', size=12) }}</span></span>

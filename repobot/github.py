@@ -7,6 +7,8 @@ check status per-PR. A small retry loop absorbs transient 5xx responses.
 import json
 import subprocess
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from .config import load_config
 
@@ -14,9 +16,62 @@ LIST_FIELDS = "number,title,url,mergeable,updatedAt,headRefName,isDraft,author"
 CHECK_FIELDS = "statusCheckRollup"
 
 
-def _repo_slug() -> str:
+# `_current_repo_slug` is set by `repo_scope()` at the entry point of
+# queue-scoped work (run_queue, action dispatch, API endpoints that
+# know their queue). Every gh helper reads from it. Falls back to
+# config.yaml's top-level `repo` when unset.
+_current_repo_slug: ContextVar[str | None] = ContextVar(
+    "custodial.repo_slug", default=None)
+
+
+def _default_repo_slug() -> str:
     cfg = load_config()
     return f"{cfg['repo']['owner']}/{cfg['repo']['name']}"
+
+
+def _repo_slug() -> str:
+    explicit = _current_repo_slug.get()
+    return explicit if explicit else _default_repo_slug()
+
+
+@contextmanager
+def repo_scope(slug: str | None):
+    """Context manager that pins `_repo_slug()` for the duration of
+    a block. Pass None to let the default config-level repo win (no-
+    op). Nested scopes stack cleanly thanks to contextvars."""
+    if slug:
+        token = _current_repo_slug.set(slug)
+        try:
+            yield
+        finally:
+            _current_repo_slug.reset(token)
+    else:
+        yield
+
+
+def queue_repo_slug(queue_cfg: dict) -> str:
+    """Derive the repo slug for a queue's config block. Per-queue
+    `repo` overrides the top-level default; either shape is accepted
+    ({owner, name} or a "owner/name" string)."""
+    r = queue_cfg.get("repo") if queue_cfg else None
+    if isinstance(r, dict) and r.get("owner") and r.get("name"):
+        return f"{r['owner']}/{r['name']}"
+    if isinstance(r, str) and "/" in r:
+        return r
+    return _default_repo_slug()
+
+
+def item_repo_slug(item: dict) -> str | None:
+    """Derive the repo slug for a fetched item. Items get their repo
+    stamped on `raw.repo` at fetch time; older items without the stamp
+    return None, and the caller should fall back to the queue's repo."""
+    raw = item.get("raw") or {}
+    r = raw.get("repo")
+    if isinstance(r, dict) and r.get("owner") and r.get("name"):
+        return f"{r['owner']}/{r['name']}"
+    if isinstance(r, str) and "/" in r:
+        return r
+    return None
 
 
 def _gh_json(cmd: list[str], retries: int = 2) -> list | dict:
@@ -95,6 +150,18 @@ def fetch_one_pr(number: int) -> dict:
     ])
     checks = pr.get("statusCheckRollup") or []
     pr["ci_status"] = ci_status(checks)
+    _stamp_repo(pr)
+    return pr
+
+
+def _stamp_repo(pr: dict) -> dict:
+    """Stamp the current-scope repo onto a PR dict so downstream
+    item-level operations know which repo this PR belongs to. Without
+    this, cross-repo queues break at action time."""
+    slug = _repo_slug()
+    if slug and "/" in slug:
+        owner, name = slug.split("/", 1)
+        pr["repo"] = {"owner": owner, "name": name}
     return pr
 
 
@@ -108,6 +175,7 @@ def fetch_dependabot_prs(limit: int = 50) -> list[dict]:
         checks = pr_checks(pr["number"])
         pr["statusCheckRollup"] = checks
         pr["ci_status"] = ci_status(checks)
+        _stamp_repo(pr)
         out.append(pr)
     return out
 
@@ -306,6 +374,7 @@ def fetch_review_requested_prs(limit: int = 50) -> list[dict]:
         pr["unresolved_threads"] = threads
         pr["has_conflicts"] = (pr.get("mergeable") == "CONFLICTING"
                                or mss == "DIRTY")
+        _stamp_repo(pr)
         out.append(pr)
     return out
 
@@ -343,6 +412,7 @@ def fetch_my_prs(limit: int = 50) -> list[dict]:
                                or mss == "DIRTY")
         if (pr["has_conflicts"] or pr["ci_status"] == "failing"
                 or threads):
+            _stamp_repo(pr)
             out.append(pr)
     return out
 

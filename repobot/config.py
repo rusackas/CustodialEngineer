@@ -21,7 +21,7 @@ def load_config() -> dict:
 # considered infrastructure (queue id, state machine, initial_state)
 # and requires a config-file edit by hand. Keeps the editor tight and
 # means accidental form submissions can't corrupt the core shape.
-EDITABLE_QUEUE_FIELDS = {"title", "max_in_flight", "query"}
+EDITABLE_QUEUE_FIELDS = {"title", "max_in_flight", "query", "repo"}
 EDITABLE_QUERY_KEYS = {"author", "state", "review_requested", "labels",
                        "milestone", "head", "base", "assignee"}
 
@@ -61,6 +61,14 @@ def update_queue_definition(queue_id: str, updates: dict) -> dict:
         target["title"] = updates["title"]
     if "max_in_flight" in updates:
         target["max_in_flight"] = int(updates["max_in_flight"])
+    if "repo" in updates:
+        repo_val = updates["repo"]
+        if repo_val is None:
+            target.pop("repo", None)
+        elif isinstance(repo_val, dict) and repo_val.get("owner") and repo_val.get("name"):
+            target["repo"] = {"owner": repo_val["owner"], "name": repo_val["name"]}
+        else:
+            raise ValueError("repo must be {owner, name} or None")
     if "query" in updates:
         q = target.get("query") or {}
         for k, v in query_updates.items():

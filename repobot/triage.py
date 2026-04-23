@@ -68,11 +68,22 @@ def mechanical_triage(item: dict) -> tuple[str, list[str]]:
 
 
 def _build_context(item: dict, extra_pr_fields: dict | None = None) -> dict:
+    """Build the skill session's runtime context. `pr.owner`/`pr.name`
+    are derived from (in order): the item's stamped repo, the queue's
+    configured repo, then top-level config.yaml `repo`. This is how
+    cross-repo queues keep their skill calls pointed at the right
+    project."""
     cfg = load_config()
     raw = item.get("raw") or {}
+    item_repo = raw.get("repo") if isinstance(raw.get("repo"), dict) else None
+    if item_repo and item_repo.get("owner") and item_repo.get("name"):
+        owner, name = item_repo["owner"], item_repo["name"]
+    else:
+        owner = cfg["repo"]["owner"]
+        name = cfg["repo"]["name"]
     pr = {
-        "owner": cfg["repo"]["owner"],
-        "name": cfg["repo"]["name"],
+        "owner": owner,
+        "name": name,
         "number": item.get("number"),
         "url": item.get("url"),
         "title": item.get("title"),

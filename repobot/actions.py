@@ -330,6 +330,21 @@ def _approve_drafts_message(edited_drafts: dict) -> str:
     )
 
 
+def _item_repo_slug_for(queue_id: str, item: dict) -> str:
+    """Resolve the repo slug for card-level ops: item's stamped repo
+    wins, queue's configured repo is the fallback. Tied together so
+    every action-scoped gh call agrees."""
+    from .github import item_repo_slug, queue_repo_slug
+    slug = item_repo_slug(item)
+    if slug:
+        return slug
+    try:
+        from .queues import get_queue_config
+        return queue_repo_slug(get_queue_config(queue_id))
+    except Exception:
+        return queue_repo_slug({})
+
+
 async def approve_drafts(queue_id: str, item_id, edited_drafts: dict) -> dict:
     """Deliver approved reply drafts. Prefers the live phase-2 session; if
     it has closed (common after a reboot), posts each reply directly via
@@ -364,38 +379,45 @@ async def approve_drafts(queue_id: str, item_id, edited_drafts: dict) -> dict:
         raise RuntimeError("item has no PR number; cannot post replies.")
     threads = edited_drafts.get("threads") or []
     posted, resolved, skipped, errors = 0, 0, 0, []
-    for t in threads:
-        body = (t.get("reply_body") or "").strip()
-        fcid = t.get("first_comment_id")
-        should_resolve = bool(t.get("should_resolve"))
-        thread_id = t.get("thread_id") or t.get("id")
-        if not body or not fcid:
-            # No reply drafted — but user may still have asked to
-            # resolve this thread (e.g., reviewer's concern was
-            # already addressed in a prior commit). Honor that.
-            if should_resolve and thread_id and not dry_run:
+    # Pin the repo for every post/resolve call in this batch. Item's
+    # stamped repo wins, falls back to the queue's configured repo.
+    _repo_token = github._current_repo_slug.set(
+        _item_repo_slug_for(queue_id, item))
+    try:
+        for t in threads:
+            body = (t.get("reply_body") or "").strip()
+            fcid = t.get("first_comment_id")
+            should_resolve = bool(t.get("should_resolve"))
+            thread_id = t.get("thread_id") or t.get("id")
+            if not body or not fcid:
+                # No reply drafted — but user may still have asked to
+                # resolve this thread (e.g., reviewer's concern was
+                # already addressed in a prior commit). Honor that.
+                if should_resolve and thread_id and not dry_run:
+                    try:
+                        github.resolve_review_thread(thread_id)
+                        resolved += 1
+                    except Exception as exc:
+                        errors.append({"thread_id": thread_id, "error": str(exc)})
+                else:
+                    skipped += 1
+                continue
+            if dry_run:
+                continue
+            try:
+                github.post_review_reply(int(pr_number), int(fcid), body)
+                posted += 1
+            except Exception as exc:
+                errors.append({"first_comment_id": fcid, "error": str(exc)})
+                continue
+            if should_resolve and thread_id:
                 try:
                     github.resolve_review_thread(thread_id)
                     resolved += 1
                 except Exception as exc:
                     errors.append({"thread_id": thread_id, "error": str(exc)})
-            else:
-                skipped += 1
-            continue
-        if dry_run:
-            continue
-        try:
-            github.post_review_reply(int(pr_number), int(fcid), body)
-            posted += 1
-        except Exception as exc:
-            errors.append({"first_comment_id": fcid, "error": str(exc)})
-            continue
-        if should_resolve and thread_id:
-            try:
-                github.resolve_review_thread(thread_id)
-                resolved += 1
-            except Exception as exc:
-                errors.append({"thread_id": thread_id, "error": str(exc)})
+    finally:
+        github._current_repo_slug.reset(_repo_token)
 
     set_item_drafts(queue_id, item_id, edited_drafts)
     if errors:

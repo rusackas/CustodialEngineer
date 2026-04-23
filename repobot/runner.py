@@ -228,7 +228,11 @@ def refresh_one_item(queue_id: str, item_id) -> dict:
     if not number:
         raise RuntimeError("Item has no PR number to refresh.")
 
-    fresh = github.fetch_one_pr(number)
+    # Prefer the item's stamped repo (for cross-repo queues it's
+    # authoritative), fall back to the queue's configured repo.
+    slug = github.item_repo_slug(item) or github.queue_repo_slug(q)
+    with github.repo_scope(slug):
+        fresh = github.fetch_one_pr(number)
     triager = TRIAGERS.get(queue_id)
     now = _now()
     result = {"stale": False, "state": item.get("state")}
@@ -381,7 +385,12 @@ def run_queue(queue_id: str, wait_for_triage: bool = False,
 
     fetched: list[dict] | None = None
     if slots > 0 or refresh_existing:
-        fetched = fetch()
+        # Pin the repo slug for this queue's duration so every github
+        # helper inside `fetch()` and its callees reads the correct
+        # owner/name. The fetcher also stamps `raw.repo` on each PR,
+        # so downstream per-item actions can find their way back.
+        with github.repo_scope(github.queue_repo_slug(q)):
+            fetched = fetch()
 
     if refresh_existing and fetched is not None:
         _refresh_existing_items(queue_id, fetched, initial_state,
