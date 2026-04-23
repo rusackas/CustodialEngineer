@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Cloned repos (populated by `python -m repobot`)
+workspace/
+
+# Runtime queue state (triage output, session ids — never commit)
+state/
+
+.DS_Store

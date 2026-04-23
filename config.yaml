@@ -1,0 +1,95 @@
+repo:
+  owner: apache
+  name: superset
+
+identity:
+  # Your GitHub handle. Skills that post comments use this to avoid
+  # @-mentioning you, addressing you in third person, or thanking you for
+  # your own actions. Leave blank to disable the guardrail.
+  github_username: rusackas
+
+auth:
+  # GitHub token is read from the environment.
+  # Both GITHUB_TOKEN and GH_TOKEN are available on this machine.
+  token_env: GITHUB_TOKEN
+
+actions:
+  # When true, side-effecting steps (push, force-push, comment, close) are
+  # skipped — the session runs through everything else and reports what it
+  # *would* have done. Flip to false when you trust the flow end-to-end.
+  dry_run: false
+
+sessions:
+  # Max live Claude sessions (triage + actions combined). Extra sessions
+  # wait in a `queued` state and start as slots free up. Tune to your
+  # machine — 4 is comfortable on a laptop, higher for a workstation.
+  max_concurrent: 8
+
+auto_refresh:
+  # Seconds between automatic hopper top-ups per queue. Each tick calls
+  # `run_queue` (triage fans out in background threads, capped by
+  # sessions.max_concurrent). Set to 0 to disable auto-refresh.
+  # The manual "Update" button does a deeper pass: re-fetches each
+  # non-done item from GitHub and re-triages only those whose PR
+  # `updatedAt` is newer than our last triage.
+  interval_seconds: 30
+
+queues:
+  - id: failing-dependabot-prs   # legacy id; handles ALL open dependabot PRs now
+    title: Dependabot PRs
+    max_in_flight: 10
+    initial_state: in triage
+    done_state: done
+    awaiting_state: awaiting update
+    states:
+      - in triage
+      - in progress
+      - awaiting update
+      - done
+    # Pulled oldest-first. Triage branches on CI status (passing → approve-
+    # merge; failing → attempt-fix / rebase / close / lockfile / …).
+    query:
+      author: app/dependabot
+      state: open
+
+  - id: my-prs
+    title: My PRs
+    max_in_flight: 10
+    initial_state: in triage
+    done_state: done
+    awaiting_state: awaiting update
+    states:
+      - in triage
+      - in progress
+      - awaiting update
+      - done
+    # Your own open, non-draft PRs that need attention — pulls any PR
+    # with merge conflicts, failing CI, OR unresolved review threads.
+    # Author defaults to identity.github_username.
+    query:
+      author: self
+      state: open
+
+  - id: review-requested
+    title: Review requested
+    max_in_flight: 15
+    # Two pre-triage buckets; the fetcher picks one per PR based on GH
+    # signals (mergeStateStatus / CI / conflicts). Items stay in their
+    # bucket post-triage so the columns act as "looks mergeable" vs
+    # "has problems to resolve". Triage refines the assessment but
+    # does not move cards between buckets.
+    initial_states:
+      - "triage: mergeable"
+      - "triage: blocked"
+    initial_state: "triage: mergeable"   # fallback for single-state call sites
+    done_state: done
+    awaiting_state: awaiting update
+    states:
+      - "triage: mergeable"
+      - "triage: blocked"
+      - in progress
+      - awaiting update
+      - done
+    query:
+      review_requested: self
+      state: open

@@ -1,0 +1,1300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="refresh-ms" content="{{ 3000 if pending else 10000 }}" />
+  <title>repobot</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>
+      repobot
+      {% if dry_run %}<span class="dry-run-pill">DRY RUN</span>{% endif %}
+      <span id="stats-bar" class="stats-bar">
+        {% set s = stats or {} %}
+        <span class="stat-pill-wrap">
+          <button type="button" class="stat-pill stat-sessions" id="stats-sessions-btn"
+                  aria-haspopup="true" aria-expanded="false"
+                  title="Click to see live sessions. Cap {{ s.cap or 4 }} applies to running turns — idle sessions release their slot.">
+            <span class="spinner" {% if not s.working %}style="display:none"{% endif %}></span>
+            <span id="stats-working">{{ s.working or 0 }}</span>/<span id="stats-cap">{{ s.cap or 4 }}</span> running
+            {% if s.idle %} · <span id="stats-idle">{{ s.idle }}</span> idle{% endif %}
+            {% if s.queued %} · <span id="stats-queued">{{ s.queued }}</span> queued{% endif %}
+          </button>
+          <details class="settings-gear settings-gear-global">
+            <summary title="Edit global session cap" aria-label="Global settings">⚙︎</summary>
+            <form method="post" action="/settings/global" class="settings-form">
+              <label>
+                <span>Global session cap</span>
+                <input type="number" name="max_concurrent" min="1" max="64"
+                       value="{{ s.cap or 8 }}" required />
+              </label>
+              <div class="settings-hint">Applies live. Idle sessions release their slot.</div>
+              <button type="submit">Save</button>
+            </form>
+          </details>
+          {% if s.live %}
+          {% set visible_live = s.live | selectattr('number') | list %}
+          {% if visible_live %}
+          <div id="stats-popover" class="stats-popover" hidden>
+            <div class="stats-popover-title">Live Claude sessions</div>
+            {% for ls in visible_live %}
+              <button type="button" class="live-session-row"
+                      data-session-id="{{ ls.session_id }}"
+                      data-pr-number="{{ ls.number or '' }}"
+                      data-pr-title="{{ ls.title or '' }}">
+                <span class="live-session-kind live-session-kind-{{ ls.kind }}">{{ ls.kind }}</span>
+                <span class="live-session-status live-session-status-{{ ls.status }}">{{ ls.status }}</span>
+                <span class="live-session-label">#{{ ls.number }}</span>
+                {% if ls.title %}<span class="live-session-title">{{ ls.title }}</span>{% endif %}
+                {% set lp = (ls.context_percentage or 0) %}
+                {% if lp %}<span class="live-session-ctx" title="Context window">{{ lp | round(0) | int }}%</span>{% endif %}
+              </button>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% endif %}
+        </span>
+        {% set tt = (s.tokens_24h or {}) %}
+        {% set ttl = (tt.get('input_tokens', 0) + tt.get('output_tokens', 0)
+                     + tt.get('cache_creation_input_tokens', 0) + tt.get('cache_read_input_tokens', 0)) %}
+        {% if ttl %}
+          <span class="stat-pill stat-tokens" id="stats-tokens"
+                title="Tokens consumed across all Claude sessions in the last 24 hours (input + output + cache read/write). Rolling window.">{{ (ttl / 1000) | round(1) }}k tok · 24h</span>
+        {% endif %}
+      </span>
+    </h1>
+    <div class="subtitle">queues for keeping an open source repo moving</div>
+  </header>
+
+  <div class="board">
+    {% for queue in queues %}
+      {% set q_items = state.queues.get(queue.id, {}).get('items', []) %}
+      {% set done_state = queue.done_state or 'done' %}
+      {% set awaiting_state = queue.awaiting_state %}
+      {% set non_done = q_items | rejectattr('state', 'equalto', done_state)
+                                | rejectattr('state', 'equalto', awaiting_state or '__none__')
+                                | list | length %}
+      {% set triaging = q_items | selectattr('state', 'equalto', queue.initial_state)
+                                 | rejectattr('proposal') | list | length %}
+      {% set eff_max = queue.effective_max_in_flight or queue.max_in_flight %}
+      {% set eff_slots = queue.effective_worker_slots or queue.max_in_flight %}
+      <section class="queue{% if queue.intake_paused %} queue-paused{% endif %}">
+        <div class="queue-header">
+          <h2>
+            {{ queue.title }}
+            {% if queue.intake_paused %}<span class="paused-pill" title="Intake paused — no new cards will be pulled. Existing cards continue to refresh and triage.">paused</span>{% endif %}
+          </h2>
+          <div class="queue-meta">
+            <span>{{ non_done }} / {{ eff_max }}</span>
+            {% if triaging %}<span class="triaging-count"><span class="spinner"></span>{{ triaging }} triaging</span>{% endif %}
+            <form method="post" action="/queues/{{ queue.id }}/fetch">
+              <button type="submit" class="refresh" title="Re-fetch every item from GitHub. Non-done items whose PR was updated since last triage get re-triaged. Done items with new activity are reopened.">Update</button>
+            </form>
+            <details class="settings-gear settings-gear-queue">
+              <summary title="Column settings" aria-label="Column settings">⚙︎</summary>
+              <form method="post"
+                    action="/queues/{{ queue.id }}/settings"
+                    class="settings-form">
+                <label>
+                  <span>Max in flight</span>
+                  <input type="number" name="max_in_flight" min="0" max="500"
+                         value="{{ eff_max }}" required />
+                </label>
+                <label>
+                  <span>Worker slots</span>
+                  <input type="number" name="worker_slots" min="1"
+                         max="{{ s.cap or 8 }}"
+                         value="{{ eff_slots }}" required />
+                </label>
+                <label class="settings-toggle">
+                  <input type="checkbox" name="intake_paused" value="1"
+                         {% if queue.intake_paused %}checked{% endif %} />
+                  <span>Pause intake</span>
+                </label>
+                <div class="settings-hint">Worker slots cap concurrent triage per tick (≤ global cap {{ s.cap or 8 }}).</div>
+                <button type="submit">Save</button>
+              </form>
+            </details>
+          </div>
+        </div>
+
+        {% for st in queue.states %}
+          {% set cards = q_items | selectattr('state', 'equalto', st) | list %}
+          <div class="state {{ 'state-done' if st == done_state else '' }}">
+            <h3>
+              {{ st }} <span class="count">({{ cards|length }})</span>
+              {% if st == done_state and cards %}
+                <form method="post" action="/queues/{{ queue.id }}/clear-done"
+                      class="clear-done-form"
+                      title="Delete every card in this column. Any PR still in the upstream feed will come back on the next Update.">
+                  <button type="submit" class="clear-done">clear all</button>
+                </form>
+              {% endif %}
+            </h3>
+            {% for item in cards %}
+              {% set is_queued = (item.last_result or {}).get('status') == 'queued' %}
+              {% set live = live_by_item.get(queue.id ~ ':' ~ (item.id | string)) %}
+              <article class="card {% if is_queued %}card-queued{% endif %}{% if live and live.status == 'idle' %} card-idle{% endif %}" data-item-id="{{ item.id }}">
+                <div class="card-title">
+                  <div class="card-title-text">
+                    <a href="{{ item.url }}" target="_blank" rel="noopener">#{{ item.number }}</a>
+                    <span>{{ item.title }}</span>
+                  </div>
+                  <div class="card-title-chips">
+                    {% if live %}
+                      <span class="live-badge live-badge-{{ live.status }}" title="Claude session is {{ live.status }}">{{ live.status }}</span>
+                    {% endif %}
+                    {% set tl = item.tokens_lifetime or {} %}
+                    {% set tll = (tl.get('input_tokens', 0) + tl.get('output_tokens', 0)
+                                 + tl.get('cache_creation_input_tokens', 0) + tl.get('cache_read_input_tokens', 0)) %}
+                    {% set sid = item.session_id or item.triage_session_id %}
+                    {% if sid %}
+                      {% set ctx_pct = (live.context_percentage if live else None) %}
+                      {% set tip_parts = ['Open Claude session transcript (triage + action).'] %}
+                      {% if tll %}
+                        {% set _ = tip_parts.append('Lifetime: ' ~ ((tll / 1000) | round(1)) ~ 'k tok.') %}
+                      {% endif %}
+                      {% if ctx_pct %}
+                        {% set _ = tip_parts.append('Context: ' ~ (ctx_pct | round(0) | int) ~ '%.') %}
+                      {% endif %}
+                      <button type="button" class="open-session"
+                              data-session-id="{{ sid }}"
+                              data-pr-number="{{ item.number }}"
+                              data-pr-title="{{ item.title }}"
+                              data-pr-url="{{ item.url }}"
+                              title="{{ tip_parts | join(' ') }}">session</button>
+                    {% elif tll %}
+                      <span class="card-tokens" title="Lifetime tokens across every triage + action session on this card. Persists across server restarts.">{{ (tll / 1000) | round(1) }}k tok</span>
+                    {% endif %}
+                    <form method="post"
+                          action="/queues/{{ queue.id }}/items/{{ item.id }}/refresh"
+                          class="card-refresh-form">
+                      <button type="submit" class="card-refresh"
+                              title="Refetch this PR from GitHub. Re-triages only if the PR has been touched since last triage.">update</button>
+                    </form>
+                    {% if st != done_state %}
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/retriage"
+                            class="card-retriage-form">
+                        <button type="submit" class="card-retriage"
+                                title="Force a fresh triage on this card — kills any in-flight triage session and re-runs the skill from scratch.">retriage</button>
+                      </form>
+                    {% endif %}
+                  </div>
+                </div>
+                {% if st == awaiting_state %}
+                  <div class="parked-meta" title="Auto-unparks on the next PR update (review, comment, push, CI result).">
+                    parked{% if item.parked_at %} · since {{ item.parked_at[:10] }}{% endif %}
+                  </div>
+                {% else %}
+                {% if item.proposal %}
+                  <div class="proposal">
+                    {% if item.triage_source %}
+                      <span class="triage-source triage-source-{{ item.triage_source }}">{{ item.triage_source }}</span>
+                    {% endif %}
+                    {{ item.proposal }}
+                  </div>
+                  {% if item.triage_notes and item.triage_notes.log_excerpt %}
+                    <details class="triage-notes">
+                      <summary>{{ item.triage_notes.classification or 'details' }}{% if item.triage_notes.failing_check %} · {{ item.triage_notes.failing_check }}{% endif %}</summary>
+                      <pre>{{ item.triage_notes.log_excerpt }}</pre>
+                    </details>
+                  {% endif %}
+                  {# Review-requested triage surfaces richer buckets —
+                     blockers, concerns, tests-needed, open questions,
+                     bot flags, anti-patterns. Each bucket renders only
+                     if non-empty. Skip entirely when there's nothing. #}
+                  {% set tn = item.triage_notes or {} %}
+                  {% set has_review_signal = tn.blockers or tn.concerns
+                       or tn.tests_needed or tn.open_questions
+                       or tn.bot_flags or tn.anti_patterns %}
+                  {% if has_review_signal %}
+                    <details class="review-findings" open>
+                      <summary>review findings</summary>
+                      {% for key, label, cls in [
+                        ('blockers', 'blockers', 'blocker'),
+                        ('concerns', 'concerns', 'concern'),
+                        ('tests_needed', 'tests needed', 'test'),
+                        ('open_questions', 'open questions', 'question'),
+                        ('bot_flags', 'bot flags', 'bot'),
+                        ('anti_patterns', 'anti-patterns', 'antipattern')
+                      ] %}
+                        {% if tn.get(key) %}
+                          <div class="finding-bucket finding-bucket-{{ cls }}">
+                            <div class="finding-label">{{ label }}</div>
+                            <ul>
+                              {% for f in tn[key] %}<li>{{ f }}</li>{% endfor %}
+                            </ul>
+                          </div>
+                        {% endif %}
+                      {% endfor %}
+                    </details>
+                  {% endif %}
+                {% elif item.state == queue.initial_state %}
+                  <div class="proposal triaging">
+                    <span class="pulse"></span> triaging…
+                  </div>
+                {% endif %}
+                {% if item.last_result %}
+                  {% set r = item.last_result %}
+                  {% set rm = r.meta or {} %}
+                  {% set rt = rm.tokens or {} %}
+                  {% set rtl = (rt.get('input_tokens', 0) + rt.get('output_tokens', 0)
+                               + rt.get('cache_creation_input_tokens', 0) + rt.get('cache_read_input_tokens', 0)) %}
+                  <div class="result result-{{ r.status or 'info' }}">
+                    {% if r.status in ('running', 'queued') %}<span class="spinner"></span>{% endif %}
+                    <strong>{{ r.action or 'result' }}</strong>
+                    {% if r.status %}<span class="status">({{ r.status }})</span>{% endif %}
+                    {% if r.message %}<div>{{ r.message }}</div>{% endif %}
+                    {% if rm.num_turns or rtl %}
+                      <div class="result-stats">
+                        {% if rm.num_turns %}{{ rm.num_turns }} turns{% endif %}
+                        {% if rtl %}{% if rm.num_turns %} · {% endif %}{{ (rtl / 1000) | round(1) }}k tok{% endif %}
+                        {% if rm.duration_ms %} · {{ (rm.duration_ms / 1000) | round(1) }}s{% endif %}
+                      </div>
+                    {% endif %}
+                  </div>
+                {% endif %}
+                {% if item.drafts and item.drafts_status in ('proposed', 'executing') %}
+                  <div class="plan-pane plan-pane-{{ item.drafts_status }}">
+                    <div class="plan-pane-header">
+                      <span class="plan-pane-label">proposed replies</span>
+                      {% if item.drafts_status == 'executing' %}
+                        <span class="plan-pane-status"><span class="spinner"></span>posting…</span>
+                      {% endif %}
+                    </div>
+                    {% if item.drafts.message %}
+                      <div class="plan-summary">{{ item.drafts.message }}</div>
+                    {% endif %}
+                    {% if item.drafts.threads %}
+                      <details class="plan-steps" open>
+                        <summary>{{ item.drafts.threads | length }} thread{{ 's' if item.drafts.threads | length != 1 else '' }}</summary>
+                        <ol>
+                          {% for t in item.drafts.threads %}
+                            <li>
+                              <div class="plan-step-title">
+                                <code>{{ t.path }}{% if t.line %}:{{ t.line }}{% endif %}</code>
+                                <span class="drafts-action drafts-action-{{ t.action }}">{{ t.action }}</span>
+                                {% if t.commit_sha %}
+                                  <code class="drafts-sha">{{ t.commit_sha[:7] }}</code>
+                                {% endif %}
+                              </div>
+                              {% if t.reply_body %}
+                                <div class="plan-step-rationale">{{ t.reply_body }}</div>
+                              {% endif %}
+                            </li>
+                          {% endfor %}
+                        </ol>
+                      </details>
+                    {% endif %}
+                    {% if item.drafts_status == 'proposed' %}
+                      <div class="plan-actions">
+                        <button type="button" class="plan-approve"
+                                data-drafts-approve
+                                data-queue-id="{{ queue.id }}"
+                                data-item-id="{{ item.id }}"
+                                data-pr-number="{{ item.number }}"
+                                data-pr-title="{{ item.title }}"
+                                data-pr-url="{{ item.url }}"
+                                data-drafts-json="{{ item.drafts | tojson | forceescape }}">review &amp; post</button>
+                        <form method="post"
+                              action="/queues/{{ queue.id }}/items/{{ item.id }}/drafts/discard"
+                              class="plan-discard-form">
+                          <button type="submit" class="plan-discard">discard drafts</button>
+                        </form>
+                      </div>
+                    {% endif %}
+                  </div>
+                {% endif %}
+                {% if item.plan and item.plan_status in ('proposed', 'executing') %}
+                  <div class="plan-pane plan-pane-{{ item.plan_status }}">
+                    <div class="plan-pane-header">
+                      <span class="plan-pane-label">proposed plan</span>
+                      {% if item.plan_status == 'executing' %}
+                        <span class="plan-pane-status"><span class="spinner"></span>executing…</span>
+                      {% endif %}
+                    </div>
+                    {% if item.plan.summary %}
+                      <div class="plan-summary">{{ item.plan.summary }}</div>
+                    {% endif %}
+                    {% if item.plan.steps %}
+                      <details class="plan-steps" open>
+                        <summary>{{ item.plan.steps | length }} step{{ 's' if item.plan.steps | length != 1 else '' }}</summary>
+                        <ol>
+                          {% for step in item.plan.steps %}
+                            <li>
+                              <div class="plan-step-title">{{ step.title or 'step' }}</div>
+                              {% if step.rationale %}<div class="plan-step-rationale">{{ step.rationale }}</div>{% endif %}
+                              {% if step.files %}
+                                <div class="plan-step-files">
+                                  {% for f in step.files %}<code>{{ f }}</code>{% if not loop.last %} {% endif %}{% endfor %}
+                                </div>
+                              {% endif %}
+                              {% if step.verify %}<div class="plan-step-verify">verify: <code>{{ step.verify }}</code></div>{% endif %}
+                            </li>
+                          {% endfor %}
+                        </ol>
+                      </details>
+                    {% endif %}
+                    {% if item.plan.coordination %}
+                      <details class="plan-coordination">
+                        <summary>coordination ({{ item.plan.coordination | length }})</summary>
+                        <ul>
+                          {% for c in item.plan.coordination %}
+                            <li>{% if c.pr %}#{{ c.pr }} — {% endif %}{{ c.why or c }}</li>
+                          {% endfor %}
+                        </ul>
+                      </details>
+                    {% endif %}
+                    {% if item.plan.risks %}
+                      <details class="plan-risks">
+                        <summary>risks ({{ item.plan.risks | length }})</summary>
+                        <ul>
+                          {% for risk in item.plan.risks %}<li>{{ risk }}</li>{% endfor %}
+                        </ul>
+                      </details>
+                    {% endif %}
+                    {% if item.plan_status == 'proposed' %}
+                      <div class="plan-actions">
+                        <button type="button" class="plan-approve"
+                                data-plan-approve
+                                data-queue-id="{{ queue.id }}"
+                                data-item-id="{{ item.id }}"
+                                data-pr-number="{{ item.number }}"
+                                data-pr-title="{{ item.title }}"
+                                data-pr-url="{{ item.url }}"
+                                data-plan-json="{{ item.plan | tojson | forceescape }}">approve &amp; run</button>
+                        <form method="post"
+                              action="/queues/{{ queue.id }}/items/{{ item.id }}/plan/discard"
+                              class="plan-discard-form">
+                          <button type="submit" class="plan-discard">discard plan</button>
+                        </form>
+                      </div>
+                    {% endif %}
+                  </div>
+                {% endif %}
+                {% if item.assessment %}
+                  {% set asmt = item.assessment %}
+                  <details class="review-findings assessment-pane" open>
+                    <summary>worktree assessment{% if asmt.headline %} — {{ asmt.headline }}{% endif %}</summary>
+                    {% if asmt.proposal %}
+                      <div class="plan-summary">{{ asmt.proposal }}</div>
+                    {% endif %}
+                    {% set af = asmt.findings or {} %}
+                    {% for key, label, cls in [
+                      ('blockers', 'blockers', 'blocker'),
+                      ('concerns', 'concerns', 'concern'),
+                      ('tests_needed', 'tests needed', 'test'),
+                      ('anti_patterns', 'anti-patterns', 'antipattern'),
+                      ('open_questions', 'open questions', 'question'),
+                      ('scope_creep', 'scope creep', 'concern'),
+                      ('risky_surfaces', 'risky surfaces', 'blocker')
+                    ] %}
+                      {% if af.get(key) %}
+                        <div class="finding-bucket finding-bucket-{{ cls }}">
+                          <div class="finding-label">{{ label }}</div>
+                          <ul>
+                            {% for f in af[key] %}<li>{{ f }}</li>{% endfor %}
+                          </ul>
+                        </div>
+                      {% endif %}
+                    {% endfor %}
+                  </details>
+                {% endif %}
+                {% if item.diff_summary %}
+                  {% set ds = item.diff_summary %}
+                  <details class="review-findings diff-summary-pane" open>
+                    <summary>diff summary{% if ds.message %} — {{ ds.message }}{% endif %}</summary>
+                    {% if ds.bullets %}
+                      <ul class="diff-summary-bullets">
+                        {% for b in ds.bullets %}<li>{{ b }}</li>{% endfor %}
+                      </ul>
+                    {% endif %}
+                    {% if ds.stats %}
+                      <div class="diff-summary-stats">
+                        +{{ ds.stats.additions or 0 }} / −{{ ds.stats.deletions or 0 }} · {{ ds.stats.changed_files or 0 }} files
+                      </div>
+                    {% endif %}
+                  </details>
+                {% endif %}
+                {% if st != done_state %}
+                  {% set rs = (item.last_result or {}).get('status') %}
+                  {% set has_sdk_sid = (item.last_result or {}).get('meta', {}).get('session_id') %}
+                  {% set continuable = rs in ('unparsed', 'error', 'needs_human', 'interrupted') and has_sdk_sid %}
+                  {# Suppress Resume when the session reached a terminal
+                     verdict — nudging it would just reproduce the same answer. #}
+                  {% set session_concluded = rs in ('needs_human', 'completed', 'skipped', 'skipped_dry_run') %}
+                  {# Resume is for idle *action* sessions that were interrupted
+                     mid-work. Idle triage sessions have already emitted their
+                     verdict — nudging them just burns tokens without updating
+                     the card, since set_triage() already ran. Use the session
+                     modal if you really want to chat with an idle triage. #}
+                  {% set live_idle = live and live.status == 'idle'
+                                     and live.kind == 'action'
+                                     and not session_concluded %}
+                  {# Idle action sessions are just parked waiting for
+                     follow-up — skip/await can cleanly close them, so
+                     only actively-running sessions block those buttons. #}
+                  {% set ns = namespace(has_live_action=false) %}
+                  {% for ls in (stats.live or []) %}
+                    {% if ls.queue_id == queue.id and ls.item_id == item.id
+                          and ls.kind == 'action'
+                          and ls.status in ('queued', 'starting', 'running') %}
+                      {% set ns.has_live_action = true %}
+                    {% endif %}
+                  {% endfor %}
+                  {# plan-fix is a partner to attempt-fix, not something triage
+                     proposes directly. Offer it as an "I'd like to guide this
+                     one" escape hatch whenever the card has a worktree-able
+                     head ref AND no plan is already in flight. #}
+                  {% set plan_in_flight = item.plan and item.plan_status in ('proposed', 'executing') %}
+                  {% set has_head_ref = (item.raw or {}).get('headRefName') %}
+                  {% set show_plan_fix = has_head_ref and not plan_in_flight
+                                         and 'plan-fix' not in (item.actions or []) %}
+                  {% set plan_fix_primary = rs == 'needs_human' %}
+                  <div class="actions">
+                    {% if live_idle %}
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/resume-live"
+                            title="Nudge the idle session to finish what it was doing and emit its final JSON.">
+                        <button type="submit" class="resume" data-action="resume">resume</button>
+                      </form>
+                    {% endif %}
+                    {% if continuable and not live_idle %}
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/continue"
+                            title="Resume the prior session (same worktree) and ask it to finish the task and emit the final JSON.">
+                        <button type="submit" class="continue" data-action="continue">continue</button>
+                      </form>
+                    {% endif %}
+                    {% if show_plan_fix %}
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/plan-fix"
+                            title="Investigate the PR and propose a plan you can edit before execution.">
+                        <button type="submit" data-action="plan-fix"
+                                class="{% if plan_fix_primary %}action-primary{% endif %}"
+                                {% if ns.has_live_action %}disabled
+                                title="An action session is already running — wait for it to finish."
+                                {% endif %}>plan-fix</button>
+                      </form>
+                    {% endif %}
+                    {# The first non-prompt action is the triage's top
+                       recommendation — style it primary so the human sees
+                       the bot's proposed next step at a glance. Unless
+                       needs_human, in which case plan-fix takes primary. #}
+                    {% set primary_action = (item.actions or [])
+                         | reject('equalto', 'prompt') | list | first %}
+                    {% for action in item.actions or [] %}
+                      {% if action != 'prompt' %}
+                        {% set is_primary = (action == primary_action)
+                                            and not plan_fix_primary %}
+                        {% set editable_body = '' %}
+                        {% set edit_title = '' %}
+                        {% if action == 'close' %}
+                          {% set editable_body = (item.triage_notes or {}).get('close_comment')
+                             or 'Closing — please revise this comment before posting.' %}
+                          {% set edit_title = 'Close comment — review before posting' %}
+                        {% elif action == 'approve-merge' %}
+                          {% set editable_body = (item.triage_notes or {}).get('approval_comment')
+                             or (item.assessment or {}).get('approval_comment')
+                             or 'Dependabot version bump — CI green, mergeStateStatus CLEAN.' %}
+                          {% set edit_title = 'Approval review body — review before posting' %}
+                        {% elif action == 'dependabot-rebase' %}
+                          {% set editable_body = '@dependabot rebase' %}
+                          {% set edit_title = '@dependabot rebase comment — review before posting' %}
+                        {% elif action == 'dependabot-recreate' %}
+                          {% set editable_body = '@dependabot recreate' %}
+                          {% set edit_title = '@dependabot recreate comment — review before posting' %}
+                        {% elif action == 'add-review-comment' %}
+                          {% set editable_body = (item.triage_notes or {}).get('suggested_comment')
+                             or (item.assessment or {}).get('suggested_comment')
+                             or 'Draft a comment here — empty will not post.' %}
+                          {% set edit_title = 'Review comment — edit before posting' %}
+                        {% elif action == 'request-changes-review' %}
+                          {% set editable_body = (item.triage_notes or {}).get('suggested_comment')
+                             or (item.assessment or {}).get('suggested_comment')
+                             or 'Request-changes review body — please edit before submitting.' %}
+                          {% set edit_title = 'Request-changes review body — edit before submitting' %}
+                        {% elif action == 'approve-review' %}
+                          {% set editable_body = (item.triage_notes or {}).get('approval_comment')
+                             or (item.assessment or {}).get('approval_comment')
+                             or '' %}
+                          {% set edit_title = 'Approval review body — optional, empty is fine' %}
+                        {% endif %}
+                        <form method="post"
+                              action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/{{ action }}"
+                              {% if editable_body %}data-editable-body="{{ editable_body }}"
+                              data-edit-title="{{ edit_title }}"
+                              data-pr-number="{{ item.number }}"
+                              data-pr-title="{{ item.title }}"
+                              data-pr-url="{{ item.url }}"{% endif %}>
+                          <button type="submit" data-action="{{ action }}"
+                                  class="{% if is_primary %}action-primary{% endif %}"
+                                  {% if ns.has_live_action %}disabled
+                                  title="An action session is already running on this card — wait for it, or open it via the session button."
+                                  {% elif is_primary %}title="Triage's recommended next step."{% endif %}>{{ action }}</button>
+                        </form>
+                      {% endif %}
+                    {% endfor %}
+                    <form method="post"
+                          action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/await-update">
+                      <button type="submit" class="await-update" data-action="await-update"
+                              title="Park this card — waiting on someone/something off-board. Auto-unparks when the PR is touched again (review, comment, push, CI result)."
+                              {% if ns.has_live_action %}disabled
+                              title="An action session is already running — park would orphan it."{% endif %}>await</button>
+                    </form>
+                    <form method="post"
+                          action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/skip">
+                      <button type="submit" class="skip" data-action="skip"
+                              {% if ns.has_live_action %}disabled
+                              title="An action session is already running — skip would orphan it."{% endif %}>skip</button>
+                    </form>
+                  </div>
+                  {% if 'prompt' in (item.actions or []) %}
+                    <details class="prompt-form">
+                      <summary>prompt…</summary>
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/prompt">
+                        <textarea name="instruction" rows="3"
+                                  placeholder="e.g., Close with a note saying we already merged the fix in #12345."
+                                  required></textarea>
+                        <button type="submit" class="prompt-run">run in worktree</button>
+                      </form>
+                    </details>
+                  {% endif %}
+                {% else %}
+                  <div class="actions">
+                    <form method="post"
+                          action="/queues/{{ queue.id }}/items/{{ item.id }}/delete">
+                      <button type="submit" class="delete" data-action="delete">delete</button>
+                    </form>
+                  </div>
+                {% endif %}
+                {% endif %}
+              </article>
+            {% else %}
+              <div class="empty">—</div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </section>
+    {% endfor %}
+  </div>
+
+  <div id="plan-modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-plan></div>
+    <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3 id="plan-modal-title">Review plan before running</h3>
+          <div class="modal-pr" id="plan-modal-pr"></div>
+        </div>
+        <button type="button" class="modal-close" data-close-plan>×</button>
+      </div>
+      <div class="plan-modal-hint">
+        Edit the plan JSON below — this is exactly what gets sent back to the
+        live plan-fix session for phase-2 execution. Keep the top-level keys
+        the skill expects (<code>summary</code>, <code>steps</code>, etc).
+      </div>
+      <textarea id="plan-modal-body" rows="16" spellcheck="false"></textarea>
+      <div id="plan-modal-error" class="plan-modal-error"></div>
+      <div class="comment-modal-actions">
+        <button type="button" class="comment-modal-cancel" data-close-plan>Cancel</button>
+        <button type="button" class="comment-modal-send" id="plan-modal-send">Approve &amp; run</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="drafts-modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-drafts></div>
+    <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3 id="drafts-modal-title">Review replies before posting</h3>
+          <div class="modal-pr" id="drafts-modal-pr"></div>
+        </div>
+        <button type="button" class="modal-close" data-close-drafts>×</button>
+      </div>
+      <div class="plan-modal-hint">
+        Edit any reply body below — empty replies are skipped. Approving
+        posts each remaining reply inline on its thread.
+      </div>
+      <div id="drafts-modal-threads" class="drafts-modal-threads"></div>
+      <div id="drafts-modal-error" class="plan-modal-error"></div>
+      <div class="comment-modal-actions">
+        <button type="button" class="comment-modal-cancel" data-close-drafts>Cancel</button>
+        <button type="button" class="comment-modal-send" id="drafts-modal-send">Approve &amp; post</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="comment-modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-comment></div>
+    <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3 id="comment-modal-title">Review comment before posting</h3>
+          <div class="modal-pr" id="comment-modal-pr"></div>
+        </div>
+        <button type="button" class="modal-close" data-close-comment>×</button>
+      </div>
+      <div class="comment-modal-help">
+        This is what repobot will post on the PR. Edit freely — the text below is what gets sent.
+      </div>
+      <textarea id="comment-modal-body" rows="8"></textarea>
+      <div class="comment-modal-actions">
+        <button type="button" class="comment-modal-cancel" data-close-comment>Cancel</button>
+        <button type="button" class="comment-modal-send" id="comment-modal-send">Post &amp; run</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="session-modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-body" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3 id="modal-title">session</h3>
+          <div class="modal-pr" id="session-modal-pr"></div>
+          <div class="modal-sub">
+            <span id="modal-status" class="status-pill">—</span>
+            <span id="modal-skill" class="modal-skill"></span>
+            <span id="modal-usage" class="modal-usage"></span>
+          </div>
+        </div>
+        <button type="button" class="modal-close" data-close-modal>×</button>
+      </div>
+      <div id="modal-transcript" class="modal-transcript"></div>
+      <form id="modal-send" class="modal-send">
+        <textarea id="modal-input" rows="2"
+                  placeholder="Send a follow-up message…"></textarea>
+        <button type="submit" class="modal-send-btn">send</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Editable-comment modal: any form carrying `data-editable-body`
+    // (close / approve-merge / dependabot-rebase / dependabot-recreate) is
+    // intercepted on submit, the default body is shown in a modal for
+    // the human to edit, and on confirm the edited body is injected as a
+    // hidden `comment_body` field before the form is actually submitted.
+    const commentModal = document.getElementById('comment-modal');
+    const commentModalTitle = document.getElementById('comment-modal-title');
+    const commentModalBody = document.getElementById('comment-modal-body');
+    const commentModalSend = document.getElementById('comment-modal-send');
+    let commentFormPending = null;
+
+    const commentModalPr = document.getElementById('comment-modal-pr');
+
+    function renderPrLine(el, number, title, url) {
+      el.innerHTML = '';
+      if (!number && !title) { el.hidden = true; return; }
+      el.hidden = false;
+      if (number) {
+        const a = document.createElement('a');
+        a.textContent = '#' + number;
+        if (url) {
+          a.href = url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+        }
+        el.appendChild(a);
+        if (title) el.appendChild(document.createTextNode(' · '));
+      }
+      if (title) {
+        const s = document.createElement('span');
+        s.textContent = title;
+        s.className = 'modal-pr-title';
+        el.appendChild(s);
+      }
+    }
+
+    function openCommentModal(form) {
+      commentFormPending = form;
+      commentModalTitle.textContent = form.dataset.editTitle || 'Review comment before posting';
+      commentModalBody.value = form.dataset.editableBody || '';
+      renderPrLine(commentModalPr,
+        form.dataset.prNumber, form.dataset.prTitle, form.dataset.prUrl);
+      commentModal.classList.add('is-open');
+      commentModal.setAttribute('aria-hidden', 'false');
+      setTimeout(() => { commentModalBody.focus(); commentModalBody.select(); }, 10);
+    }
+
+    function closeCommentModal() {
+      commentModal.classList.remove('is-open');
+      commentModal.setAttribute('aria-hidden', 'true');
+      commentFormPending = null;
+    }
+
+    document.addEventListener('click', (e) => {
+      if (e.target.matches('[data-close-comment]')) {
+        closeCommentModal();
+      }
+    });
+
+    commentModalSend.addEventListener('click', () => {
+      if (!commentFormPending) return;
+      const form = commentFormPending;
+      const body = commentModalBody.value;
+      // Inject the edited body as a hidden field and mark confirmed so the
+      // submit handler lets it through without re-opening the modal.
+      let hidden = form.querySelector('input[name="comment_body"]');
+      if (!hidden) {
+        hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = 'comment_body';
+        form.appendChild(hidden);
+      }
+      hidden.value = body;
+      form.dataset.editConfirmed = '1';
+      closeCommentModal();
+      form.requestSubmit();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && commentModal.classList.contains('is-open')) {
+        closeCommentModal();
+      }
+    });
+
+    document.addEventListener('submit', (e) => {
+      if (e.target.id === 'modal-send') return;
+      const form = e.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      // If this form is editable and hasn't been confirmed yet, intercept.
+      if (form.dataset.editableBody && form.dataset.editConfirmed !== '1') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        openCommentModal(form);
+        return;
+      }
+      form.querySelectorAll('button[type=submit], button:not([type])').forEach(btn => {
+        if (btn.disabled) return;
+        const label = btn.textContent.trim();
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.innerHTML = '<span class="spinner"></span>' + label;
+      });
+    });
+
+    // Plan-edit modal: clicking a `[data-plan-approve]` button opens a
+    // modal with the plan JSON pre-filled; on confirm we POST the edited
+    // JSON to /plan/approve, which ships it into the live session as the
+    // phase-2 trigger.
+    const planModal = document.getElementById('plan-modal');
+    const planModalBody = document.getElementById('plan-modal-body');
+    const planModalSend = document.getElementById('plan-modal-send');
+    const planModalPr = document.getElementById('plan-modal-pr');
+    const planModalError = document.getElementById('plan-modal-error');
+    let planPending = null;
+
+    function openPlanModal(btn) {
+      let planObj;
+      try {
+        planObj = JSON.parse(btn.dataset.planJson || '{}');
+      } catch (err) {
+        planObj = {};
+      }
+      planPending = {
+        queueId: btn.dataset.queueId,
+        itemId: btn.dataset.itemId,
+      };
+      planModalBody.value = JSON.stringify(planObj, null, 2);
+      planModalBody.classList.remove('invalid');
+      planModalError.textContent = '';
+      renderPrLine(planModalPr,
+        btn.dataset.prNumber, btn.dataset.prTitle, btn.dataset.prUrl);
+      planModal.classList.add('is-open');
+      planModal.setAttribute('aria-hidden', 'false');
+      setTimeout(() => { planModalBody.focus(); }, 10);
+    }
+
+    function closePlanModal() {
+      planModal.classList.remove('is-open');
+      planModal.setAttribute('aria-hidden', 'true');
+      planPending = null;
+    }
+
+    document.addEventListener('click', (e) => {
+      if (e.target.matches('[data-close-plan]')) {
+        closePlanModal();
+      }
+      const planBtn = e.target.closest('[data-plan-approve]');
+      if (planBtn) {
+        e.preventDefault();
+        openPlanModal(planBtn);
+      }
+    });
+
+    planModalSend.addEventListener('click', async () => {
+      if (!planPending) return;
+      const raw = planModalBody.value;
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        planModalBody.classList.add('invalid');
+        planModalError.textContent = 'Invalid JSON: ' + err.message;
+        return;
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        planModalBody.classList.add('invalid');
+        planModalError.textContent = 'Plan must be a JSON object.';
+        return;
+      }
+      planModalBody.classList.remove('invalid');
+      planModalError.textContent = '';
+      planModalSend.disabled = true;
+      planModalSend.classList.add('loading');
+      const fd = new FormData();
+      fd.append('plan_json', JSON.stringify(parsed));
+      try {
+        const r = await fetch(
+          '/queues/' + planPending.queueId + '/items/' +
+          planPending.itemId + '/plan/approve',
+          {method: 'POST', body: fd}
+        );
+        if (r.ok || r.redirected) {
+          closePlanModal();
+          location.reload();
+        } else {
+          let detail = 'Failed to submit plan.';
+          try { const j = await r.json(); if (j.detail) detail = j.detail; }
+          catch (err) { /* fall through */ }
+          planModalError.textContent = detail;
+        }
+      } catch (err) {
+        planModalError.textContent = 'Network error: ' + err.message;
+      } finally {
+        planModalSend.disabled = false;
+        planModalSend.classList.remove('loading');
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && planModal.classList.contains('is-open')) {
+        closePlanModal();
+      }
+    });
+
+    // Drafts modal: clicking a `[data-drafts-approve]` button opens a
+    // modal with one textarea per thread pre-filled with the draft
+    // reply; on confirm we POST the edited drafts (same shape as phase
+    // 1 output, with edited reply_body fields) to /drafts/approve.
+    const draftsModal = document.getElementById('drafts-modal');
+    const draftsModalThreads = document.getElementById('drafts-modal-threads');
+    const draftsModalSend = document.getElementById('drafts-modal-send');
+    const draftsModalPr = document.getElementById('drafts-modal-pr');
+    const draftsModalError = document.getElementById('drafts-modal-error');
+    let draftsPending = null;
+
+    function openDraftsModal(btn) {
+      let draftsObj;
+      try {
+        draftsObj = JSON.parse(btn.dataset.draftsJson || '{}');
+      } catch (err) {
+        draftsObj = {};
+      }
+      draftsPending = {
+        queueId: btn.dataset.queueId,
+        itemId: btn.dataset.itemId,
+        drafts: draftsObj,
+      };
+      draftsModalThreads.innerHTML = '';
+      const threads = (draftsObj && draftsObj.threads) || [];
+      if (!threads.length) {
+        const empty = document.createElement('div');
+        empty.className = 'drafts-modal-empty';
+        empty.textContent = 'No draft replies on this card.';
+        draftsModalThreads.appendChild(empty);
+      }
+      threads.forEach((t, idx) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'drafts-modal-thread';
+        wrap.dataset.threadIdx = String(idx);
+
+        const meta = document.createElement('div');
+        meta.className = 'drafts-modal-meta';
+        const path = document.createElement('code');
+        path.textContent = (t.path || '') + (t.line ? ':' + t.line : '');
+        meta.appendChild(path);
+        const action = document.createElement('span');
+        action.className = 'drafts-action drafts-action-' + (t.action || '');
+        action.textContent = t.action || '';
+        meta.appendChild(action);
+        if (t.commit_sha) {
+          const sha = document.createElement('code');
+          sha.className = 'drafts-sha';
+          sha.textContent = String(t.commit_sha).slice(0, 7);
+          meta.appendChild(sha);
+        }
+        wrap.appendChild(meta);
+
+        if (t.reason) {
+          const reason = document.createElement('div');
+          reason.className = 'drafts-modal-reason';
+          reason.textContent = t.reason;
+          wrap.appendChild(reason);
+        }
+
+        const ta = document.createElement('textarea');
+        ta.className = 'drafts-modal-reply';
+        ta.rows = 3;
+        ta.value = t.reply_body || '';
+        ta.spellcheck = true;
+        const autosize = () => {
+          ta.style.height = 'auto';
+          ta.style.height = ta.scrollHeight + 'px';
+        };
+        ta.addEventListener('input', autosize);
+        wrap.appendChild(ta);
+        requestAnimationFrame(autosize);
+
+        draftsModalThreads.appendChild(wrap);
+      });
+      renderPrLine(draftsModalPr,
+        btn.dataset.prNumber, btn.dataset.prTitle, btn.dataset.prUrl);
+      draftsModalError.textContent = '';
+      draftsModal.classList.add('is-open');
+      draftsModal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeDraftsModal() {
+      draftsModal.classList.remove('is-open');
+      draftsModal.setAttribute('aria-hidden', 'true');
+      draftsPending = null;
+    }
+
+    document.addEventListener('click', (e) => {
+      if (e.target.matches('[data-close-drafts]')) {
+        closeDraftsModal();
+      }
+      const draftsBtn = e.target.closest('[data-drafts-approve]');
+      if (draftsBtn) {
+        e.preventDefault();
+        openDraftsModal(draftsBtn);
+      }
+    });
+
+    draftsModalSend.addEventListener('click', async () => {
+      if (!draftsPending) return;
+      const edited = Object.assign({}, draftsPending.drafts);
+      const original = (draftsPending.drafts.threads || []);
+      const threads = [];
+      draftsModalThreads.querySelectorAll('.drafts-modal-thread').forEach((el) => {
+        const idx = parseInt(el.dataset.threadIdx, 10);
+        const base = original[idx] || {};
+        const ta = el.querySelector('.drafts-modal-reply');
+        threads.push(Object.assign({}, base, {reply_body: ta ? ta.value : ''}));
+      });
+      edited.threads = threads;
+      draftsModalSend.disabled = true;
+      draftsModalSend.classList.add('loading');
+      const fd = new FormData();
+      fd.append('drafts_json', JSON.stringify(edited));
+      try {
+        const r = await fetch(
+          '/queues/' + draftsPending.queueId + '/items/' +
+          draftsPending.itemId + '/drafts/approve',
+          {method: 'POST', body: fd}
+        );
+        if (r.ok || r.redirected) {
+          closeDraftsModal();
+          location.reload();
+        } else {
+          let detail = 'Failed to submit drafts.';
+          try { const j = await r.json(); if (j.detail) detail = j.detail; }
+          catch (err) { /* fall through */ }
+          draftsModalError.textContent = detail;
+        }
+      } catch (err) {
+        draftsModalError.textContent = 'Network error: ' + err.message;
+      } finally {
+        draftsModalSend.disabled = false;
+        draftsModalSend.classList.remove('loading');
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && draftsModal.classList.contains('is-open')) {
+        closeDraftsModal();
+      }
+    });
+
+    // Session modal: open, poll transcript, send follow-ups.
+    const modal = document.getElementById('session-modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalStatus = document.getElementById('modal-status');
+    const modalSkill = document.getElementById('modal-skill');
+    const modalUsage = document.getElementById('modal-usage');
+    const modalTranscript = document.getElementById('modal-transcript');
+    const modalInput = document.getElementById('modal-input');
+    const modalSendForm = document.getElementById('modal-send');
+    const sessionModalPr = document.getElementById('session-modal-pr');
+    let currentSessionId = null;
+    let pollTimer = null;
+    let lastTranscriptLen = 0;
+
+    function openModal(sessionId, opts) {
+      opts = opts || {};
+      currentSessionId = sessionId;
+      lastTranscriptLen = 0;
+      const title = opts.prNumber
+        ? '#' + opts.prNumber + (opts.prTitle ? ' — ' + opts.prTitle : '')
+        : (opts.title || 'session');
+      modalTitle.textContent = title;
+      renderPrLine(sessionModalPr, opts.prNumber, opts.prTitle, opts.prUrl);
+      modalTranscript.innerHTML = '<div class="modal-loading"><span class="spinner"></span>loading…</div>';
+      modal.classList.add('is-open');
+      modal.setAttribute('aria-hidden', 'false');
+      pollSession();
+    }
+
+    function closeModal() {
+      modal.classList.remove('is-open');
+      modal.setAttribute('aria-hidden', 'true');
+      currentSessionId = null;
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    }
+
+    function renderTranscript(entries) {
+      if (entries.length === lastTranscriptLen) return;
+      const atBottom = modalTranscript.scrollTop + modalTranscript.clientHeight
+                       >= modalTranscript.scrollHeight - 30;
+      modalTranscript.innerHTML = '';
+      for (const e of entries) {
+        const role = e.role || 'system';
+        const div = document.createElement('div');
+        div.className = 'msg msg-' + role + (e.is_error ? ' msg-error' : '');
+
+        const roleDiv = document.createElement('div');
+        roleDiv.className = 'msg-role';
+        if (role === 'tool-use') {
+          roleDiv.textContent = '→ ' + (e.tool || 'tool');
+        } else if (role === 'tool-result') {
+          roleDiv.textContent = '← result' + (e.is_error ? ' (error)' : '');
+        } else {
+          roleDiv.textContent = role;
+        }
+        div.appendChild(roleDiv);
+
+        const body = document.createElement('div');
+        body.className = 'msg-text';
+        if (role === 'tool-use') {
+          body.textContent = e.summary || '';
+        } else {
+          body.textContent = e.text || '';
+        }
+        div.appendChild(body);
+        modalTranscript.appendChild(div);
+      }
+      lastTranscriptLen = entries.length;
+      if (atBottom) modalTranscript.scrollTop = modalTranscript.scrollHeight;
+    }
+
+    let currentResumable = false;
+
+    async function pollSession() {
+      if (!currentSessionId) return;
+      let stopPolling = false;
+      try {
+        const r = await fetch('/sessions/' + currentSessionId);
+        if (r.status === 404) {
+          modalStatus.textContent = 'unavailable';
+          modalStatus.className = 'status-pill status-error';
+          modalTranscript.innerHTML =
+            '<div class="modal-loading">Session not found — it lived in the server\'s memory and was lost (probably a restart). The card\'s action result is still on the board.</div>';
+          modalInput.disabled = true;
+          modalInput.placeholder = 'Session unavailable.';
+          return;  // stop polling
+        }
+        if (r.ok) {
+          const s = await r.json();
+          modalStatus.textContent = s.status;
+          modalStatus.className = 'status-pill status-' + s.status;
+          modalSkill.textContent = s.skill || '';
+          const tok = s.tokens || {};
+          const ttl = (tok.input_tokens || 0) + (tok.output_tokens || 0)
+                    + (tok.cache_creation_input_tokens || 0) + (tok.cache_read_input_tokens || 0);
+          const ctx = (s.context_usage || {}).percentage;
+          const bits = [];
+          if (ttl) bits.push((ttl / 1000).toFixed(1) + 'k tok');
+          if (typeof ctx === 'number') bits.push('ctx ' + ctx.toFixed(0) + '%');
+          modalUsage.textContent = bits.join(' · ');
+          renderTranscript(s.transcript || []);
+          currentResumable = !!s.resumable;
+          modalInput.disabled = false;
+          if (s.status === 'closed' && currentResumable) {
+            modalInput.placeholder =
+              'Session closed — sending will resume the conversation…';
+          } else if (s.status === 'closed' || s.status === 'error') {
+            modalInput.placeholder = 'Session ' + s.status + '.';
+            stopPolling = true;
+          } else {
+            modalInput.placeholder = 'Send a follow-up message…';
+          }
+        }
+      } catch (err) { /* ignore transient errors */ }
+      if (!stopPolling) pollTimer = setTimeout(pollSession, 1500);
+    }
+
+    // Modifier / middle clicks on links are "open in new tab / background
+    // tab" gestures — never let any delegated handler preventDefault them
+    // or run custom logic that would swallow the navigation.
+    function isNewTabClick(e) {
+      return e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1;
+    }
+
+    document.addEventListener('click', (e) => {
+      if (isNewTabClick(e) && e.target.closest('a[href]')) return;
+      const btn = e.target.closest('.open-session');
+      if (btn) {
+        openModal(btn.dataset.sessionId, {
+          prNumber: btn.dataset.prNumber,
+          prTitle: btn.dataset.prTitle,
+          prUrl: btn.dataset.prUrl,
+        });
+        return;
+      }
+      const liveRow = e.target.closest('.live-session-row');
+      if (liveRow) {
+        closeStatsPopover();
+        openModal(liveRow.dataset.sessionId, {
+          prNumber: liveRow.dataset.prNumber,
+          prTitle: liveRow.dataset.prTitle,
+        });
+        return;
+      }
+      if (e.target.matches('[data-close-modal]')) closeModal();
+    });
+
+    // Live-sessions popover on the working pill.
+    const statsBtn = document.getElementById('stats-sessions-btn');
+    const statsPopover = document.getElementById('stats-popover');
+    function closeStatsPopover() {
+      if (!statsPopover) return;
+      statsPopover.hidden = true;
+      if (statsBtn) statsBtn.setAttribute('aria-expanded', 'false');
+    }
+    if (statsBtn && statsPopover) {
+      statsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = !statsPopover.hidden;
+        statsPopover.hidden = isOpen;
+        statsBtn.setAttribute('aria-expanded', String(!isOpen));
+      });
+      document.addEventListener('click', (e) => {
+        if (!statsPopover.hidden
+            && !e.target.closest('#stats-popover')
+            && !e.target.closest('#stats-sessions-btn')) {
+          closeStatsPopover();
+        }
+      });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (statsPopover && !statsPopover.hidden) closeStatsPopover();
+        else if (modal.classList.contains('is-open')) closeModal();
+      }
+    });
+
+    async function sendMessage(text) {
+      const fd = new FormData();
+      fd.append('text', text);
+      return fetch('/sessions/' + currentSessionId + '/send',
+                   {method: 'POST', body: fd});
+    }
+
+    modalSendForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = modalInput.value.trim();
+      if (!text || !currentSessionId) return;
+      modalInput.value = '';
+      try {
+        let r = await sendMessage(text);
+        if (r.status === 409 && currentResumable) {
+          // Session closed but resumable: spin up a new one and retry.
+          const rr = await fetch('/sessions/' + currentSessionId + '/resume',
+                                 {method: 'POST'});
+          if (rr.ok) {
+            const body = await rr.json();
+            currentSessionId = body.session_id;
+            lastTranscriptLen = 0;  // force re-render against new transcript
+            // Poll once to pick up the resumed state, then send.
+            await pollSession();
+            await sendMessage(text);
+          }
+        }
+      } catch (err) { /* ignore */ }
+    });
+
+    // Auto-refresh, but pause while the user is interacting. Guards
+    // against mid-click reloads: any modal open, any focused text input,
+    // any recent pointerdown, or pointer currently hovering a button
+    // cluster will defer the reload.
+    (function () {
+      const meta = document.querySelector('meta[name=refresh-ms]');
+      const refreshMs = meta ? parseInt(meta.content, 10) : 10000;
+      const TYPING_TAGS = new Set(['TEXTAREA', 'INPUT', 'SELECT']);
+      const POINTER_COOLDOWN_MS = 1500;
+      let lastPointerMs = 0;
+      let hoveringActions = false;
+
+      // Any pointerdown resets the cooldown — covers clicks that land
+      // mid-reload. We also extend on pointerup so a slow click still
+      // counts as recent activity.
+      document.addEventListener('pointerdown', () => {
+        lastPointerMs = Date.now();
+      }, true);
+      document.addEventListener('pointerup', () => {
+        lastPointerMs = Date.now();
+      }, true);
+
+      // Hovering a card's action cluster (buttons or drafts pane) means
+      // the user is about to click — don't yank the page out from under
+      // them.
+      document.addEventListener('pointerover', (e) => {
+        const t = e.target;
+        if (t && t.closest && t.closest('.actions, .plan-pane, .plan-actions')) {
+          hoveringActions = true;
+        }
+      }, true);
+      document.addEventListener('pointerout', (e) => {
+        const t = e.target;
+        if (t && t.closest && t.closest('.actions, .plan-pane, .plan-actions')) {
+          hoveringActions = false;
+        }
+      }, true);
+
+      function userIsBusy() {
+        if (modal.classList.contains('is-open')) return true;
+        if (commentModal && commentModal.classList.contains('is-open')) return true;
+        if (planModal && planModal.classList.contains('is-open')) return true;
+        if (draftsModal && draftsModal.classList.contains('is-open')) return true;
+        if (statsPopover && !statsPopover.hidden) return true;
+        if (hoveringActions) return true;
+        if (Date.now() - lastPointerMs < POINTER_COOLDOWN_MS) return true;
+        const a = document.activeElement;
+        if (a && TYPING_TAGS.has(a.tagName)) return true;
+        for (const t of document.querySelectorAll('textarea, input[type=text]')) {
+          if (t.value && t.value.trim()) return true;
+        }
+        return false;
+      }
+
+      function tick() {
+        if (userIsBusy()) {
+          setTimeout(tick, 1000);  // check back shortly
+        } else {
+          location.reload();
+        }
+      }
+      setTimeout(tick, refreshMs);
+    })();
+  </script>
+</body>
+</html>
