@@ -101,93 +101,10 @@
             <form method="post" action="/queues/{{ queue.id }}/fetch">
               <button type="submit" class="refresh" title="Re-fetch every item from GitHub. Non-done items whose PR was updated since last triage get re-triaged. Done items with new activity are reopened.">Update</button>
             </form>
-            <details class="settings-gear settings-gear-queue">
-              <summary title="Column settings" aria-label="Column settings">{{ icon('gear', size=16) }}</summary>
-              <div class="settings-popover">
-                <form method="post"
-                      action="/queues/{{ queue.id }}/settings"
-                      class="settings-form settings-form-static">
-                  <label>
-                    <span>Max in flight</span>
-                    <input type="number" name="max_in_flight" min="0" max="500"
-                           value="{{ eff_max }}" required />
-                  </label>
-                  <label>
-                    <span>Worker slots</span>
-                    <input type="number" name="worker_slots" min="1"
-                           max="{{ s.cap or 8 }}"
-                           value="{{ eff_slots }}" required />
-                  </label>
-                  <label class="settings-toggle">
-                    <input type="checkbox" name="intake_paused" value="1"
-                           {% if queue.intake_paused %}checked{% endif %} />
-                    <span>Pause intake</span>
-                  </label>
-                  <div class="settings-hint">Worker slots cap concurrent triage per tick (≤ global cap {{ s.cap or 8 }}).</div>
-                  <button type="submit">Save</button>
-                </form>
-                {# Second form — edits the queue's query definition in
-                   config.yaml. On save, queue items are wiped and a
-                   fresh fetch kicks off so the new query repopulates. #}
-                {% set _q = queue.query or {} %}
-                <form method="post"
-                      action="/queues/{{ queue.id }}/definition"
-                      class="settings-form settings-form-static settings-form-query">
-                  <div class="settings-section-label">Query definition</div>
-                  <label>
-                    <span>Title</span>
-                    <input type="text" name="title"
-                           value="{{ queue.title }}" />
-                  </label>
-                  <label>
-                    <span>Author</span>
-                    <input type="text" name="q_author"
-                           value="{{ _q.get('author', '') }}"
-                           placeholder="e.g. app/dependabot, self, a-login" />
-                  </label>
-                  <label>
-                    <span>State</span>
-                    <select name="q_state">
-                      {% set _st = _q.get('state', 'open') %}
-                      {% for opt in ['open', 'closed', 'merged', 'all'] %}
-                        <option value="{{ opt }}"
-                          {% if _st == opt %}selected{% endif %}>{{ opt }}</option>
-                      {% endfor %}
-                    </select>
-                  </label>
-                  <label>
-                    <span>Review requested</span>
-                    <input type="text" name="q_review_requested"
-                           value="{{ _q.get('review_requested', '') }}"
-                           placeholder="self or a-login" />
-                  </label>
-                  <label>
-                    <span>Assignee</span>
-                    <input type="text" name="q_assignee"
-                           value="{{ _q.get('assignee', '') }}"
-                           placeholder="self or a-login" />
-                  </label>
-                  <label>
-                    <span>Milestone</span>
-                    <input type="text" name="q_milestone"
-                           value="{{ _q.get('milestone', '') }}"
-                           placeholder="milestone name" />
-                  </label>
-                  <label>
-                    <span>Labels</span>
-                    <input type="text" name="q_labels"
-                           value="{{ (_q.get('labels') or []) | join(', ') }}"
-                           placeholder="comma-separated" />
-                  </label>
-                  <div class="settings-hint">
-                    Writes to <code>config.yaml</code>, clears this
-                    queue's cards, and re-fetches against the new query.
-                    Existing state machine + ids are not touched.
-                  </div>
-                  <button type="submit">Save &amp; refetch</button>
-                </form>
-              </div>
-            </details>
+            <button type="button" class="settings-gear-btn"
+                    data-settings-target="settings-modal-{{ queue.id }}"
+                    title="Column settings"
+                    aria-label="Column settings">{{ icon('gear', size=16) }}</button>
           </div>
         </div>
 
@@ -201,6 +118,144 @@
     {% endfor %}
     </div>
   </section>
+
+  {# Per-queue settings modals. One per queue, pre-rendered hidden so
+     clicking the gear just flips the open class. Forms inside still
+     POST to the same endpoints as before. #}
+  {% for queue in queues %}
+    {% set eff_max = queue.effective_max_in_flight or queue.max_in_flight %}
+    {% set eff_slots = queue.effective_worker_slots or queue.max_in_flight %}
+    {% set _q = queue.query or {} %}
+    <div id="settings-modal-{{ queue.id }}" class="modal settings-modal"
+         aria-hidden="true" data-settings-modal>
+      <div class="modal-backdrop" data-close-settings></div>
+      <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <div>
+            <h3>{{ queue.title }} — settings</h3>
+            <div class="settings-modal-sub">
+              <code>{{ queue.id }}</code>
+              <span class="settings-modal-dot">·</span>
+              <span>{{ queue.states | length }} states</span>
+            </div>
+          </div>
+          <button type="button" class="modal-close" data-close-settings>{{ icon('x', size=16) }}</button>
+        </div>
+
+        <section class="settings-section">
+          <div class="settings-section-title">Runtime</div>
+          <div class="settings-section-help">
+            Hot-applies to the live board. Doesn't touch <code>config.yaml</code>.
+          </div>
+          <form method="post"
+                action="/queues/{{ queue.id }}/settings"
+                class="settings-form settings-form-static">
+            <div class="settings-grid">
+              <label>
+                <span>Max in flight</span>
+                <input type="number" name="max_in_flight" min="0" max="500"
+                       value="{{ eff_max }}" required />
+              </label>
+              <label>
+                <span>Worker slots</span>
+                <input type="number" name="worker_slots" min="1"
+                       max="{{ s.cap or 8 }}"
+                       value="{{ eff_slots }}" required />
+              </label>
+            </div>
+            <label class="settings-toggle">
+              <input type="checkbox" name="intake_paused" value="1"
+                     {% if queue.intake_paused %}checked{% endif %} />
+              <span>Pause intake</span>
+            </label>
+            <div class="settings-hint">Worker slots cap concurrent triage per tick (≤ global cap {{ s.cap or 8 }}).</div>
+            <button type="submit">Save runtime</button>
+          </form>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section-title">Query</div>
+          <div class="settings-section-help">
+            Writes to <code>config.yaml</code>, wipes this queue's
+            cards, re-fetches. State machine and id stay untouched.
+          </div>
+          <form method="post"
+                action="/queues/{{ queue.id }}/definition"
+                class="settings-form settings-form-static">
+            <label>
+              <span>Title</span>
+              <input type="text" name="title" value="{{ queue.title }}" />
+            </label>
+            <div class="settings-grid">
+              <label>
+                <span>Author</span>
+                <input type="text" name="q_author"
+                       value="{{ _q.get('author', '') }}"
+                       placeholder="self, app/dependabot, a-login" />
+              </label>
+              <label>
+                <span>State</span>
+                <select name="q_state">
+                  {% set _st = _q.get('state', 'open') %}
+                  {% for opt in ['open', 'closed', 'merged', 'all'] %}
+                    <option value="{{ opt }}"
+                      {% if _st == opt %}selected{% endif %}>{{ opt }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                <span>Review requested</span>
+                <input type="text" name="q_review_requested"
+                       value="{{ _q.get('review_requested', '') }}"
+                       placeholder="self or a-login" />
+              </label>
+              <label>
+                <span>Assignee</span>
+                <input type="text" name="q_assignee"
+                       value="{{ _q.get('assignee', '') }}"
+                       placeholder="self or a-login" />
+              </label>
+              <label>
+                <span>Milestone</span>
+                <input type="text" name="q_milestone"
+                       value="{{ _q.get('milestone', '') }}"
+                       placeholder="milestone name" />
+              </label>
+              <label>
+                <span>Labels</span>
+                <input type="text" name="q_labels"
+                       value="{{ (_q.get('labels') or []) | join(', ') }}"
+                       placeholder="comma-separated" />
+              </label>
+            </div>
+            <button type="submit">Save &amp; refetch</button>
+          </form>
+        </section>
+
+        <section class="settings-section settings-section-meta">
+          <div class="settings-section-title">State machine</div>
+          <div class="settings-section-help">
+            Read-only — editing these shapes the board's columns and
+            requires a restart. Edit <code>config.yaml</code> directly.
+          </div>
+          <dl class="settings-kv">
+            <dt>initial_state</dt>
+            <dd><code>{{ queue.initial_state }}</code></dd>
+            <dt>done_state</dt>
+            <dd><code>{{ queue.done_state or 'done' }}</code></dd>
+            {% if queue.awaiting_state %}
+              <dt>awaiting_state</dt>
+              <dd><code>{{ queue.awaiting_state }}</code></dd>
+            {% endif %}
+            <dt>states</dt>
+            <dd>
+              {% for s in queue.states %}<code>{{ s }}</code>{% if not loop.last %} · {% endif %}{% endfor %}
+            </dd>
+          </dl>
+        </section>
+      </div>
+    </div>
+  {% endfor %}
 
   <div id="plan-modal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-plan></div>
@@ -1148,6 +1203,50 @@
         .forEach(el => htmx.trigger(el, 'htmx:trigger'));
     }
     window.refreshQueues = refreshQueues;
+
+    // ============== Queue settings modal ================
+    // Clicking a queue's gear opens its settings modal. One modal
+    // per queue is pre-rendered at the bottom of <body>; we just flip
+    // the `is-open` class. Esc closes; click outside closes via the
+    // modal-backdrop's data-close-settings hook.
+    function openSettingsModal(id) {
+      const m = document.getElementById(id);
+      if (!m) return;
+      // Close any other settings modals that might be open.
+      document.querySelectorAll('[data-settings-modal].is-open')
+        .forEach(el => {
+          el.classList.remove('is-open');
+          el.setAttribute('aria-hidden', 'true');
+        });
+      m.classList.add('is-open');
+      m.setAttribute('aria-hidden', 'false');
+      // Focus the first interactive control for keyboard users.
+      const firstInput = m.querySelector('input, select, button');
+      if (firstInput) setTimeout(() => firstInput.focus(), 30);
+    }
+    function closeSettingsModals() {
+      document.querySelectorAll('[data-settings-modal].is-open')
+        .forEach(el => {
+          el.classList.remove('is-open');
+          el.setAttribute('aria-hidden', 'true');
+        });
+    }
+    document.addEventListener('click', (e) => {
+      const trigger = e.target.closest('[data-settings-target]');
+      if (trigger) {
+        openSettingsModal(trigger.dataset.settingsTarget);
+        return;
+      }
+      if (e.target.closest('[data-close-settings]')) {
+        closeSettingsModals();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape'
+          && document.querySelector('[data-settings-modal].is-open')) {
+        closeSettingsModals();
+      }
+    });
 
     // ============== Board-of-boards navigation ================
     // One queue board visible at a time; adjacent boards peek in
