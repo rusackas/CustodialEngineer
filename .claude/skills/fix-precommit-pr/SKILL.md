@@ -33,6 +33,12 @@ bail to `needs_human` with the offending excerpt.
   names the pre-commit job (e.g., `"pre-commit (current)"`).
 - `dry_run` — if true, DO NOT push.
 - `worktree_path` — absolute path of the checked-out worktree.
+- `pr.push_remote` — the git remote name to push to. For maintainer-
+  authored PRs this is `"origin"`; for fork PRs where maintainer
+  edits are enabled, this is a per-PR remote (e.g. `"pr-fork-39432"`)
+  that the dispatcher already configured with the fork's URL.
+- `pr.push_ref` — the branch name to push as (same as `pr.head_ref`
+  in practice; always prefer this).
 
 ## Procedure
 
@@ -114,9 +120,13 @@ The commit body should name the hooks that rewrote files (e.g.,
 `ruff-format reformatted 3 files; trailing-whitespace fixed 1 file`).
 
 - `dry_run == true`:
-  `git push --dry-run --force-with-lease origin HEAD:{pr.head_ref}`
+  `git push --dry-run --force-with-lease {pr.push_remote} HEAD:{pr.push_ref}`
 - Otherwise:
-  `git push --force-with-lease origin HEAD:{pr.head_ref}`
+  `git push --force-with-lease {pr.push_remote} HEAD:{pr.push_ref}`
+
+Use the `push_remote` / `push_ref` from context — don't hardcode
+`origin`, because fork PRs push to a different remote configured by
+the dispatcher.
 
 ## Guardrails
 

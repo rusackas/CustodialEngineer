@@ -215,6 +215,84 @@ def resolve_review_thread(thread_node_id: str) -> None:
         )
 
 
+def pr_push_info(pr_number: int) -> dict:
+    """Return the info needed to push back to a PR's head branch:
+      - head_ref: the branch name
+      - is_cross_repository: True iff the PR is from a fork
+      - maintainer_can_modify: True if the author enabled "Allow
+        edits and access to secrets by maintainers" (GitHub grants
+        your token push access to the fork in that case)
+      - head_repo: {owner, name} of the head repo (usually the fork)
+
+    Used by action dispatch to decide whether we CAN push, and to
+    set up the right push remote before the skill runs.
+    """
+    data = _gh_json([
+        "gh", "pr", "view", str(pr_number),
+        "--repo", _repo_slug(),
+        "--json",
+        "headRepository,headRepositoryOwner,headRefName,"
+        "maintainerCanModify,isCrossRepository",
+    ])
+    head_repo = data.get("headRepository") or {}
+    head_owner = (data.get("headRepositoryOwner") or {}).get("login") or ""
+    return {
+        "head_ref": data.get("headRefName"),
+        "is_cross_repository": bool(data.get("isCrossRepository")),
+        "maintainer_can_modify": bool(data.get("maintainerCanModify")),
+        "head_repo": {
+            "owner": head_owner,
+            "name": head_repo.get("name"),
+        },
+    }
+
+
+def ensure_push_remote(pr_number: int, worktree_path) -> tuple[str, str]:
+    """Set up the right push target for a PR inside its worktree.
+    Returns (remote_name, head_ref).
+
+    - For in-repo PRs: returns ("origin", head_ref). Nothing to
+      configure — the existing clone already has the branch in origin.
+    - For fork PRs with maintainerCanModify: adds (or updates) a
+      remote named `pr-fork-<N>` pointing at the fork, returns that
+      name. Your GITHUB_TOKEN has push rights to the fork thanks to
+      the maintainer-edits grant.
+    - For fork PRs without maintainerCanModify: raises RuntimeError.
+      The skill should bail with `needs_human` — the only legitimate
+      recourse is to ask the PR author to push the fix themselves.
+    """
+    info = pr_push_info(pr_number)
+    head_ref = info["head_ref"]
+    if not info["is_cross_repository"]:
+        return "origin", head_ref
+    if not info["maintainer_can_modify"]:
+        raise RuntimeError(
+            "Maintainer edits are disabled on this fork PR — we can't "
+            "push. Consider nudge-author instead."
+        )
+    fork_owner = info["head_repo"]["owner"]
+    fork_name = info["head_repo"]["name"]
+    remote = f"pr-fork-{pr_number}"
+    url = f"https://github.com/{fork_owner}/{fork_name}.git"
+    from pathlib import Path
+    wt = str(worktree_path) if not isinstance(worktree_path, Path) else str(worktree_path)
+    check = subprocess.run(
+        ["git", "-C", wt, "remote", "get-url", remote],
+        capture_output=True, text=True,
+    )
+    if check.returncode != 0:
+        subprocess.run(
+            ["git", "-C", wt, "remote", "add", remote, url],
+            check=True, capture_output=True,
+        )
+    else:
+        subprocess.run(
+            ["git", "-C", wt, "remote", "set-url", remote, url],
+            check=True, capture_output=True,
+        )
+    return remote, head_ref
+
+
 def post_pr_comment(pr_number: int, body: str) -> None:
     """Post a top-level comment on a PR. Shells out to `gh pr comment`
     so the body can carry any multiline / markdown / @-mentions

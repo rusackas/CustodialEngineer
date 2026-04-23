@@ -32,7 +32,7 @@ auto_refresh:
   # The manual "Update" button does a deeper pass: re-fetches each
   # non-done item from GitHub and re-triages only those whose PR
   # `updatedAt` is newer than our last triage.
-  interval_seconds: 30
+  interval_seconds: 180
 
 queues:
   - id: failing-dependabot-prs   # legacy id; handles ALL open dependabot PRs now

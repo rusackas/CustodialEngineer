@@ -38,6 +38,16 @@
                      value="{{ s.cap or 8 }}" required />
             </label>
             <div class="settings-hint">Applies live. Idle sessions release their slot.</div>
+            <label>
+              <span>Auto-refresh (seconds)</span>
+              <input type="number" name="auto_refresh_seconds" min="0" max="3600"
+                     value="{{ s.auto_refresh_seconds or 180 }}" required />
+            </label>
+            <div class="settings-hint">
+              How often each queue re-hits GitHub. Clamped to ≥ 30s;
+              0 disables. Bump higher if you hit rate limits. Takes
+              effect on next restart.
+            </div>
             <label class="settings-toggle">
               <input type="checkbox" name="auto_resume_on_boot"
                      {% if s.auto_resume_on_boot %}checked{% endif %} />

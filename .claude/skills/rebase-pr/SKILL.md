@@ -9,7 +9,11 @@ worktree_required: true
 You are already `cd`'d into a git worktree checked out at the PR's head
 branch (`pr.head_ref`). `origin` points at the upstream repo.
 
-**Inputs**: `pr.{owner,name,number,head_ref}`, `dry_run`.
+**Inputs**: `pr.{owner,name,number,head_ref,push_remote,push_ref}`,
+`dry_run`. `push_remote` is "origin" for in-repo PRs and a per-PR
+fork remote (e.g. `pr-fork-39432`) for fork PRs — the dispatcher
+sets it up before calling you. Always push using these, not a
+hardcoded `origin`.
 
 ## Procedure
 
@@ -37,10 +41,10 @@ branch (`pr.head_ref`). `origin` points at the upstream repo.
 
 6. **Push:**
    - If `dry_run` is true:
-     `git push --dry-run --force-with-lease origin HEAD:{pr.head_ref}`
+     `git push --dry-run --force-with-lease {pr.push_remote} HEAD:{pr.push_ref}`
      Report `status: skipped_dry_run` with the dry-run output in `notes`.
    - Otherwise:
-     `git push --force-with-lease origin HEAD:{pr.head_ref}`
+     `git push --force-with-lease {pr.push_remote} HEAD:{pr.push_ref}`
      On success report `status: completed`.
 
 ## Output

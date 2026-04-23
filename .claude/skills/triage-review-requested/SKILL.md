@@ -258,6 +258,18 @@ Return a single JSON object fenced as ```json ... ```:
   specific question. First person, no @-mentions of the reviewer,
   and don't address the PR author by @-handle either unless a
   specific person's input is being requested.
+- `fix-precommit-review` SHOULD appear in `actions` (primary on
+  `triage: blocked` classifications) when pre-commit is the ONLY
+  failing CI check — typically formatter drift or end-of-file-fixer
+  noise. Running pre-commit locally and force-pushing the auto-fixes
+  resolves it without the author needing to push. For non-
+  maintainer-editable fork PRs the dispatcher will bail to
+  `needs_human` automatically; we still propose it, since triage
+  can't reliably tell whether the author allowed maintainer edits.
+- `rebase-review` SHOULD appear in `actions` when the PR has merge
+  conflicts or is BEHIND master by a meaningful amount and the
+  conflicts look trivial from the file list (lockfiles, imports,
+  changelogs). Same fork caveat as above.
 - `nudge-author` SHOULD appear in `actions` whenever the PR has
   failing CI OR at least one unresolved review thread whose
   `first_author` is NOT the reviewer (`identity.github_username`)

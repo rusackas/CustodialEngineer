@@ -228,6 +228,28 @@ ACTIONS: dict[str, dict[str, Any]] = {
         "terminal_state": "awaiting update",
         "failure_state": "in triage",
     },
+    "fix-precommit-review": {
+        # Pre-commit fix for a PR on the review-requested queue —
+        # usually a fork PR. Same skill as my-prs' fix-precommit, but
+        # action dispatch sets up a fork remote for push when the PR
+        # has maintainerCanModify: true. Bails needs_human otherwise.
+        "label": "fix-precommit-review",
+        "skill": "fix-precommit-pr",
+        "worktree_required": True,
+        "in_progress_state": "in progress",
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
+    "rebase-review": {
+        # Rebase for a review-requested PR. Same dispatch behavior as
+        # fix-precommit-review — fork-aware push-remote setup.
+        "label": "rebase-review",
+        "skill": "rebase-pr",
+        "worktree_required": True,
+        "in_progress_state": "in progress",
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
     "nudge-author": {
         # Polite nudge comment on a PR where CI is red and/or feedback
         # from other reviewers is unaddressed. Body pre-filled from
@@ -627,6 +649,35 @@ def dispatch(queue_id: str, item_id, action_id: str,
         else:
             cwd = str(worktree.repo_path())
 
+        # For write-action skills (rebase / fix-precommit / attempt-fix
+        # / update-lockfile), the push path depends on whether the PR
+        # is in-repo or a fork. Resolve up front so the skill doesn't
+        # have to guess:
+        #   - in-repo: push to origin
+        #   - fork + maintainer_can_modify: push to a per-PR fork remote
+        #   - fork + NOT modifiable: bail now with needs_human
+        push_remote = None
+        push_ref = (item.get("raw") or {}).get("headRefName")
+        WRITE_ACTIONS = {
+            "rebase", "rebase-review",
+            "fix-precommit", "fix-precommit-review",
+            "attempt-fix", "update-lockfile",
+        }
+        if action_id in WRITE_ACTIONS and wt_path:
+            try:
+                pr_num = int(item.get("number"))
+                push_remote, push_ref = github.ensure_push_remote(pr_num, wt_path)
+            except Exception as exc:
+                # Fork without maintainer edits → graceful bail.
+                if spec["failure_state"]:
+                    set_item_state(queue_id, item_id, spec["failure_state"])
+                set_item_result(queue_id, item_id, {
+                    "action": action_id,
+                    "status": "needs_human",
+                    "message": f"cannot push: {exc}",
+                })
+                return None
+
         context = {
             "pr": {
                 "owner": cfg["repo"]["owner"],
@@ -635,6 +686,8 @@ def dispatch(queue_id: str, item_id, action_id: str,
                 "url": item.get("url"),
                 "title": item.get("title"),
                 "head_ref": (item.get("raw") or {}).get("headRefName"),
+                "push_remote": push_remote,
+                "push_ref": push_ref,
             },
             "triage": {
                 "proposal": item.get("proposal"),

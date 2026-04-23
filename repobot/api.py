@@ -48,7 +48,13 @@ from .queues import (
 )
 from .runner import refresh_one_item, retriage_item, run_queue
 
-DEFAULT_AUTO_REFRESH_SECONDS = 30
+# A 30s fetch tick hammered the GitHub REST API — each queue's fetch
+# is ~1 list call + 1 checks call per PR (50 PRs × ~2 calls × N queues
+# every 30s = ~N × 12k calls/hr, eating the 5k/hr budget with just a
+# couple of queues). 180s still feels responsive for a maintenance
+# tool while leaving plenty of headroom for manual Updates and auto-
+# unparking of awaiting-update cards.
+DEFAULT_AUTO_REFRESH_SECONDS = 180
 
 TEMPLATES_DIR = PROJECT_ROOT / "repobot" / "templates"
 STATIC_DIR = PROJECT_ROOT / "repobot" / "static"
@@ -154,9 +160,15 @@ _sweep_stale_session_state()
 
 
 def _auto_refresh_interval() -> int:
+    """Resolve the auto-refresh interval at boot. Global setting
+    (user-editable) wins over config.yaml default so the user can
+    tune without restarting. Lower bound of 30s so accidental '1'
+    doesn't nuke the GitHub API budget."""
     cfg = load_config()
-    return int(cfg.get("auto_refresh", {}).get(
+    cfg_default = int(cfg.get("auto_refresh", {}).get(
         "interval_seconds", DEFAULT_AUTO_REFRESH_SECONDS))
+    setting = int(get_global_setting("auto_refresh_seconds", cfg_default))
+    return max(30, setting) if setting > 0 else setting  # 0 still means off
 
 
 def _start_auto_refresh() -> None:
@@ -214,6 +226,7 @@ def index(request: Request):
     stats_data = sessions.stats()
     stats_data["auto_resume_on_boot"] = bool(
         get_global_setting("auto_resume_on_boot", False))
+    stats_data["auto_refresh_seconds"] = _auto_refresh_interval()
     # Enrich live-session rows with PR number/title so the popover can
     # render a useful label without another round-trip.
     live_by_item: dict[str, dict] = {}
@@ -437,6 +450,7 @@ def _ctx_for_queue(request: Request, queue_id: str) -> dict:
     stats_data = sessions.stats()
     stats_data["auto_resume_on_boot"] = bool(
         get_global_setting("auto_resume_on_boot", False))
+    stats_data["auto_refresh_seconds"] = _auto_refresh_interval()
     live_by_item: dict[str, dict] = {}
     for ls in stats_data.get("live", []):
         qid = ls.get("queue_id"); iid = ls.get("item_id")
@@ -479,6 +493,7 @@ def header_readout(request: Request):
     stats_data = sessions.stats()
     stats_data["auto_resume_on_boot"] = bool(
         get_global_setting("auto_resume_on_boot", False))
+    stats_data["auto_refresh_seconds"] = _auto_refresh_interval()
     tt = stats_data.get("tokens_24h") or {}
     ttl = (tt.get("input_tokens", 0) + tt.get("output_tokens", 0)
            + tt.get("cache_creation_input_tokens", 0)
@@ -692,7 +707,8 @@ def session_resume(session_id: str):
 @app.post("/settings/global")
 def update_global(request: Request,
                   max_concurrent: int = Form(...),
-                  auto_resume_on_boot: str = Form("")):
+                  auto_resume_on_boot: str = Form(""),
+                  auto_refresh_seconds: int = Form(180)):
     """Bump (or trim) the global session cap. Applies live via semaphore
     resize — new/queued sessions pick up the new cap immediately; existing
     in-flight sessions finish their current turn at the old cap.
@@ -706,6 +722,14 @@ def update_global(request: Request,
         "auto_resume_on_boot",
         auto_resume_on_boot.lower() in ("1", "true", "on", "yes"),
     )
+    # 0 disables auto-refresh entirely; any other value clamped to
+    # >= 30s inside _auto_refresh_interval(). The change takes effect
+    # after restart (the refresh threads are started once at boot).
+    refresh = int(auto_refresh_seconds)
+    if refresh < 0 or refresh > 3600:
+        raise HTTPException(status_code=400,
+                            detail="auto_refresh_seconds must be 0–3600")
+    update_global_setting("auto_refresh_seconds", refresh)
     try:
         sessions.resize_semaphore(int(max_concurrent))
     except Exception as exc:
