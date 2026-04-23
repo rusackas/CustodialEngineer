@@ -597,7 +597,8 @@ def drawer(request: Request, queue_id: str, item_id: int):
         })
     return templates.TemplateResponse(
         request, "drawer.html",
-        {"pr": pr, "body_html": body_html, "comments": comments},
+        {"pr": pr, "body_html": body_html, "comments": comments,
+         "queue_id": queue_id, "item_id": item_id},
     )
 
 
@@ -615,10 +616,18 @@ def reviewer_candidates(queue_id: str, item_id: int):
     slug = github.item_repo_slug(item) or github.queue_repo_slug(qcfg)
     try:
         with github.repo_scope(slug):
-            candidates = github.suggest_reviewers(int(pr_number))
+            grouped = github.suggest_reviewers(int(pr_number))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
-    return JSONResponse({"candidates": candidates})
+    # Keep the flat `candidates` key around for any caller that hasn't
+    # migrated yet — it's the concatenation of both groups in display
+    # order (suggested first, then others).
+    flat = list(grouped.get("suggested") or []) + list(grouped.get("others") or [])
+    return JSONResponse({
+        "candidates": flat,
+        "suggested": grouped.get("suggested") or [],
+        "others": grouped.get("others") or [],
+    })
 
 
 @app.post("/queues/{queue_id}/items/{item_id}/request-reviewers")

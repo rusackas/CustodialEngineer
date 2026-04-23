@@ -699,7 +699,12 @@
         <button type="button" class="modal-close" data-close-reviewers>×</button>
       </div>
       <div class="comment-modal-help">
-        Candidates are ranked by recent commits on the touched files. Tick <strong>request</strong> to formally request review (only available for repo collaborators), and/or <strong>nudge</strong> to @-mention them in a comment you'll edit next.
+        <strong>Suggested</strong> candidates are ranked by recent commits on the touched files. <strong>Other collaborators</strong> lists everyone else with write access. Tick <strong>request</strong> to formally request review, <strong>nudge</strong> to @-mention them in a comment you'll edit next.
+      </div>
+      <div class="reviewers-search-wrap">
+        <input type="search" id="reviewers-modal-search"
+               class="reviewers-search" placeholder="Filter by login…"
+               autocomplete="off" spellcheck="false" />
       </div>
       <div class="reviewers-list-header">
         <span class="reviewers-col-label">request</span>
@@ -922,91 +927,151 @@
     const reviewersModalPr = document.getElementById('reviewers-modal-pr');
     const reviewersModalList = document.getElementById('reviewers-modal-list');
     const reviewersModalSend = document.getElementById('reviewers-modal-send');
+    const reviewersModalSearch = document.getElementById('reviewers-modal-search');
     let reviewersFormPending = null;
+    // Selection state survives search filtering and group re-renders.
+    // We rebuild the DOM on each filter, but the checkbox state is
+    // authoritative in these sets.
+    const reviewersRequestSet = new Set();
+    const reviewersNudgeSet = new Set();
+    let reviewersData = { suggested: [], others: [] };
 
     function closeReviewersModal() {
       reviewersModal.classList.remove('is-open');
       reviewersModal.setAttribute('aria-hidden', 'true');
       reviewersFormPending = null;
+      reviewersRequestSet.clear();
+      reviewersNudgeSet.clear();
+      reviewersData = { suggested: [], others: [] };
+      if (reviewersModalSearch) reviewersModalSearch.value = '';
     }
 
-    function renderReviewerCandidates(candidates) {
-      reviewersModalList.innerHTML = '';
-      if (!candidates || !candidates.length) {
-        const empty = document.createElement('div');
-        empty.className = 'reviewers-empty';
-        empty.textContent = 'No candidates found from recent commit history on the touched files.';
-        reviewersModalList.appendChild(empty);
-        reviewersModalSend.disabled = true;
-        return;
+    function syncReviewersSend() {
+      reviewersModalSend.disabled =
+        reviewersRequestSet.size === 0 && reviewersNudgeSet.size === 0;
+    }
+
+    function buildReviewerRow(c) {
+      const row = document.createElement('div');
+      row.className = 'reviewer-row';
+      if (!c.can_request) row.classList.add('reviewer-row-no-access');
+
+      const requestCell = document.createElement('label');
+      requestCell.className = 'reviewer-col reviewer-col-request';
+      const reqCb = document.createElement('input');
+      reqCb.type = 'checkbox';
+      reqCb.value = c.login;
+      reqCb.name = 'reviewers';
+      reqCb.checked = reviewersRequestSet.has(c.login);
+      if (!c.can_request) {
+        reqCb.disabled = true;
+        requestCell.title = 'Not a repo collaborator — cannot request formal review.';
       }
-      const sync = () => {
-        const any = !!reviewersModalList.querySelector(
-          'input[type=checkbox]:checked');
-        reviewersModalSend.disabled = !any;
-      };
-      for (const c of candidates) {
-        const row = document.createElement('div');
-        row.className = 'reviewer-row';
-        if (!c.can_request) row.classList.add('reviewer-row-no-access');
+      reqCb.addEventListener('change', () => {
+        if (reqCb.checked) reviewersRequestSet.add(c.login);
+        else reviewersRequestSet.delete(c.login);
+        syncReviewersSend();
+      });
+      requestCell.appendChild(reqCb);
 
-        // Column 1: "request review" checkbox. Disabled + explained
-        // when the candidate isn't a repo collaborator.
-        const requestCell = document.createElement('label');
-        requestCell.className = 'reviewer-col reviewer-col-request';
-        const reqCb = document.createElement('input');
-        reqCb.type = 'checkbox';
-        reqCb.value = c.login;
-        reqCb.name = 'reviewers';
-        if (!c.can_request) {
-          reqCb.disabled = true;
-          requestCell.title = 'Not a repo collaborator — cannot request formal review.';
-        }
-        reqCb.addEventListener('change', sync);
-        requestCell.appendChild(reqCb);
+      const nudgeCell = document.createElement('label');
+      nudgeCell.className = 'reviewer-col reviewer-col-nudge';
+      const nudgeCb = document.createElement('input');
+      nudgeCb.type = 'checkbox';
+      nudgeCb.value = c.login;
+      nudgeCb.name = 'nudge';
+      nudgeCb.checked = reviewersNudgeSet.has(c.login);
+      nudgeCb.addEventListener('change', () => {
+        if (nudgeCb.checked) reviewersNudgeSet.add(c.login);
+        else reviewersNudgeSet.delete(c.login);
+        syncReviewersSend();
+      });
+      nudgeCell.appendChild(nudgeCb);
 
-        // Column 2: "nudge in comment" checkbox. Always available.
-        const nudgeCell = document.createElement('label');
-        nudgeCell.className = 'reviewer-col reviewer-col-nudge';
-        const nudgeCb = document.createElement('input');
-        nudgeCb.type = 'checkbox';
-        nudgeCb.value = c.login;
-        nudgeCb.name = 'nudge';
-        nudgeCb.addEventListener('change', sync);
-        nudgeCell.appendChild(nudgeCb);
-
-        // Column 3: name + meta.
-        const text = document.createElement('div');
-        text.className = 'reviewer-row-text';
-        const handle = document.createElement('div');
-        handle.className = 'reviewer-row-handle';
-        handle.textContent = '@' + c.login;
-        if (!c.can_request) {
-          const tag = document.createElement('span');
-          tag.className = 'reviewer-row-tag';
-          tag.textContent = 'not a collaborator';
-          handle.appendChild(tag);
-        }
-        const sub = document.createElement('div');
-        sub.className = 'reviewer-row-sub';
-        const files = c.files || [];
+      const text = document.createElement('div');
+      text.className = 'reviewer-row-text';
+      const handle = document.createElement('div');
+      handle.className = 'reviewer-row-handle';
+      handle.textContent = '@' + c.login;
+      if (!c.can_request) {
+        const tag = document.createElement('span');
+        tag.className = 'reviewer-row-tag';
+        tag.textContent = 'not a collaborator';
+        handle.appendChild(tag);
+      }
+      const sub = document.createElement('div');
+      sub.className = 'reviewer-row-sub';
+      const files = c.files || [];
+      if ((c.commits || 0) > 0) {
         const fileLabel = files.length > 3
           ? files.slice(0, 3).join(', ') + ` (+${files.length - 3} more)`
           : files.join(', ');
         sub.textContent = `${c.commits} recent commit${c.commits === 1 ? '' : 's'} on ${fileLabel}`;
-        text.appendChild(handle);
-        text.appendChild(sub);
-
-        row.appendChild(requestCell);
-        row.appendChild(nudgeCell);
-        row.appendChild(text);
-        reviewersModalList.appendChild(row);
+      } else {
+        sub.textContent = 'write-access collaborator';
+        sub.classList.add('reviewer-row-sub-muted');
       }
-      reviewersModalSend.disabled = true;
+      text.appendChild(handle);
+      text.appendChild(sub);
+
+      row.appendChild(requestCell);
+      row.appendChild(nudgeCell);
+      row.appendChild(text);
+      return row;
+    }
+
+    function appendGroupHeader(label, count) {
+      const hdr = document.createElement('div');
+      hdr.className = 'reviewers-group-header';
+      const name = document.createElement('span');
+      name.className = 'reviewers-group-label';
+      name.textContent = label;
+      const n = document.createElement('span');
+      n.className = 'reviewers-group-count';
+      n.textContent = count;
+      hdr.appendChild(name);
+      hdr.appendChild(n);
+      reviewersModalList.appendChild(hdr);
+    }
+
+    function renderReviewerGroups() {
+      reviewersModalList.innerHTML = '';
+      const q = (reviewersModalSearch && reviewersModalSearch.value || '')
+        .trim().toLowerCase();
+      const match = (c) => !q || (c.login || '').toLowerCase().includes(q);
+      const suggested = (reviewersData.suggested || []).filter(match);
+      const others = (reviewersData.others || []).filter(match);
+
+      if (!suggested.length && !others.length) {
+        const empty = document.createElement('div');
+        empty.className = 'reviewers-empty';
+        empty.textContent = q
+          ? `No collaborators match "${q}".`
+          : 'No candidates found.';
+        reviewersModalList.appendChild(empty);
+        return;
+      }
+      if (suggested.length) {
+        appendGroupHeader('Suggested — recent commits on touched files',
+                          suggested.length);
+        for (const c of suggested) {
+          reviewersModalList.appendChild(buildReviewerRow(c));
+        }
+      }
+      if (others.length) {
+        appendGroupHeader('Other collaborators', others.length);
+        for (const c of others) {
+          reviewersModalList.appendChild(buildReviewerRow(c));
+        }
+      }
     }
 
     async function openReviewersModal(form) {
       reviewersFormPending = form;
+      reviewersRequestSet.clear();
+      reviewersNudgeSet.clear();
+      reviewersData = { suggested: [], others: [] };
+      if (reviewersModalSearch) reviewersModalSearch.value = '';
       renderPrLine(reviewersModalPr, form.dataset.prNumber,
                    form.dataset.prTitle, form.dataset.prUrl);
       reviewersModalList.innerHTML = '<div class="reviewers-loading">Loading candidates…</div>';
@@ -1017,7 +1082,12 @@
         const res = await fetch(form.dataset.candidatesUrl, { credentials: 'same-origin' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        renderReviewerCandidates(data.candidates || []);
+        reviewersData = {
+          suggested: data.suggested || [],
+          others: data.others || [],
+        };
+        renderReviewerGroups();
+        syncReviewersSend();
       } catch (err) {
         reviewersModalList.innerHTML = '';
         const e = document.createElement('div');
@@ -1025,6 +1095,10 @@
         e.textContent = 'Could not load candidates: ' + err.message;
         reviewersModalList.appendChild(e);
       }
+    }
+
+    if (reviewersModalSearch) {
+      reviewersModalSearch.addEventListener('input', renderReviewerGroups);
     }
 
     reviewersModalSend.addEventListener('click', () => {
@@ -1037,12 +1111,10 @@
       delete form.dataset.editTitle;
       form.dataset.editConfirmed = '';
       form.querySelectorAll('input[name="comment_body"]').forEach(n => n.remove());
-      const reqLogins = Array.from(
-        reviewersModalList.querySelectorAll('input[name="reviewers"]:checked'))
-        .map(cb => cb.value);
-      const nudgeLogins = Array.from(
-        reviewersModalList.querySelectorAll('input[name="nudge"]:checked'))
-        .map(cb => cb.value);
+      // Read from the authoritative selection Sets rather than the DOM
+      // — otherwise search-filtered rows would drop out of the result.
+      const reqLogins = Array.from(reviewersRequestSet);
+      const nudgeLogins = Array.from(reviewersNudgeSet);
       if (!reqLogins.length && !nudgeLogins.length) return;
 
       const injectHidden = (name, values) => {

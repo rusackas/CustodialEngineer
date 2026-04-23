@@ -552,22 +552,17 @@ _BOT_SUFFIX = "[bot]"
 
 
 _COLLABS_TTL_SEC = 600  # 10 min
-_collabs_cache: dict = {"at": 0.0, "slug": "", "logins": set()}
+_collabs_cache: dict = {"at": 0.0, "slug": "", "logins": set(), "records": []}
 
 
-def collaborator_logins(force: bool = False) -> set[str]:
-    """Return the lowercase logins of anyone in the repo's collaborator
-    list who has push or admin rights — i.e., the set of people who
-    can legitimately be requested as reviewers. Cached for 10 min to
-    avoid hammering the API; the cache is keyed by repo slug so a
-    config change invalidates automatically.
+def _refresh_collaborators() -> None:
+    """Fetch + cache the repo's write-access collaborator list. Stores
+    both the lowercase-login set (for membership checks) and a list of
+    `{login, avatar_url}` dicts (for UI rendering).
     """
     slug = _repo_slug()
-    if (not force
-            and _collabs_cache["slug"] == slug
-            and time.time() - _collabs_cache["at"] < _COLLABS_TTL_SEC):
-        return _collabs_cache["logins"]
-    out: set[str] = set()
+    logins: set[str] = set()
+    records: list[dict] = []
     page = 1
     while True:
         try:
@@ -588,21 +583,60 @@ def collaborator_logins(force: bool = False) -> set[str]:
             perms = c.get("permissions") or {}
             if login and (perms.get("push") or perms.get("admin")
                           or perms.get("maintain")):
-                out.add(login.lower())
+                logins.add(login.lower())
+                records.append({
+                    "login": login,
+                    "avatar_url": c.get("avatar_url"),
+                })
         if len(batch) < 100:
             break
         page += 1
-    _collabs_cache.update({"at": time.time(), "slug": slug, "logins": out})
-    return out
+    _collabs_cache.update({
+        "at": time.time(), "slug": slug,
+        "logins": logins, "records": records,
+    })
 
 
-def suggest_reviewers(pr_number: int, limit: int = 8) -> list[dict]:
-    """Rank candidate reviewers for a PR by who's committed to the
-    touched files recently. Excludes the PR author, bots, anyone
-    already requested, and anyone who has already reviewed.
+def collaborator_logins(force: bool = False) -> set[str]:
+    """Return the lowercase logins of anyone in the repo's collaborator
+    list who has push or admin rights — i.e., the set of people who
+    can legitimately be requested as reviewers. Cached for 10 min to
+    avoid hammering the API; the cache is keyed by repo slug so a
+    config change invalidates automatically.
+    """
+    slug = _repo_slug()
+    if (not force
+            and _collabs_cache["slug"] == slug
+            and time.time() - _collabs_cache["at"] < _COLLABS_TTL_SEC):
+        return _collabs_cache["logins"]
+    _refresh_collaborators()
+    return _collabs_cache["logins"]
 
-    Returns a list of dicts: {login, commits, files, last_touched,
-    avatar_url}. Sorted by commit count desc, then recency desc.
+
+def collaborator_records(force: bool = False) -> list[dict]:
+    """List of `{login, avatar_url}` for each write-access collaborator.
+    Same cache as `collaborator_logins()`."""
+    slug = _repo_slug()
+    if (not force
+            and _collabs_cache["slug"] == slug
+            and time.time() - _collabs_cache["at"] < _COLLABS_TTL_SEC):
+        return list(_collabs_cache["records"])
+    _refresh_collaborators()
+    return list(_collabs_cache["records"])
+
+
+def suggest_reviewers(pr_number: int, suggested_limit: int = 12) -> dict:
+    """Return candidate reviewers grouped into two buckets:
+    - `suggested`: people who've touched this PR's files recently,
+      ranked by commit count / recency. Carries `commits`, `files`,
+      `last_touched` metadata for UI context.
+    - `others`: the rest of the repo's write-access collaborators,
+      alpha-sorted. Avatar-only (no PR-specific stats).
+
+    Both groups exclude the PR author, bots, anyone already requested
+    as a reviewer, and anyone who has already reviewed. Every
+    candidate has `can_request: True` (they're collaborators); the
+    field is kept for UI compatibility.
     """
     pr = _gh_json([
         "gh", "pr", "view", str(pr_number),
@@ -663,22 +697,48 @@ def suggest_reviewers(pr_number: int, limit: int = 8) -> list[dict]:
         candidates.values(),
         key=lambda e: (e["commits"], e["last_touched"]),
         reverse=True,
-    )[:limit]
-    # Annotate each candidate with whether they can be requested as
-    # a reviewer — i.e., whether they're a repo collaborator. Callers
-    # (the modal UI) use this to decide which of the two checkboxes
-    # next to each name is available.
+    )[:suggested_limit]
     try:
-        collabs = collaborator_logins()
+        collab_logins = collaborator_logins()
+        collab_records = collaborator_records()
     except Exception:
-        collabs = set()
+        collab_logins = set()
+        collab_records = []
+
+    # `suggested` keeps the file-toucher ranking plus commit/file stats.
+    # Every entry has `can_request` set — only collaborators end up in
+    # the UI's "request" column; non-collaborators still appear (for
+    # "nudge") but with the request checkbox disabled.
+    suggested: list[dict] = []
+    suggested_logins: set[str] = set()
     for e in ranked:
         e["files"] = sorted(e["files"])
-        # If we couldn't fetch collaborators at all, don't block the
-        # request checkbox for anyone — let the server reject it if
-        # it must.
-        e["can_request"] = (not collabs) or (e["login"].lower() in collabs)
-    return ranked
+        e["can_request"] = (not collab_logins) or (e["login"].lower() in collab_logins)
+        suggested.append(e)
+        suggested_logins.add(e["login"].lower())
+
+    # `others` is everyone else with write access, minus the excluded
+    # set (author/already-requested/already-reviewed) and anyone
+    # already surfaced in `suggested`.
+    others: list[dict] = []
+    for rec in collab_records:
+        login = (rec.get("login") or "").strip()
+        if not login:
+            continue
+        low = login.lower()
+        if low in exclude or low in suggested_logins:
+            continue
+        others.append({
+            "login": login,
+            "avatar_url": rec.get("avatar_url"),
+            "commits": 0,
+            "files": [],
+            "last_touched": "",
+            "can_request": True,
+        })
+    others.sort(key=lambda e: e["login"].lower())
+
+    return {"suggested": suggested, "others": others}
 
 
 _DRAWER_FIELDS = ",".join([

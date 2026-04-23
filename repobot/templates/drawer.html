@@ -88,30 +88,51 @@
   </section>
 {% endif %}
 
-{% if pr.reviewRequests or pr.reviews %}
-  <section class="drawer-section">
+{# Reviewers section always renders so the Request button is always
+   reachable from any PR, regardless of whether reviewers are assigned
+   yet or whether triage recommended it. #}
+<section class="drawer-section">
+  <div class="drawer-section-head">
     <h4>Reviewers</h4>
-    {% if pr.reviewRequests %}
-      <div class="drawer-sub-label">Requested</div>
-      <ul class="drawer-reviewer-list">
-        {% for r in pr.reviewRequests %}
-          <li>@{{ r.login or r.name or 'unknown' }}</li>
-        {% endfor %}
-      </ul>
+    {% if queue_id and item_id %}
+      <form method="post"
+            action="/queues/{{ queue_id }}/items/{{ item_id }}/request-reviewers"
+            class="drawer-reviewer-form"
+            data-reviewer-picker="1"
+            data-candidates-url="/queues/{{ queue_id }}/items/{{ item_id }}/reviewer-candidates"
+            data-pr-number="{{ pr.number }}"
+            data-pr-title="{{ pr.title }}"
+            data-pr-url="{{ pr.url }}">
+        <button type="submit" class="drawer-reviewer-btn"
+                title="Open the reviewer picker for this PR">
+          {{ icon('person-fill', size=12) }} Request reviewers
+        </button>
+      </form>
     {% endif %}
-    {% if pr.reviews %}
-      <div class="drawer-sub-label">Reviews</div>
-      <ul class="drawer-reviewer-list">
-        {% for rv in pr.reviews %}
-          <li>
-            @{{ (rv.author or {}).login or 'unknown' }}
-            <span class="drawer-review-state drawer-review-{{ (rv.state or 'commented') | lower }}">{{ rv.state or 'COMMENTED' }}</span>
-          </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-  </section>
-{% endif %}
+  </div>
+  {% if pr.reviewRequests %}
+    <div class="drawer-sub-label">Requested</div>
+    <ul class="drawer-reviewer-list">
+      {% for r in pr.reviewRequests %}
+        <li>@{{ r.login or r.name or 'unknown' }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {% if pr.reviews %}
+    <div class="drawer-sub-label">Reviews</div>
+    <ul class="drawer-reviewer-list">
+      {% for rv in pr.reviews %}
+        <li>
+          @{{ (rv.author or {}).login or 'unknown' }}
+          <span class="drawer-review-state drawer-review-{{ (rv.state or 'commented') | lower }}">{{ rv.state or 'COMMENTED' }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {% if not pr.reviewRequests and not pr.reviews %}
+    <div class="drawer-empty-row">No reviewers yet.</div>
+  {% endif %}
+</section>
 
 <section class="drawer-section">
   <h4>Description</h4>

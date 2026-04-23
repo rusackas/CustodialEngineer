@@ -2525,6 +2525,57 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
   margin-top: 2px;
   overflow-wrap: anywhere;
 }
+.reviewer-row-sub-muted { opacity: 0.75; }
+
+/* Search input above the reviewer list — filters both groups. */
+.reviewers-search-wrap { padding: 0 0 6px; }
+.reviewers-search {
+  width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--ink);
+  box-sizing: border-box;
+}
+.reviewers-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Group headers inside the candidate list — "Suggested" vs "Other". */
+.reviewers-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 6px;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--rule);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.reviewers-group-header + .reviewers-group-header { border-top: 1px solid var(--rule); }
+.reviewers-group-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.reviewers-group-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+  background: var(--bg-card);
+  padding: 0 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+}
 
 /* ============================ PR drawer ============================ */
 
@@ -2685,6 +2736,43 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
   margin: 8px 0 4px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
+}
+/* Section head with a trailing action (e.g., "Request reviewers"
+   button in the Reviewers section). */
+.drawer-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+.drawer-section-head h4 { margin: 0; }
+.drawer-reviewer-form { margin: 0; }
+.drawer-reviewer-btn {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 4px 9px;
+  background: var(--bg-card);
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.drawer-reviewer-btn:hover {
+  background: var(--brand);
+  color: var(--bg-card);
+}
+.drawer-empty-row {
+  font-size: 12px;
+  color: var(--ink-mute);
+  font-style: italic;
 }
 .drawer-check-summary { display: inline-flex; gap: 4px; }
 .drawer-check-pill {
