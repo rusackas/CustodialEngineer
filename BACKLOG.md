@@ -4,6 +4,17 @@ Running list of ideas / fixes Evan tosses out between sessions. Work
 through as time allows; mark done with strike-through or remove the
 line. No ceremony — this isn't a roadmap.
 
+## Recently done
+
+- ~~Multi-theme system — full CSS-variable tokenization (palettes
+  split from base tokens for typography/radii/motion/elevation).
+  Four palettes: `paper` (default warm-cream light), `blueprint`
+  (pure-white/navy light), `graphite` (charcoal/electric-blue dark),
+  `carbon` (black/amber dark). Theme-picker dropdown in the header
+  with swatch previews; `auto` follows `prefers-color-scheme` and
+  re-applies on OS theme flip. Persisted via `localStorage` and
+  applied pre-paint via an inline head script.~~ 2026-04-23
+
 ## Active
 
 - **Decouple session pool from web process** — web restart

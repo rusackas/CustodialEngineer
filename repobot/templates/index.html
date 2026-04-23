@@ -4,6 +4,24 @@
   <meta charset="utf-8" />
   <title>Custodial Engineer</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script>
+    // Apply the saved theme before first paint — avoids a flash of
+    // the default (paper) palette for users who've picked a dark theme.
+    // The fuller theme-picker logic lives later in the page.
+    (function () {
+      try {
+        var pick = localStorage.getItem('ce.theme') || 'auto';
+        var resolved = pick;
+        if (pick === 'auto') {
+          var dark = window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
+          resolved = dark ? 'graphite' : 'paper';
+        }
+        document.documentElement.setAttribute('data-theme', resolved);
+        document.documentElement.setAttribute('data-theme-choice', pick);
+      } catch (e) { /* localStorage blocked: default palette applies */ }
+    })();
+  </script>
   <script src="/static/htmx.min.js"></script>
   <script src="/static/idiomorph-ext.min.js"></script>
 </head>
@@ -29,6 +47,55 @@
         {% include "_header_readout.html" %}
       </div>
       <div class="readout-tools">
+        <details class="theme-picker">
+          <summary title="Theme"
+                   aria-label="Theme picker">
+            <span class="theme-swatch" aria-hidden="true"></span>
+            <span class="theme-current-name" data-theme-name>paper</span>
+          </summary>
+          <div class="theme-picker-menu" role="menu">
+            <button type="button" class="theme-picker-option"
+                    data-set-theme="auto" role="menuitem">
+              <span class="theme-preview theme-preview-auto" aria-hidden="true"></span>
+              <span class="theme-option-text">
+                <span class="theme-option-name">Auto</span>
+                <span class="theme-option-hint">follow OS preference</span>
+              </span>
+            </button>
+            <button type="button" class="theme-picker-option"
+                    data-set-theme="paper" role="menuitem">
+              <span class="theme-preview theme-preview-paper" aria-hidden="true"></span>
+              <span class="theme-option-text">
+                <span class="theme-option-name">Paper</span>
+                <span class="theme-option-hint">warm cream · archival blue</span>
+              </span>
+            </button>
+            <button type="button" class="theme-picker-option"
+                    data-set-theme="blueprint" role="menuitem">
+              <span class="theme-preview theme-preview-blueprint" aria-hidden="true"></span>
+              <span class="theme-option-text">
+                <span class="theme-option-name">Blueprint</span>
+                <span class="theme-option-hint">white · navy</span>
+              </span>
+            </button>
+            <button type="button" class="theme-picker-option"
+                    data-set-theme="graphite" role="menuitem">
+              <span class="theme-preview theme-preview-graphite" aria-hidden="true"></span>
+              <span class="theme-option-text">
+                <span class="theme-option-name">Graphite</span>
+                <span class="theme-option-hint">dark · electric blue</span>
+              </span>
+            </button>
+            <button type="button" class="theme-picker-option"
+                    data-set-theme="carbon" role="menuitem">
+              <span class="theme-preview theme-preview-carbon" aria-hidden="true"></span>
+              <span class="theme-option-text">
+                <span class="theme-option-name">Carbon</span>
+                <span class="theme-option-hint">black · amber</span>
+              </span>
+            </button>
+          </div>
+        </details>
         <details class="settings-gear settings-gear-global">
           <summary title="Edit global settings" aria-label="Global settings">{{ icon('gear', size=16) }}</summary>
           <form method="post" action="/settings/global" class="settings-form">
@@ -1695,6 +1762,63 @@
       if (e.key === 'Escape'
           && document.querySelector('[data-settings-modal].is-open')) {
         closeSettingsModals();
+      }
+    });
+
+    // ============== Theme picker ================
+    // data-theme on <html>. "auto" means follow OS; we re-apply on
+    // prefers-color-scheme change so flipping dark/light at the OS
+    // level propagates without a page reload.
+    const THEME_STORAGE_KEY = 'ce.theme';
+    const AUTO_LIGHT = 'paper';
+    const AUTO_DARK  = 'graphite';
+    const THEME_NAMES = {
+      auto: 'auto', paper: 'paper', blueprint: 'blueprint',
+      graphite: 'graphite', carbon: 'carbon',
+    };
+
+    function resolvedTheme(choice) {
+      if (choice !== 'auto') return choice;
+      const dark = window.matchMedia
+        && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      return dark ? AUTO_DARK : AUTO_LIGHT;
+    }
+
+    function applyTheme(choice) {
+      if (!THEME_NAMES[choice]) choice = 'auto';
+      document.documentElement.setAttribute('data-theme', resolvedTheme(choice));
+      document.documentElement.setAttribute('data-theme-choice', choice);
+      const nameEl = document.querySelector('[data-theme-name]');
+      if (nameEl) nameEl.textContent = THEME_NAMES[choice];
+      // Update the menu's selected marker.
+      document.querySelectorAll('.theme-picker-option').forEach(b => {
+        b.classList.toggle('is-active', b.dataset.setTheme === choice);
+      });
+      try { localStorage.setItem(THEME_STORAGE_KEY, choice); } catch {}
+    }
+
+    // Boot: restore choice, default to "auto".
+    (function initTheme() {
+      let saved = 'auto';
+      try { saved = localStorage.getItem(THEME_STORAGE_KEY) || 'auto'; } catch {}
+      applyTheme(saved);
+      // Re-resolve on OS preference change (only matters for "auto").
+      if (window.matchMedia) {
+        const mq = window.matchMedia('(prefers-color-scheme: dark)');
+        mq.addEventListener('change', () => {
+          const current = document.documentElement.getAttribute('data-theme-choice');
+          if (current === 'auto') applyTheme('auto');
+        });
+      }
+    })();
+
+    document.addEventListener('click', (e) => {
+      const opt = e.target.closest('[data-set-theme]');
+      if (opt) {
+        applyTheme(opt.dataset.setTheme);
+        // Close the theme-picker details after selection.
+        const picker = opt.closest('.theme-picker');
+        if (picker) picker.removeAttribute('open');
       }
     });
 
