@@ -36,8 +36,12 @@ git log --oneline -5
 git diff --stat origin/master...HEAD
 ```
 
-Confirm you're on the PR branch (`pr.head_ref`). If not, bail out:
-something's wrong with the worktree setup.
+Confirm `HEAD` matches the PR head — `git rev-parse HEAD` should
+equal `git rev-parse refs/ce-pr/{pr.number}`. If not, bail out:
+something's wrong with the worktree setup. (The local branch name
+is `ce/pr-{N}`, not `pr.head_ref` — that's a bot-owned sandbox name
+so our worktree can't collide with any other worktree you have set
+up on the same upstream branch.)
 
 ### 2. Pull the PR's context in one shot
 
@@ -150,8 +154,8 @@ Return a single JSON object fenced as ```json ... ```:
 - Read-only. No `git commit`, no `gh pr comment`, no mutations.
 - Don't run the test suite — budget-expensive and out of scope.
   Flag missing tests; let the reviewer decide whether to run them.
-- If the worktree isn't on `pr.head_ref` (step 1 mismatch), bail
-  with `status: "error"` and the mismatch details.
+- If `HEAD` doesn't match `refs/ce-pr/{pr.number}` (step 1
+  mismatch), bail with `status: "error"` and the mismatch details.
 - Never @-mention `identity.github_username`.
 - If the diff is huge (> ~3000 lines), scope your reading: pick
   the 5–8 highest-signal files and say in `headline` which files

@@ -36,29 +36,31 @@ def ensure_worktree(pr_number: int, head_ref: str) -> Path:
     """Create (or reuse) a worktree for the PR.
 
     Fetches the PR's head via GitHub's `refs/pull/{N}/head` ref instead
-    of the branch name. That ref is created for every PR (fork or
-    in-repo) and is reachable from `origin` regardless of where the
-    branch itself lives, so cross-fork PRs work the same as maintainer
-    PRs. The worktree is checked out on a local branch named
-    `{head_ref}` so pushes still target that name on origin for PRs
-    whose branch does live in origin; for fork PRs, push-back is a
-    separate concern handled by `fix-precommit-review`-class actions.
+    of the branch name — that ref is created for every PR (fork or
+    in-repo) and is reachable from `origin`, so cross-fork PRs work the
+    same as maintainer PRs. The worktree checks out on a bot-owned
+    local branch `ce/pr-{N}`; this namespace never collides with user
+    branches or other worktrees the user might have set up manually
+    (a branch can only live in one worktree at a time). Pushes still
+    target the upstream head ref via `git push origin HEAD:{head_ref}`
+    — the local branch name is a sandbox detail.
+
+    `head_ref` is kept as a parameter for API compatibility / future use.
     """
+    del head_ref  # unused; kept in signature for API stability
     target = worktree_path_for(pr_number)
-    # Namespaced local ref so the PR head doesn't clash with any
-    # local branch named the same.
     pr_ref = f"refs/ce-pr/{pr_number}"
+    local_branch = f"ce/pr-{pr_number}"
     _git("fetch", "origin",
          f"+refs/pull/{pr_number}/head:{pr_ref}")
 
     if (target / ".git").exists():
         _git("reset", "--hard", pr_ref, cwd=target)
-        # Make sure the local branch tracks the fetched ref.
-        _git("checkout", "-B", head_ref, pr_ref, cwd=target)
+        _git("checkout", "-B", local_branch, pr_ref, cwd=target)
         return target
 
     WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
-    _git("worktree", "add", "--force", "-B", head_ref,
+    _git("worktree", "add", "--force", "-B", local_branch,
          str(target), pr_ref)
     return target
 

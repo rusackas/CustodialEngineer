@@ -7,8 +7,10 @@ max_turns: 80
 
 # Attempt fix for a Dependabot PR
 
-You are already `cd`'d into a git worktree at `worktree_path`, checked out
-on the PR's branch (`pr.head_ref`). The triage run has already identified
+You are already `cd`'d into a git worktree at `worktree_path`, on the
+PR's head commit (local branch `ce/pr-{pr.number}`, which tracks
+`refs/ce-pr/{pr.number}` — a bot-owned sandbox name; `pr.head_ref` is
+the upstream branch name you'll push back to). The triage run has already identified
 a **real code breakage** — typically a breaking API change in the bumped
 dependency that consumer code (tests, app code, types) must now adapt to.
 
