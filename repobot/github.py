@@ -119,6 +119,34 @@ def fetch_failing_dependabot_prs(limit: int = 50) -> list[dict]:
             if p.get("ci_status") == "failing"]
 
 
+_RESOLVE_THREAD_MUTATION = """
+mutation($threadId:ID!){
+  resolveReviewThread(input:{threadId:$threadId}){
+    thread{ id isResolved }
+  }
+}
+"""
+
+
+def resolve_review_thread(thread_node_id: str) -> None:
+    """Mark a review thread resolved via GraphQL. Thread IDs are the
+    GraphQL node ids (the `id` field on reviewThreads.nodes), not
+    comment ids."""
+    if not thread_node_id:
+        raise ValueError("empty thread id")
+    result = subprocess.run(
+        ["gh", "api", "graphql",
+         "-f", f"query={_RESOLVE_THREAD_MUTATION}",
+         "-F", f"threadId={thread_node_id}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"gh api graphql (resolveReviewThread {thread_node_id[:8]}…) "
+            f"failed: {result.stderr.strip()}"
+        )
+
+
 def post_pr_comment(pr_number: int, body: str) -> None:
     """Post a top-level comment on a PR. Shells out to `gh pr comment`
     so the body can carry any multiline / markdown / @-mentions

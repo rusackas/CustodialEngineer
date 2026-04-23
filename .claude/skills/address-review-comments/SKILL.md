@@ -174,6 +174,7 @@ and approves the drafts first; phase 2 posts them.
       "action": "fix | decline | outdated-already-fixed",
       "commit_sha": "abc1234",
       "reply_body": "Fixed in abc1234.",
+      "should_resolve": true,
       "reason": "renamed helper per suggestion"
     }
   ],
@@ -183,9 +184,21 @@ and approves the drafts first; phase 2 posts them.
 
 - `status` MUST be `"drafts"` in phase 1.
 - `first_comment_id` is the `databaseId` from the graphql query —
-  phase 2 keys off it.
+  phase 2 keys off it. The GraphQL node id (`"id"` above) is what
+  phase-2 resolution uses.
 - `reply_body` is the human-editable text. Every thread must have one.
 - `commit_sha` is empty/omitted on decline.
+- `should_resolve` is a per-thread hint for whether phase 2 should
+  resolve the thread after posting the reply. Populate it based on
+  what you did:
+  - `fix` with a committed SHA → `true` (you addressed the concern).
+  - `outdated-already-fixed` → `true` (the concern was already
+    handled in a prior commit; the thread should close).
+  - `decline` with a reasoned reply → `false` (leave it for the
+    reviewer to decide; your reply explains your stance).
+  - Replies that explicitly defer ("I'll handle this in a follow-up"
+    / "need your input on X") → `false`.
+  The human can toggle this in the drafts modal before approving.
 - Every unresolved thread in the fetch MUST appear in `threads`.
 
 ## Phase 2 procedure — post approved replies
@@ -206,12 +219,24 @@ gh api \
   -f body="<reply_body>"
 ```
 
-In `dry_run`: do not call the API; log the intended payload.
+Then, if the thread's `should_resolve` is `true`, also resolve the
+thread via the GraphQL mutation (node id from the phase-1 output's
+`id` field):
 
-Do NOT close / resolve threads yourself — that's the reviewer's
-call. Reply only; GitHub auto-collapses resolved threads, but
-leaving that to the reviewer avoids arguments about whether the fix
-actually addressed the concern.
+```
+gh api graphql \
+  -f query='mutation($threadId:ID!){
+    resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}
+  }' \
+  -F threadId="<thread.id>"
+```
+
+A thread can have `should_resolve: true` with no `reply_body` — this
+is the "already addressed in a prior commit, nothing more to say"
+case. In that case, skip the reply and go straight to the resolve
+call.
+
+In `dry_run`: do not call either API; log the intended payloads.
 
 Emit the standard completion schema:
 

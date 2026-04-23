@@ -921,6 +921,20 @@
         wrap.appendChild(ta);
         requestAnimationFrame(autosize);
 
+        // Resolve-after-posting checkbox. Skill's `should_resolve`
+        // hint seeds the default; user can toggle per-thread.
+        const resolveRow = document.createElement('label');
+        resolveRow.className = 'drafts-modal-resolve';
+        const resolveCb = document.createElement('input');
+        resolveCb.type = 'checkbox';
+        resolveCb.className = 'drafts-modal-resolve-input';
+        resolveCb.checked = !!t.should_resolve;
+        resolveRow.appendChild(resolveCb);
+        const resolveText = document.createElement('span');
+        resolveText.textContent = 'Resolve thread after posting';
+        resolveRow.appendChild(resolveText);
+        wrap.appendChild(resolveRow);
+
         draftsModalThreads.appendChild(wrap);
       });
       renderPrLine(draftsModalPr,
@@ -956,7 +970,11 @@
         const idx = parseInt(el.dataset.threadIdx, 10);
         const base = original[idx] || {};
         const ta = el.querySelector('.drafts-modal-reply');
-        threads.push(Object.assign({}, base, {reply_body: ta ? ta.value : ''}));
+        const resolveCb = el.querySelector('.drafts-modal-resolve-input');
+        threads.push(Object.assign({}, base, {
+          reply_body: ta ? ta.value : '',
+          should_resolve: resolveCb ? !!resolveCb.checked : false,
+        }));
       });
       edited.threads = threads;
       draftsModalSend.disabled = true;

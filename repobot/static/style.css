@@ -1,5 +1,12 @@
 * { box-sizing: border-box; }
 
+/* Stop the macOS two-finger horizontal-scroll-at-the-edge gesture
+   from firing browser back/forward navigation — the kanban has
+   meaningful horizontal content and the accidental nav is costly.
+   Same property also kills pull-to-refresh on mobile. Supported
+   in every modern browser. */
+html, body { overscroll-behavior: none; }
+
 /* ============================ theme ============================
    Instrument-panel palette — cool steel canvas, archival blue
    accent, burnt-ochre for attention. Swap values here to retheme
@@ -2182,6 +2189,24 @@ button.plan-discard:hover { background: #e1e4e8; }
   outline: none;
   border-color: #0366d6;
   box-shadow: 0 0 0 2px rgba(3, 102, 214, 0.15);
+}
+.drafts-modal-resolve {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+}
+.drafts-modal-resolve input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+.drafts-modal-thread:has(.drafts-modal-resolve-input:checked) {
+  border-left: 2px solid var(--ok);
+  padding-left: 10px;
 }
 .drafts-action {
   font-size: 10px;

@@ -363,12 +363,24 @@ async def approve_drafts(queue_id: str, item_id, edited_drafts: dict) -> dict:
     if not pr_number:
         raise RuntimeError("item has no PR number; cannot post replies.")
     threads = edited_drafts.get("threads") or []
-    posted, skipped, errors = 0, 0, []
+    posted, resolved, skipped, errors = 0, 0, 0, []
     for t in threads:
         body = (t.get("reply_body") or "").strip()
         fcid = t.get("first_comment_id")
+        should_resolve = bool(t.get("should_resolve"))
+        thread_id = t.get("thread_id") or t.get("id")
         if not body or not fcid:
-            skipped += 1
+            # No reply drafted — but user may still have asked to
+            # resolve this thread (e.g., reviewer's concern was
+            # already addressed in a prior commit). Honor that.
+            if should_resolve and thread_id and not dry_run:
+                try:
+                    github.resolve_review_thread(thread_id)
+                    resolved += 1
+                except Exception as exc:
+                    errors.append({"thread_id": thread_id, "error": str(exc)})
+            else:
+                skipped += 1
             continue
         if dry_run:
             continue
@@ -377,6 +389,13 @@ async def approve_drafts(queue_id: str, item_id, edited_drafts: dict) -> dict:
             posted += 1
         except Exception as exc:
             errors.append({"first_comment_id": fcid, "error": str(exc)})
+            continue
+        if should_resolve and thread_id:
+            try:
+                github.resolve_review_thread(thread_id)
+                resolved += 1
+            except Exception as exc:
+                errors.append({"thread_id": thread_id, "error": str(exc)})
 
     set_item_drafts(queue_id, item_id, edited_drafts)
     if errors:
@@ -399,19 +418,26 @@ async def approve_drafts(queue_id: str, item_id, edited_drafts: dict) -> dict:
     eligible = sum(
         1 for t in threads if (t.get("reply_body") or "").strip()
     )
+    to_resolve = sum(1 for t in threads if t.get("should_resolve"))
+    if dry_run:
+        msg = (f"dry_run — would post {eligible} reply(ies) and resolve "
+               f"{to_resolve} thread(s) directly.")
+    else:
+        msg_parts = [f"Posted {posted} reply(ies)"]
+        if resolved:
+            msg_parts.append(f"resolved {resolved} thread(s)")
+        msg_parts.append("(session had closed)")
+        msg = ", ".join(msg_parts[:-1]) + " " + msg_parts[-1] + "."
     set_item_result(queue_id, item_id, {
         "action": "post-replies",
         "status": "skipped_dry_run" if dry_run else "completed",
-        "message": (
-            f"dry_run — would post {eligible} reply(ies) directly."
-            if dry_run else
-            f"Posted {posted} reply(ies) directly (session had closed)."
-        ),
+        "message": msg,
         "via": via,
         "posted": posted,
+        "resolved": resolved,
         "skipped": skipped,
     })
-    return {"via": via, "posted": posted, "skipped": skipped}
+    return {"via": via, "posted": posted, "resolved": resolved, "skipped": skipped}
 
 
 def continue_action(queue_id: str, item_id) -> str | None:
