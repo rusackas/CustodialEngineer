@@ -21,6 +21,15 @@
         {{ time_ago(task.created_at) }}
       </span>
       <span class="card-title-chips">
+        {% if task.status == 'stuck' %}
+          <form method="post" action="/tasks/{{ task.id }}/retry"
+                class="card-refresh-form">
+            <button type="submit" class="card-retriage"
+                    title="Re-dispatch this task with the same prompt. Aborts any running session and resets the worktree.">
+              {{ icon('history', size=11) }} retry
+            </button>
+          </form>
+        {% endif %}
         <form method="post" action="/tasks/{{ task.id }}/delete"
               class="card-refresh-form">
           <button type="submit" class="card-refresh"
@@ -49,6 +58,35 @@
         {{ icon('git-pull-request', size=11) }} {{ task.pr_url | replace('https://github.com/', '') }}
       </a>
     </div>
+  {% endif %}
+
+  {# Issue-type tasks land in done with a drafted body but no issue
+     yet on GitHub. Show an "open issue" button until one's been
+     created; afterward, link to it like we do for PR-type tasks. #}
+  {% if task.task_type == 'issue' and task.status == 'done' %}
+    {% set _last = task.last_result or {} %}
+    {% if task.issue_url %}
+      <div class="task-card-links">
+        <a href="{{ task.issue_url }}" target="_blank" rel="noopener"
+           class="task-card-pr-link">
+          {{ icon('issue-opened', size=11) }} {{ task.issue_url | replace('https://github.com/', '') }}
+        </a>
+      </div>
+    {% elif _last.issue_title %}
+      <div class="task-card-issue-preview">
+        <div class="task-card-issue-title">{{ _last.issue_title }}</div>
+        <details class="task-card-issue-body">
+          <summary>preview body</summary>
+          <pre>{{ _last.issue_body or '' }}</pre>
+        </details>
+        <form method="post" action="/tasks/{{ task.id }}/open-issue"
+              class="task-card-open-issue-form">
+          <button type="submit" class="action-primary">
+            {{ icon('issue-opened', size=11) }} Open issue on GitHub
+          </button>
+        </form>
+      </div>
+    {% endif %}
   {% endif %}
 
   {% if task.session_id %}

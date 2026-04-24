@@ -1,6 +1,24 @@
-repo:
-  owner: apache
-  name: superset
+repos:
+  # Registry of repos this Custodial Engineer instance can act on.
+  # Queues reference an entry by `id` via `repo: <id>`; the Tasks
+  # board lets you pick from these in the create form. Add a new
+  # entry here before pointing a queue or task at a new repo.
+  - id: superset
+    owner: apache
+    name: superset
+    display_name: Apache Superset
+  - id: ce
+    owner: rusackas
+    name: CustodialEngineer
+    display_name: Custodial Engineer
+  - id: preset-marketing
+    owner: preset-io
+    name: preset-marketing-website
+    display_name: Preset marketing site
+
+# Used by the Tasks board's repo picker as the default selection,
+# and by anything that asks for "the" repo when no scope is set.
+default_repo_id: superset
 
 identity:
   # Your GitHub handle. Skills that post comments use this to avoid
@@ -93,3 +111,17 @@ queues:
     query:
       review_requested: self
       state: open
+  - id: stale-pr-triage
+    title: Stale PR triage
+    max_in_flight: 10
+    initial_state: in triage
+    done_state: done
+    awaiting_state: awaiting update
+    states:
+      - in triage
+      - in progress
+      - awaiting update
+      - done
+    query:
+      state: open
+    repo: superset

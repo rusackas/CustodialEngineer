@@ -337,7 +337,19 @@
                 <span>Title <span class="field-info" data-tip="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" aria-label="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="title" value="{{ queue.title }}" />
               </label>
-              {% set _r = queue.repo or {} %}
+              {# Normalize the queue's `repo` field to {owner, name} for
+                 the legacy text inputs. New id-string form (e.g.
+                 `repo: superset`) doesn't fill these — the queue is
+                 using the registry and the inputs stay blank. A bare
+                 `owner/name` slug is split and shown. #}
+              {% if queue.repo is mapping %}
+                {% set _r = queue.repo %}
+              {% elif queue.repo is string and '/' in queue.repo %}
+                {% set _slug_parts = queue.repo.split('/', 1) %}
+                {% set _r = {'owner': _slug_parts[0], 'name': _slug_parts[1]} %}
+              {% else %}
+                {% set _r = {} %}
+              {% endif %}
               <div class="settings-grid">
                 <label>
                   <span>Repo owner <span class="field-info" data-tip="GitHub org/user that owns this repo.&#10;&#10;Leave blank to use the top-level repo.owner from config.yaml. Both owner AND name must be set to override; both blank clears the override." aria-label="GitHub org/user that owns this repo. Leave blank to use top-level config default. Both owner and name must be set together to override." tabindex="0">{{ icon('info', size=12) }}</span></span>

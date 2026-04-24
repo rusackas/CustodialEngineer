@@ -1155,6 +1155,75 @@ def delete_task_endpoint(task_id: int):
     return RedirectResponse(url="/", status_code=303)
 
 
+@app.post("/tasks/{task_id}/retry")
+def retry_task_endpoint(request: Request, task_id: int):
+    """Re-dispatch a task with its original prompt + repo + type.
+    Aborts any live session, resets the worktree to a clean state on
+    the same `ce/task-{N}` branch, and spawns a fresh `do-task`
+    session. Useful for stuck tasks where the skill bailed and the
+    user wants another go without re-typing the prompt."""
+    task = _tasks.find_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    try:
+        sessions.abort_sessions_for_item(None, task_id)
+    except Exception:
+        pass
+    _tasks.update_task(task_id, status="in_progress",
+                       session_id=None, last_result=None)
+
+    def _dispatch():
+        try:
+            _tasks.dispatch_task(task_id)
+        except Exception as exc:
+            _tasks.update_task(task_id, status="stuck", last_result={
+                "status": "error",
+                "message": f"retry failed: {exc}",
+            })
+    threading.Thread(target=_dispatch, daemon=True).start()
+    return _reload_or_redirect(request)
+
+
+@app.post("/tasks/{task_id}/open-issue")
+def open_issue_endpoint(request: Request, task_id: int):
+    """Open the drafted issue on GitHub. Uses the issue_title /
+    issue_body emitted by the do-task skill on completion. Stamps
+    the resulting issue URL onto the task record so the card can
+    link out to it."""
+    task = _tasks.find_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    last = task.get("last_result") or {}
+    title = last.get("issue_title") or task.get("title")
+    body = last.get("issue_body") or ""
+    if not title:
+        raise HTTPException(status_code=400,
+                            detail="task has no drafted issue title")
+    repo = github.repo_by_id(task.get("repo_id"))
+    if not repo:
+        raise HTTPException(status_code=400, detail="task has no valid repo")
+    import subprocess as _sp
+    try:
+        with github.repo_scope(repo["slug"]):
+            result = _sp.run(
+                ["gh", "issue", "create",
+                 "--repo", repo["slug"],
+                 "--title", title,
+                 "--body", body or "_(no body)_"],
+                capture_output=True, text=True, check=True,
+            )
+        url = (result.stdout or "").strip().splitlines()[-1]
+    except _sp.CalledProcessError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"gh issue create failed: {exc.stderr or exc.stdout}",
+        )
+    new_result = dict(last)
+    new_result["issue_url"] = url
+    _tasks.update_task(task_id, issue_url=url, last_result=new_result)
+    return _reload_or_redirect(request)
+
+
 @app.get("/fragments/tasks/body", response_class=HTMLResponse)
 def tasks_body(request: Request):
     """HTML fragment for the tasks board — creation form + status
