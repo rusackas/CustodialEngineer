@@ -14,8 +14,12 @@ WORKTREES_DIR = WORKSPACE_DIR / "worktrees"
 
 
 def repo_path() -> Path:
-    cfg = load_config()
-    return WORKSPACE_DIR / cfg["repo"]["name"]
+    """Path to the main clone of the default repo. Task-level and
+    cross-repo flows pass their own paths; this is the "ambient"
+    default for single-repo call sites."""
+    from .github import default_repo_slug
+    _, name = default_repo_slug().split("/", 1)
+    return WORKSPACE_DIR / name
 
 
 def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:

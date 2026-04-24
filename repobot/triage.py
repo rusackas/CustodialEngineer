@@ -79,8 +79,8 @@ def _build_context(item: dict, extra_pr_fields: dict | None = None) -> dict:
     if item_repo and item_repo.get("owner") and item_repo.get("name"):
         owner, name = item_repo["owner"], item_repo["name"]
     else:
-        owner = cfg["repo"]["owner"]
-        name = cfg["repo"]["name"]
+        from .github import default_repo_slug
+        owner, name = default_repo_slug().split("/", 1)
     pr = {
         "owner": owner,
         "name": name,

@@ -553,10 +553,14 @@ def continue_action(queue_id: str, item_id) -> str | None:
     else:
         cwd = str(worktree.repo_path())
 
+    # Skills get the PR's actual owner/name — item-stamped or queue-
+    # scoped — so cross-repo queues don't smuggle the global default
+    # into skill prompts.
+    _pr_owner, _pr_name = _item_repo_slug_for(queue_id, item).split("/", 1)
     context = {
         "pr": {
-            "owner": cfg["repo"]["owner"],
-            "name": cfg["repo"]["name"],
+            "owner": _pr_owner,
+            "name": _pr_name,
             "number": item.get("number"),
             "url": item.get("url"),
             "title": item.get("title"),
@@ -697,10 +701,13 @@ def dispatch(queue_id: str, item_id, action_id: str,
                 })
                 return None
 
+        # See the _resume_action comment above — same rationale for
+        # using the item/queue slug instead of the global default.
+        _pr_owner, _pr_name = _item_repo_slug_for(queue_id, item).split("/", 1)
         context = {
             "pr": {
-                "owner": cfg["repo"]["owner"],
-                "name": cfg["repo"]["name"],
+                "owner": _pr_owner,
+                "name": _pr_name,
                 "number": item.get("number"),
                 "url": item.get("url"),
                 "title": item.get("title"),

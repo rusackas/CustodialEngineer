@@ -24,14 +24,91 @@ _current_repo_slug: ContextVar[str | None] = ContextVar(
     "custodial.repo_slug", default=None)
 
 
-def _default_repo_slug() -> str:
+def _normalize_repo_entry(raw: dict) -> dict:
+    """Fill in the derived `slug` and default `id` fields on a raw
+    `repos:` list entry. `id` defaults to the slug so unadorned
+    entries still work as first-class citizens."""
+    owner = (raw.get("owner") or "").strip()
+    name = (raw.get("name") or "").strip()
+    if not owner or not name:
+        return {}
+    slug = f"{owner}/{name}"
+    return {
+        "id": (raw.get("id") or slug).strip(),
+        "owner": owner,
+        "name": name,
+        "display_name": raw.get("display_name") or raw.get("title"),
+        "slug": slug,
+    }
+
+
+def list_repos() -> list[dict]:
+    """Return the configured repo registry as a list of normalized
+    dicts `{id, owner, name, display_name, slug}`.
+
+    Prefers the top-level `repos:` list. Falls back to synthesizing a
+    single entry from the legacy top-level `repo:` dict so older
+    config files keep working unchanged. Always returns at least one
+    entry; raises if the config has neither shape set.
+    """
     cfg = load_config()
-    return f"{cfg['repo']['owner']}/{cfg['repo']['name']}"
+    raw_list = cfg.get("repos")
+    out: list[dict] = []
+    if isinstance(raw_list, list) and raw_list:
+        for r in raw_list:
+            if isinstance(r, dict):
+                entry = _normalize_repo_entry(r)
+                if entry:
+                    out.append(entry)
+    if out:
+        return out
+    legacy = cfg.get("repo") or {}
+    entry = _normalize_repo_entry(legacy) if isinstance(legacy, dict) else None
+    if entry:
+        return [entry]
+    raise RuntimeError(
+        "No repos configured — set `repos:` (a list of "
+        "{id, owner, name}) or the legacy top-level `repo:` in "
+        "config.yaml."
+    )
+
+
+def repo_by_id(repo_id: str) -> dict | None:
+    """Look up a repo registry entry by its `id` (or its slug, since
+    bare entries have `id == slug`). Returns None if unknown."""
+    if not repo_id:
+        return None
+    for r in list_repos():
+        if r["id"] == repo_id or r["slug"] == repo_id:
+            return r
+    return None
+
+
+def default_repo_slug() -> str:
+    """The fallback repo slug when nothing more specific is set.
+
+    Honors `default_repo_id:` at the top level of config.yaml if it
+    points at a valid registry entry; otherwise returns the first
+    entry in the registry (or the legacy `repo:` if that's all that's
+    set)."""
+    cfg = load_config()
+    did = cfg.get("default_repo_id")
+    if did:
+        r = repo_by_id(did)
+        if r:
+            return r["slug"]
+    return list_repos()[0]["slug"]
+
+
+# Kept for any external callers (tests / imports elsewhere) that
+# still reach for the underscore-prefixed name. New code should call
+# `default_repo_slug()`.
+_default_repo_slug = default_repo_slug
 
 
 def _repo_slug() -> str:
     explicit = _current_repo_slug.get()
-    return explicit if explicit else _default_repo_slug()
+    return explicit if explicit else default_repo_slug()
 
 
 @contextmanager
@@ -50,15 +127,29 @@ def repo_scope(slug: str | None):
 
 
 def queue_repo_slug(queue_cfg: dict) -> str:
-    """Derive the repo slug for a queue's config block. Per-queue
-    `repo` overrides the top-level default; either shape is accepted
-    ({owner, name} or a "owner/name" string)."""
+    """Derive the repo slug for a queue's config block. Three shapes
+    are accepted for the queue's `repo` field, in precedence order:
+
+    1. A registry id string (e.g. `repo: superset`) — resolves via
+       `repo_by_id()` against the top-level `repos:` list.
+    2. A bare slug string (e.g. `repo: apache/superset`) — used
+       as-is.
+    3. A dict (`repo: {owner: apache, name: superset}`) — legacy
+       inline form, still supported for back-compat.
+
+    Falls back to `default_repo_slug()` when none of the above match.
+    """
     r = queue_cfg.get("repo") if queue_cfg else None
     if isinstance(r, dict) and r.get("owner") and r.get("name"):
         return f"{r['owner']}/{r['name']}"
-    if isinstance(r, str) and "/" in r:
-        return r
-    return _default_repo_slug()
+    if isinstance(r, str):
+        if "/" in r:
+            return r
+        # Registry-id reference — resolve via `repos:` list.
+        entry = repo_by_id(r)
+        if entry:
+            return entry["slug"]
+    return default_repo_slug()
 
 
 def item_repo_slug(item: dict) -> str | None:
@@ -415,9 +506,10 @@ def _review_threads(number: int) -> tuple[str, list[dict]]:
     """Returns (mergeStateStatus, list of thread dicts). Threads are
     pruned to the fields we actually consume downstream — the skill
     gets file, line, author, and body excerpt."""
-    cfg = load_config()
-    owner = cfg["repo"]["owner"]
-    name = cfg["repo"]["name"]
+    # Honor the ContextVar scope first — cross-repo queues pin the
+    # slug there. Only fall through to the config default when
+    # unscoped.
+    owner, name = _repo_slug().split("/", 1)
     data = _gh_json([
         "gh", "api", "graphql",
         "-f", f"query={_REVIEW_THREADS_QUERY}",
