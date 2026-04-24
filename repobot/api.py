@@ -838,6 +838,11 @@ def update_queue_definition_endpoint(
     q_assignee: str = Form(""),
     q_milestone: str = Form(""),
     q_search: str = Form(""),
+    h_ci_status: str = Form(""),
+    h_merge_state: str = Form(""),
+    h_review_threads: str = Form(""),
+    f_attention_only: str = Form(""),
+    f_non_draft: str = Form(""),
 ):
     """Rewrite one queue's query in config.yaml, preserving comments
     and structure. Labels are a comma-separated string in the form;
@@ -858,12 +863,41 @@ def update_queue_definition_endpoint(
         "labels": labels_list or None,
         "search": q_search.strip() or None,
     }
+    # Reject underspecified queries — `state: open` alone matches every
+    # open PR in the repo, which is almost never what the user means.
+    if not github.query_has_discriminator(query_updates):
+        raise HTTPException(
+            status_code=400,
+            detail=("Query is too broad. Add at least one filter: an "
+                    "author, review-requested login, assignee, "
+                    "milestone, label, or a Search query string. "
+                    "`state: open` by itself matches every open PR in "
+                    "the repo."),
+        )
     # Prune None so we don't write empty keys into yaml.
     query_updates = {k: v for k, v in query_updates.items() if v is not None}
+
+    def _on(v: str) -> bool:
+        return (v or "").lower() in ("on", "true", "1", "yes")
+    hydrate_updates: dict = {
+        "ci_status": _on(h_ci_status) or None,
+        "merge_state": _on(h_merge_state) or None,
+        "review_threads": _on(h_review_threads) or None,
+    }
+    hydrate_updates = {k: v for k, v in hydrate_updates.items() if v}
+    filter_updates: dict = {
+        "attention_only": _on(f_attention_only) or None,
+        "non_draft": _on(f_non_draft) or None,
+    }
+    filter_updates = {k: v for k, v in filter_updates.items() if v}
 
     updates: dict = {"query": query_updates}
     if title.strip():
         updates["title"] = title.strip()
+    # `null` deletes the key from yaml so toggles can be cleared by
+    # leaving every checkbox in the form unchecked.
+    updates["hydrate"] = hydrate_updates or None
+    updates["filter"] = filter_updates or None
     # Per-queue repo override. Both fields must be filled in to set;
     # both empty clears any override (queue falls back to top-level).
     owner = repo_owner.strip()
@@ -986,6 +1020,11 @@ def queue_new_form(
     q_assignee: str = Form(""),
     q_milestone: str = Form(""),
     q_search: str = Form(""),
+    h_ci_status: str = Form(""),
+    h_merge_state: str = Form(""),
+    h_review_threads: str = Form(""),
+    f_attention_only: str = Form(""),
+    f_non_draft: str = Form(""),
 ):
     """Create a new queue from the structured form. Uses sensible
     defaults for the state machine (in triage / in progress /
@@ -1002,6 +1041,26 @@ def queue_new_form(
     if labels: query["labels"] = labels
     if q_search.strip(): query["search"] = q_search.strip()
 
+    # Reject underspecified queries (see edit-queue handler for the
+    # full rationale — `state: open` alone matches every open PR).
+    if not github.query_has_discriminator(query):
+        raise HTTPException(
+            status_code=400,
+            detail=("Query is too broad. Add at least one filter: an "
+                    "author, review-requested login, assignee, "
+                    "milestone, label, or a Search query string."),
+        )
+
+    def _on(v: str) -> bool:
+        return (v or "").lower() in ("on", "true", "1", "yes")
+    hydrate: dict = {}
+    if _on(h_ci_status): hydrate["ci_status"] = True
+    if _on(h_merge_state): hydrate["merge_state"] = True
+    if _on(h_review_threads): hydrate["review_threads"] = True
+    post_filter: dict = {}
+    if _on(f_attention_only): post_filter["attention_only"] = True
+    if _on(f_non_draft): post_filter["non_draft"] = True
+
     parsed = {
         "id": id.strip(),
         "title": title.strip(),
@@ -1012,6 +1071,8 @@ def queue_new_form(
         "states": ["in triage", "in progress", "awaiting update", "done"],
         "query": query,
     }
+    if hydrate: parsed["hydrate"] = hydrate
+    if post_filter: parsed["filter"] = post_filter
     if repo_owner.strip() and repo_name.strip():
         parsed["repo"] = {"owner": repo_owner.strip(),
                           "name": repo_name.strip()}

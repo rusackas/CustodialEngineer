@@ -1305,6 +1305,189 @@ body {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
+
+/* ============================ queue toggles =========================
+   Hydration + post-fetch filter switches for the queue-settings modal.
+   Crisp 32x16 rockers (not iOS pill toggles) to read as precision
+   instrument controls. Off-state is muted ink; on-state lifts into
+   the accent palette. Sections are separated by tracked-uppercase
+   eyebrows with a fading hairline rule, matching the existing
+   zone-separator treatment elsewhere in the form.
+   ------------------------------------------------------------------ */
+.queue-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--rule-strong);
+}
+.queue-toggles-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.queue-toggles-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.queue-toggles-header > span:first-child { flex: 0 0 auto; }
+.queue-toggles-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right,
+    var(--rule-strong) 0%,
+    var(--rule) 60%,
+    transparent 100%);
+}
+
+/* Toggle row: switch on the left, label + info icon right of it,
+   optional warning chip pinned to the far right. Override the
+   .settings-form label cascade — those expect a stacked column. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.toggle-row-label {
+  flex: 1;
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--ink) !important;
+}
+.toggle-row-name { color: var(--ink); }
+
+/* Switch: native checkbox with appearance reset so form submission
+   still works. Track is the input's own box; thumb is ::before.
+   2px corner radius reads as instrument panel rather than consumer
+   pill. */
+.toggle-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 32px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background var(--ease-quick),
+    border-color var(--ease-quick);
+}
+.toggle-switch::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+  background: var(--ink-mute);
+  border-radius: 1px;
+  transition:
+    transform var(--ease-move),
+    background var(--ease-quick);
+}
+.toggle-switch:hover { border-color: var(--ink-soft); }
+.toggle-switch:hover::before { background: var(--ink-soft); }
+.toggle-switch:checked {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.toggle-switch:checked::before {
+  /* Track inner = 30px, thumb = 12px → 18px max travel. Land at 17
+     for a 1px right inset that mirrors the 1px left start. */
+  transform: translateX(16px);
+  background: var(--accent);
+}
+.toggle-switch:checked:hover { border-color: var(--accent-strong); }
+.toggle-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.toggle-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* Dependency warning chip on the attention-only row. Hidden by
+   default; revealed via :has() when attention-only is checked but
+   any of its three hydration prereqs are unchecked. Pure CSS;
+   browsers without :has() (older WebKit / pre-2023 builds) just
+   never show the chip. */
+.toggle-needs-warning {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 2px 7px;
+  background: var(--alert-warning-soft);
+  color: var(--alert-warning-ink);
+  border: 1px solid var(--warn);
+  border-radius: 3px;
+}
+.toggle-needs-warning::before {
+  content: "!";
+  font-size: 10px;
+  line-height: 1;
+  color: var(--warn);
+}
+
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_ci_status"]:not(:checked))
+  .toggle-row-attn .toggle-needs-warning,
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_merge_state"]:not(:checked))
+  .toggle-row-attn .toggle-needs-warning,
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_review_threads"]:not(:checked))
+  .toggle-row-attn .toggle-needs-warning {
+  display: inline-flex;
+}
+
+/* Subtle ochre wash on the attention-only row's switch when its
+   prereqs aren't met — reinforces the warning chip without motion. */
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_ci_status"]:not(:checked))
+  .toggle-row-attn .toggle-switch:checked,
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_merge_state"]:not(:checked))
+  .toggle-row-attn .toggle-switch:checked,
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_review_threads"]:not(:checked))
+  .toggle-row-attn .toggle-switch:checked {
+  background: var(--alert-warning-soft);
+  border-color: var(--warn);
+}
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_ci_status"]:not(:checked))
+  .toggle-row-attn .toggle-switch:checked::before,
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_merge_state"]:not(:checked))
+  .toggle-row-attn .toggle-switch:checked::before,
+.queue-toggles:has(.toggle-row-attn input:checked):has(input[name="h_review_threads"]:not(:checked))
+  .toggle-row-attn .toggle-switch:checked::before {
+  background: var(--warn);
+}
 .settings-section button[type="submit"] {
   align-self: flex-end;
 }

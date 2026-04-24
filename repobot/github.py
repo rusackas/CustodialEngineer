@@ -351,18 +351,63 @@ def _build_search_query(query_block: dict) -> str:
     return " ".join(parts)
 
 
+def query_has_discriminator(query_block: dict | None) -> bool:
+    """True iff the query block has at least one filter narrower than
+    `state:`. A queue with just `state: open` (or empty) would match
+    every open PR in the repo — too permissive; treat it as
+    underspecified and refuse to fetch.
+
+    A `search:` string counts as a discriminator (we trust the user
+    to have written something narrowing). Author, review_requested,
+    assignee, milestone, or any labels also count.
+    """
+    if not isinstance(query_block, dict):
+        return False
+    if (query_block.get("search") or "").strip():
+        return True
+    for k in ("author", "review_requested", "assignee", "milestone"):
+        if (query_block.get(k) or "").strip() if isinstance(query_block.get(k), str) \
+                else query_block.get(k):
+            return True
+    if query_block.get("labels"):
+        return True
+    return False
+
+
 def fetch_search(query_block: dict, limit: int = 50,
-                 hydrate_checks: bool = True) -> list[dict]:
+                 hydrate: dict | None = None,
+                 post_filter: dict | None = None) -> list[dict]:
     """Generic PR fetcher — runs `gh pr list --search` against the
     current repo scope using a search string built from the queue's
-    `query:` block. Optionally hydrates each PR's `statusCheckRollup`
-    + `ci_status` so triage skills downstream can read them like
-    they do from the queue-specific fetchers.
+    `query:` block.
 
-    Set `hydrate_checks=False` for big result sets where CI status
-    isn't load-bearing (e.g. a stale-PR-triage queue with hundreds
-    of cards) — saves N+1 `gh pr view` calls.
+    `hydrate` opts into per-PR enrichment (each adds API calls,
+    so off by default):
+      - `ci_status: true` — `gh pr view` per PR; sets
+        `statusCheckRollup` + `ci_status` (passing | failing | pending).
+      - `merge_state: true` — GraphQL per PR; sets `mergeStateStatus`
+        + `has_conflicts`.
+      - `review_threads: true` — same GraphQL call as merge_state
+        (free if merge_state is on); sets `unresolved_threads`.
+
+    `post_filter` drops PRs after the fetch:
+      - `attention_only: true` — keeps only PRs with conflicts /
+        failing CI / unresolved threads. Requires the matching
+        hydration toggles to actually do anything; otherwise its
+        inputs are all None and every PR is dropped.
+      - `non_draft: true` — drops `isDraft` PRs.
+
+    Refuses to run if the query is underspecified (no filter beyond
+    `state`) — returns `[]` rather than "all open PRs".
     """
+    if not query_has_discriminator(query_block):
+        # Defensive: refuse to fetch when nothing narrows the result
+        # set. Logging here so the empty queue isn't a silent mystery.
+        print(f"[fetch_search] refusing underspecified query "
+              f"(no filter beyond state): {query_block!r}")
+        return []
+    hydrate = hydrate or {}
+    post_filter = post_filter or {}
     search = _build_search_query(query_block)
     prs = _gh_json([
         "gh", "pr", "list",
@@ -376,17 +421,40 @@ def fetch_search(query_block: dict, limit: int = 50,
     ])
     if not isinstance(prs, list):
         return []
+    wants_threads = bool(hydrate.get("review_threads"))
+    wants_merge = bool(hydrate.get("merge_state"))
+    wants_ci = bool(hydrate.get("ci_status"))
     out: list[dict] = []
     for pr in prs:
-        if hydrate_checks:
+        number = pr.get("number")
+        if wants_ci and number is not None:
             try:
-                checks = pr_checks(pr["number"])
+                checks = pr_checks(number)
             except Exception:
                 checks = []
             pr["statusCheckRollup"] = checks
             pr["ci_status"] = ci_status(checks)
+        if (wants_merge or wants_threads) and number is not None:
+            try:
+                mss, threads = _review_threads(number)
+            except Exception:
+                mss, threads = "", []
+            if wants_merge:
+                pr["mergeStateStatus"] = mss
+                pr["has_conflicts"] = (
+                    pr.get("mergeable") == "CONFLICTING" or mss == "DIRTY")
+            if wants_threads:
+                pr["unresolved_threads"] = threads
         _stamp_repo(pr)
         out.append(pr)
+
+    if post_filter.get("non_draft"):
+        out = [p for p in out if not p.get("isDraft")]
+    if post_filter.get("attention_only"):
+        out = [p for p in out
+               if p.get("has_conflicts")
+               or p.get("ci_status") == "failing"
+               or p.get("unresolved_threads")]
     return out
 
 

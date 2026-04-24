@@ -403,7 +403,7 @@
                   <span>Labels <span class="field-info" data-tip="Filter by labels (comma-separated, all must match).&#10;&#10;Examples: 'bug', 'good first issue, help wanted', 'needs-review'" aria-label="Filter by labels (comma-separated, all must match).&#10;&#10;Examples: 'bug', 'good first issue, help wanted', 'needs-review'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                   <input type="text" name="q_labels"
                          value="{{ (_q.get('labels') or []) | join(', ') }}"
-                         placeholder="bug, needs-review" />
+                         placeholder="label-name, another-label" />
                 </label>
               </div>
               <label class="settings-field-wide">
@@ -412,6 +412,101 @@
                           placeholder="is:pr is:open updated:&lt;90d sort:updated-asc no:draft"
                           spellcheck="false">{{ _q.get('search', '') }}</textarea>
               </label>
+
+              {# Hydration + post-fetch filter group. Each section opens with a
+                 tracked-uppercase eyebrow + a fading hairline rule, matching the
+                 form's existing zone-separator treatment. The whole group lives
+                 inside a single .queue-toggles wrapper so :has() selectors can
+                 read across both sections to surface the attention-only
+                 prerequisite warning. #}
+              {% set _h = queue.hydrate or {} %}
+              {% set _f = queue.filter or {} %}
+              <div class="queue-toggles">
+
+                <section class="queue-toggles-section">
+                  <h4 class="queue-toggles-header">
+                    <span>Hydration</span>
+                    <span class="queue-toggles-rule" aria-hidden="true"></span>
+                  </h4>
+
+                  <div class="toggle-row">
+                    <input type="checkbox" name="h_ci_status" id="h-ci-{{ queue.id }}"
+                           class="toggle-switch"
+                           {% if _h.get('ci_status') %}checked{% endif %}>
+                    <label for="h-ci-{{ queue.id }}" class="toggle-row-label">
+                      <span class="toggle-row-name">CI status</span>
+                      <span class="field-info"
+                            data-tip="Per-PR `gh pr view --json statusCheckRollup` call. Hydrates ci_status (passing | failing | pending) so triage can branch on CI.&#10;&#10;+1 GH API call per fetched PR."
+                            aria-label="CI status — adds one GH API call per fetched PR to hydrate ci_status."
+                            tabindex="0">{{ icon('info', size=12) }}</span>
+                    </label>
+                  </div>
+
+                  <div class="toggle-row">
+                    <input type="checkbox" name="h_merge_state" id="h-merge-{{ queue.id }}"
+                           class="toggle-switch"
+                           {% if _h.get('merge_state') %}checked{% endif %}>
+                    <label for="h-merge-{{ queue.id }}" class="toggle-row-label">
+                      <span class="toggle-row-name">Merge state</span>
+                      <span class="field-info"
+                            data-tip="Per-PR GraphQL call for mergeStateStatus. Sets has_conflicts and lets triage detect blocked / behind / dirty PRs.&#10;&#10;+1 GH API call per fetched PR (shared with Review threads when both are on)."
+                            aria-label="Merge state — adds one GraphQL call per fetched PR. Shared with Review threads when both are enabled."
+                            tabindex="0">{{ icon('info', size=12) }}</span>
+                    </label>
+                  </div>
+
+                  <div class="toggle-row">
+                    <input type="checkbox" name="h_review_threads" id="h-threads-{{ queue.id }}"
+                           class="toggle-switch"
+                           {% if _h.get('review_threads') %}checked{% endif %}>
+                    <label for="h-threads-{{ queue.id }}" class="toggle-row-label">
+                      <span class="toggle-row-name">Review threads</span>
+                      <span class="field-info"
+                            data-tip="Same GraphQL call as Merge state — free if Merge state is on, +1 GH API call per PR otherwise. Sets unresolved_threads so triage can decide whether other reviewers' feedback is still pending."
+                            aria-label="Review threads — same GraphQL call as Merge state; free when paired, otherwise one extra call per PR."
+                            tabindex="0">{{ icon('info', size=12) }}</span>
+                    </label>
+                  </div>
+                </section>
+
+                <section class="queue-toggles-section">
+                  <h4 class="queue-toggles-header">
+                    <span>Post-fetch filter</span>
+                    <span class="queue-toggles-rule" aria-hidden="true"></span>
+                  </h4>
+
+                  <div class="toggle-row toggle-row-attn">
+                    <input type="checkbox" name="f_attention_only" id="f-attn-{{ queue.id }}"
+                           class="toggle-switch"
+                           {% if _f.get('attention_only') %}checked{% endif %}>
+                    <label for="f-attn-{{ queue.id }}" class="toggle-row-label">
+                      <span class="toggle-row-name">Attention only</span>
+                      <span class="field-info"
+                            data-tip="Drops every fetched PR with no merge conflicts, no failing CI, and no unresolved review threads — keeps only PRs that actually want a click. Requires all three Hydration toggles to be on (the filter has nothing to read otherwise).&#10;&#10;No extra API call."
+                            aria-label="Attention only — drops PRs without conflicts, failing CI, or unresolved threads. Requires all three Hydration toggles."
+                            tabindex="0">{{ icon('info', size=12) }}</span>
+                    </label>
+                    <span class="toggle-needs-warning" aria-hidden="true">
+                      needs hydration
+                    </span>
+                  </div>
+
+                  <div class="toggle-row">
+                    <input type="checkbox" name="f_non_draft" id="f-draft-{{ queue.id }}"
+                           class="toggle-switch"
+                           {% if _f.get('non_draft') %}checked{% endif %}>
+                    <label for="f-draft-{{ queue.id }}" class="toggle-row-label">
+                      <span class="toggle-row-name">Non-draft</span>
+                      <span class="field-info"
+                            data-tip="Drops PRs marked as draft. Cheap — no extra API call (uses the isDraft field already on every fetched PR).&#10;&#10;Equivalent to adding `no:draft` to the search query."
+                            aria-label="Non-draft — drops draft PRs after fetch. No extra API cost."
+                            tabindex="0">{{ icon('info', size=12) }}</span>
+                    </label>
+                  </div>
+                </section>
+
+              </div>
+
               <button type="submit">Save &amp; refetch</button>
             </form>
           </section>
@@ -597,7 +692,7 @@
               <label>
                 <span>Labels <span class="field-info" data-tip="Filter by labels — comma-separated, all must match.&#10;&#10;Example: 'bug, needs-review'" aria-label="Filter by labels — comma-separated, all must match.&#10;&#10;Example: 'bug, needs-review'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="q_labels"
-                       placeholder="bug, needs-review" />
+                       placeholder="label-name, another-label" />
               </label>
             </div>
             <label class="settings-field-wide">
@@ -606,6 +701,76 @@
                         placeholder="is:pr is:open updated:&lt;90d sort:updated-asc no:draft"
                         spellcheck="false"></textarea>
             </label>
+
+            <div class="queue-toggles">
+              <section class="queue-toggles-section">
+                <h4 class="queue-toggles-header">
+                  <span>Hydration</span>
+                  <span class="queue-toggles-rule" aria-hidden="true"></span>
+                </h4>
+                <div class="toggle-row">
+                  <input type="checkbox" name="h_ci_status" id="h-ci-new" class="toggle-switch">
+                  <label for="h-ci-new" class="toggle-row-label">
+                    <span class="toggle-row-name">CI status</span>
+                    <span class="field-info"
+                          data-tip="Per-PR `gh pr view --json statusCheckRollup` call. Hydrates ci_status (passing | failing | pending) so triage can branch on CI.&#10;&#10;+1 GH API call per fetched PR."
+                          aria-label="CI status — adds one GH API call per fetched PR to hydrate ci_status."
+                          tabindex="0">{{ icon('info', size=12) }}</span>
+                  </label>
+                </div>
+                <div class="toggle-row">
+                  <input type="checkbox" name="h_merge_state" id="h-merge-new" class="toggle-switch">
+                  <label for="h-merge-new" class="toggle-row-label">
+                    <span class="toggle-row-name">Merge state</span>
+                    <span class="field-info"
+                          data-tip="Per-PR GraphQL call for mergeStateStatus. Sets has_conflicts and lets triage detect blocked / behind / dirty PRs.&#10;&#10;+1 GH API call per fetched PR (shared with Review threads when both are on)."
+                          aria-label="Merge state — adds one GraphQL call per fetched PR. Shared with Review threads when both are enabled."
+                          tabindex="0">{{ icon('info', size=12) }}</span>
+                  </label>
+                </div>
+                <div class="toggle-row">
+                  <input type="checkbox" name="h_review_threads" id="h-threads-new" class="toggle-switch">
+                  <label for="h-threads-new" class="toggle-row-label">
+                    <span class="toggle-row-name">Review threads</span>
+                    <span class="field-info"
+                          data-tip="Same GraphQL call as Merge state — free if Merge state is on, +1 GH API call per PR otherwise. Sets unresolved_threads so triage can decide whether other reviewers' feedback is still pending."
+                          aria-label="Review threads — same GraphQL call as Merge state; free when paired, otherwise one extra call per PR."
+                          tabindex="0">{{ icon('info', size=12) }}</span>
+                  </label>
+                </div>
+              </section>
+
+              <section class="queue-toggles-section">
+                <h4 class="queue-toggles-header">
+                  <span>Post-fetch filter</span>
+                  <span class="queue-toggles-rule" aria-hidden="true"></span>
+                </h4>
+                <div class="toggle-row toggle-row-attn">
+                  <input type="checkbox" name="f_attention_only" id="f-attn-new" class="toggle-switch">
+                  <label for="f-attn-new" class="toggle-row-label">
+                    <span class="toggle-row-name">Attention only</span>
+                    <span class="field-info"
+                          data-tip="Drops every fetched PR with no merge conflicts, no failing CI, and no unresolved review threads — keeps only PRs that actually want a click. Requires all three Hydration toggles to be on (the filter has nothing to read otherwise).&#10;&#10;No extra API call."
+                          aria-label="Attention only — drops PRs without conflicts, failing CI, or unresolved threads. Requires all three Hydration toggles."
+                          tabindex="0">{{ icon('info', size=12) }}</span>
+                  </label>
+                  <span class="toggle-needs-warning" aria-hidden="true">
+                    needs hydration
+                  </span>
+                </div>
+                <div class="toggle-row">
+                  <input type="checkbox" name="f_non_draft" id="f-draft-new" class="toggle-switch">
+                  <label for="f-draft-new" class="toggle-row-label">
+                    <span class="toggle-row-name">Non-draft</span>
+                    <span class="field-info"
+                          data-tip="Drops PRs marked as draft. Cheap — no extra API call (uses the isDraft field already on every fetched PR).&#10;&#10;Equivalent to adding `no:draft` to the search query."
+                          aria-label="Non-draft — drops draft PRs after fetch. No extra API cost."
+                          tabindex="0">{{ icon('info', size=12) }}</span>
+                  </label>
+                </div>
+              </section>
+            </div>
+
             <button type="submit">Create queue</button>
           </form>
         </section>

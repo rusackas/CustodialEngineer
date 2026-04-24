@@ -53,6 +53,30 @@ Optional but commonly useful:
     obviously in YAML. Only emit `search:` when the user names
     operators or filters that need it.
 
+A query MUST narrow beyond `state:`. If you can't extract any
+discriminator from the prompt (author, search string, label, etc.),
+you're under-specified — either ask the user implicitly (don't
+emit) or pick a sensible default like `author: self`.
+
+Per-fetch hydration knobs (separate from `query:`):
+- `hydrate.ci_status` (bool) — adds a `gh pr view` per PR; sets
+  `ci_status` for triage to branch on. +1 GH API call per PR.
+- `hydrate.merge_state` (bool) — adds a GraphQL call per PR;
+  sets `mergeStateStatus` + `has_conflicts`.
+- `hydrate.review_threads` (bool) — same GraphQL call (free if
+  `merge_state` is on); sets `unresolved_threads`.
+
+Post-fetch filters:
+- `filter.attention_only` (bool) — drops PRs without conflicts /
+  failing CI / unresolved threads. Requires the matching hydration
+  toggles to be on; otherwise the filter has nothing to read.
+- `filter.non_draft` (bool) — drops draft PRs. No extra API cost.
+
+Emit hydrate / filter only when the prompt asks for them or when
+they're load-bearing for the queue's intent (e.g. "PRs needing
+attention" → `hydrate.{ci_status, merge_state, review_threads}` +
+`filter.attention_only`).
+
 Use the minimum set that expresses the user's intent. Don't emit
 empty maps, empty lists, or defaults the user didn't ask for.
 
