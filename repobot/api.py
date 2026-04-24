@@ -1184,6 +1184,83 @@ def retry_task_endpoint(request: Request, task_id: int):
     return _reload_or_redirect(request)
 
 
+@app.post("/tasks/clear-done")
+def clear_done_tasks(request: Request):
+    """Bulk-delete every task in the Done column. Aborts sessions
+    (none should be live for a done task, but be defensive) and
+    prunes their worktrees. Mirror of the per-queue clear-done."""
+    for t in _tasks.list_tasks():
+        if t.get("status") != "done":
+            continue
+        tid = t.get("id")
+        if tid is None:
+            continue
+        try:
+            sessions.abort_sessions_for_item(None, tid)
+        except Exception:
+            pass
+        _tasks.remove_task_worktree(tid)
+        _tasks.delete_task(tid)
+    return _reload_or_redirect(request)
+
+
+@app.post("/tasks/{task_id}/create-pr")
+def create_pr_from_task(request: Request, task_id: int):
+    """Open a PR from a task's worktree branch. Used when a task
+    produced commits but the skill didn't already open the PR
+    (e.g. a question-mode task that incidentally fixed something).
+    Pushes the branch + runs `gh pr create`; stamps pr_url on the
+    task so subsequent renders link out instead of offering the
+    button again."""
+    task = _tasks.find_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.get("pr_url"):
+        return _reload_or_redirect(request)
+    repo = github.repo_by_id(task.get("repo_id"))
+    if not repo:
+        raise HTTPException(status_code=400, detail="task has no valid repo")
+    wt_path = _tasks.task_worktree_path(task_id)
+    if not (wt_path / ".git").exists():
+        raise HTTPException(status_code=400,
+                            detail="worktree is gone — can't open a PR for it")
+    branch = task.get("branch") or f"ce/task-{task_id}"
+    title = task.get("title") or task["prompt"][:60]
+    body_lines = [
+        f"_Opened from Custodial Engineer task-{task_id}._",
+        "",
+        "**Original prompt:**",
+        "",
+        f"> {task['prompt']}",
+    ]
+    body = "\n".join(body_lines)
+    import subprocess as _sp
+    try:
+        _sp.run(
+            ["git", "push", "--set-upstream", "origin",
+             f"HEAD:{branch}"],
+            cwd=str(wt_path), capture_output=True, text=True, check=True,
+        )
+        result = _sp.run(
+            ["gh", "pr", "create",
+             "--repo", repo["slug"],
+             "--title", title,
+             "--body", body,
+             "--head", branch],
+            cwd=str(wt_path), capture_output=True, text=True, check=True,
+        )
+        url = (result.stdout or "").strip().splitlines()[-1]
+    except _sp.CalledProcessError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"PR creation failed: {exc.stderr or exc.stdout}",
+        )
+    last = dict(task.get("last_result") or {})
+    last["pr_url"] = url
+    _tasks.update_task(task_id, pr_url=url, last_result=last)
+    return _reload_or_redirect(request)
+
+
 @app.post("/tasks/{task_id}/open-issue")
 def open_issue_endpoint(request: Request, task_id: int):
     """Open the drafted issue on GitHub. Uses the issue_title /

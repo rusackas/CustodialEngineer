@@ -55,9 +55,20 @@
         <span class="state-token" aria-hidden="true"></span>
         <span class="state-name">{{ label }}</span>
         <span class="count">{{ cards | length }}</span>
+        {% if status == 'done' and cards %}
+          <form method="post" action="/tasks/clear-done"
+                class="clear-done-form"
+                title="Delete every task in the Done column. Aborts sessions and prunes worktrees.">
+            <button type="submit" class="clear-done">clear all</button>
+          </form>
+        {% endif %}
       </h3>
       {% if cards %}
         {% for task in cards %}
+          {# Done tasks render in compact mode by default — the prompt
+             body collapses to a click-to-expand details/summary so a
+             long Done column stays scannable. #}
+          {% set _compact = (status == 'done') %}
           {% include "_task_card.html" %}
         {% endfor %}
       {% else %}

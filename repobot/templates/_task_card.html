@@ -1,6 +1,13 @@
-{# Individual task card — compact shape, different from _card.html
-   since there's no PR number / title / triage state. #}
-<article class="card task-card" data-task-id="{{ task.id }}">
+{# Individual task card. Tasks have no PR number / triage state, so
+   the head shows id + repo + type + (skill-assigned title) instead.
+
+   `_compact` is set by the board template for tasks in the Done
+   column — collapses the prompt body to a click-to-expand summary
+   so a long Done column stays scannable. Stuck/in-progress always
+   render full. #}
+{% set _compact = _compact|default(False) %}
+<article class="card task-card{% if _compact %} task-card-compact{% endif %}"
+         data-task-id="{{ task.id }}">
   <header class="card-head">
     <div class="card-title">
       <div class="card-title-text">
@@ -10,6 +17,12 @@
           <span class="task-card-type task-card-type-{{ task.task_type or 'auto' }}">
             {{ task.task_type or 'auto' }}
           </span>
+          {% if task.commit_sha %}
+            <span class="task-card-sha tip"
+                  data-tip="Commit {{ task.commit_sha }} on {{ task.branch or 'ce/task-' ~ task.id }}">
+              {{ task.commit_sha[:7] }}
+            </span>
+          {% endif %}
         </div>
         {% if task.title %}
           <div class="task-card-heading">{{ task.title }}</div>
@@ -41,9 +54,17 @@
     </div>
   </header>
 
-  <div class="task-card-prompt" title="{{ task.prompt }}">{{ task.prompt }}</div>
+  {% if _compact %}
+    <details class="task-card-prompt-collapsed">
+      <summary class="task-card-prompt-summary"
+               title="{{ task.prompt }}">{{ task.prompt }}</summary>
+      <div class="task-card-prompt task-card-prompt-expanded">{{ task.prompt }}</div>
+    </details>
+  {% else %}
+    <div class="task-card-prompt" title="{{ task.prompt }}">{{ task.prompt }}</div>
+  {% endif %}
 
-  {% if task.last_result %}
+  {% if task.last_result and not _compact %}
     {% set r = task.last_result %}
     <div class="result result-{{ r.status or 'completed' }}">
       <strong>{{ r.status or 'completed' }}</strong>
@@ -58,6 +79,16 @@
         {{ icon('git-pull-request', size=11) }} {{ task.pr_url | replace('https://github.com/', '') }}
       </a>
     </div>
+  {% elif task.status == 'done' and task.commit_sha and task.task_type != 'issue' %}
+    {# Commits exist but no PR yet — most often an auto/question task
+       that produced an incidental fix. Offer a one-click "open PR"
+       so the user doesn't have to drop to the terminal to land it. #}
+    <form method="post" action="/tasks/{{ task.id }}/create-pr"
+          class="task-card-open-pr-form">
+      <button type="submit" class="action-primary">
+        {{ icon('git-pull-request', size=11) }} Create PR from this branch
+      </button>
+    </form>
   {% endif %}
 
   {# Issue-type tasks land in done with a drafted body but no issue

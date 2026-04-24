@@ -152,6 +152,12 @@ Every exit emits the JSON above fenced as ```json ... ```. Valid
 `title` is required on every emission — it's what the task card
 shows as its display name. Keep it short (≤60 chars) and specific.
 
+**Always emit `commit_sha` if you made any commits**, regardless of
+mode. The Tasks board shows a chip + a "Create PR" button when this
+field is present, so question-mode investigations that produced an
+incidental fix can still get turned into a PR by the user without
+re-running the task.
+
 ## Guardrails
 
 - Never touch files outside the worktree.
