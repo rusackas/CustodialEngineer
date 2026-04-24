@@ -2155,10 +2155,13 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
 .card-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   min-height: 22px;
 }
-.card-meta-spacer { flex: 1; }
+/* Spacer kept for back-compat but chips use margin-left: auto now so
+   they stay right-aligned whether they fit on line 1 or wrap to line 2. */
+.card-meta-spacer { display: none; }
 .card-author {
   font-family: var(--card-mono);
   font-size: 10.5px;
@@ -2184,7 +2187,9 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
 .card-title-chips {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
+  margin-left: auto;
 }
 
 .proposal {
