@@ -400,6 +400,25 @@ async def approve_drafts(queue_id: str, item_id, edited_drafts: dict) -> dict:
     if not pr_number:
         raise RuntimeError("item has no PR number; cannot post replies.")
     threads = edited_drafts.get("threads") or []
+    # "Fix anyway" overrides need the live skill session to actually
+    # apply the code change, commit, and push. Without a session we
+    # can only post text replies — surface a clear error rather than
+    # silently dropping the override intent.
+    overrides = [t for t in threads if t.get("override_fix_anyway")]
+    if overrides:
+        set_item_drafts_status(queue_id, item_id, "error")
+        set_item_result(queue_id, item_id, {
+            "action": "post-replies",
+            "status": "needs_human",
+            "message": (
+                f"{len(overrides)} thread(s) marked \"fix anyway\" need a "
+                "live session to apply the code change. Re-run "
+                "`address-comments` and approve again."),
+        })
+        raise RuntimeError(
+            "fix-anyway overrides require a live session — re-run "
+            "address-comments and approve again."
+        )
     posted, resolved, skipped, errors = 0, 0, 0, []
     # Pin the repo for every post/resolve call in this batch. Item's
     # stamped repo wins, falls back to the queue's configured repo.

@@ -208,6 +208,32 @@ JSON. It has the same shape as your phase-1 output but may have
 edited `reply_body` values (and may drop threads the human decided
 to handle manually).
 
+### 2a. Overrides: "fix anyway" on declined threads
+
+If any thread has `override_fix_anyway: true`, the human disagreed
+with your phase-1 decline and wants the fix applied after all.
+Before posting anything, re-run phase-1 steps 3–5 **scoped to those
+threads only**:
+
+1. Apply the fix (one commit per overridden thread).
+2. Run pre-commit on the touched files (same as step 4 above) and
+   amend the commit if auto-fixers rewrote anything.
+3. Push `HEAD:{pr.head_ref}` with `--force-with-lease`.
+4. Update the thread's `reply_body` for posting:
+   - If the user left it empty (the original decline rationale or a
+     blank the UI cleared for us), draft a fresh short confirmation
+     citing the new SHA, e.g. `"Fixed in abc1234."`.
+   - If the user typed a specific body, post that verbatim — don't
+     rewrite it.
+5. Set the thread's `should_resolve` to `true` (a committed fix
+   closes the loop).
+
+If verification fails on an overridden thread, DO NOT commit broken
+code. Post a reply explaining what broke (same form as a regular
+decline reply) and leave `should_resolve` as the user set it.
+
+### 2b. Post replies
+
 For each entry with a non-empty `reply_body`, post an **inline reply
 on the thread** via the REST endpoint:
 
