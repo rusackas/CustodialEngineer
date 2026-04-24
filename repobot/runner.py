@@ -373,9 +373,20 @@ def run_queue(queue_id: str, wait_for_triage: bool = False,
     done_state = q.get("done_state", "done")
     awaiting_state = q.get("awaiting_state")
 
+    # Per-queue fetcher first (for queues that need bespoke hydration
+    # like merge state or unresolved threads). Otherwise fall through
+    # to the generic search-driven fetcher, which translates the
+    # queue's `query:` block to a `gh pr list --search` invocation
+    # — the same syntax you'd type into GitHub's search bar.
     fetch = FETCHERS.get(queue_id)
     if fetch is None:
-        raise ValueError(f"No fetcher registered for queue: {queue_id}")
+        query_block = q.get("query") or {}
+        hydrate = bool(query_block.get("hydrate_checks", True))
+
+        def fetch():
+            return github.fetch_search(query_block,
+                                       limit=max(50, max_in_flight),
+                                       hydrate_checks=hydrate)
     triage = TRIAGERS.get(queue_id)
 
     state = load_state()

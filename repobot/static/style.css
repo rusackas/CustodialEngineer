@@ -1277,6 +1277,34 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
+/* Full-width field that sits alongside the .settings-grid columns —
+   used for textareas (search query, etc.) that need more horizontal
+   room than the two-column grid gives. */
+.settings-field-wide {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}
+.settings-field-wide textarea {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 6px 9px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--ink);
+  resize: vertical;
+  min-height: 36px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.settings-field-wide textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
 .settings-section button[type="submit"] {
   align-self: flex-end;
 }

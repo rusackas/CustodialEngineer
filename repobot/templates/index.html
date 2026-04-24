@@ -406,6 +406,12 @@
                          placeholder="bug, needs-review" />
                 </label>
               </div>
+              <label class="settings-field-wide">
+                <span>Search query <span class="field-info" data-tip="Advanced — overrides every field above. Same syntax you'd type into GitHub's search bar. Operators: is:open, is:closed, author:LOGIN, label:NAME, updated:&lt;90d, sort:updated-asc, no:draft, etc.&#10;&#10;Example: is:pr is:open updated:&lt;90d sort:updated-asc no:draft" aria-label="Advanced GitHub search query. Overrides the structured fields above when set." tabindex="0">{{ icon('info', size=12) }}</span></span>
+                <textarea name="q_search" rows="2"
+                          placeholder="is:pr is:open updated:&lt;90d sort:updated-asc no:draft"
+                          spellcheck="false">{{ _q.get('search', '') }}</textarea>
+              </label>
               <button type="submit">Save &amp; refetch</button>
             </form>
           </section>
@@ -594,6 +600,12 @@
                        placeholder="bug, needs-review" />
               </label>
             </div>
+            <label class="settings-field-wide">
+              <span>Search query <span class="field-info" data-tip="Advanced — overrides every field above. Same syntax you'd type into GitHub's search bar. Operators: is:open, is:closed, author:LOGIN, label:NAME, updated:&lt;90d, sort:updated-asc, no:draft, etc.&#10;&#10;Example: is:pr is:open updated:&lt;90d sort:updated-asc no:draft" aria-label="Advanced GitHub search query. Overrides the structured fields above when set." tabindex="0">{{ icon('info', size=12) }}</span></span>
+              <textarea name="q_search" rows="2"
+                        placeholder="is:pr is:open updated:&lt;90d sort:updated-asc no:draft"
+                        spellcheck="false"></textarea>
+            </label>
             <button type="submit">Create queue</button>
           </form>
         </section>

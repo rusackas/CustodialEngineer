@@ -309,6 +309,87 @@ def _stamp_repo(pr: dict) -> dict:
     return pr
 
 
+def _build_search_query(query_block: dict) -> str:
+    """Translate a queue's `query:` block into a GitHub search string
+    suitable for `gh pr list --search`. If the block has a non-empty
+    `search:` field, it's used verbatim — power-user mode lets you
+    paste any filter you'd type into GitHub's search bar (operators
+    like `updated:<90d`, `sort:updated-asc`, `no:draft`, etc.).
+    Otherwise, build a basic search string from the structured
+    fields the form already collects.
+
+    `self` resolves to `@me` so search strings stay portable across
+    accounts.
+    """
+    if not isinstance(query_block, dict):
+        return "is:pr is:open"
+    explicit = (query_block.get("search") or "").strip()
+    if explicit:
+        return explicit
+
+    parts = ["is:pr"]
+    state = (query_block.get("state") or "open").lower()
+    if state in ("open", "closed", "merged"):
+        parts.append(f"is:{state}")
+    # state == "all" → no is:* filter
+
+    def _resolve(login: str) -> str:
+        if (login or "").lower() == "self":
+            return _self_handle()
+        return login
+
+    if author := query_block.get("author"):
+        parts.append(f"author:{_resolve(author)}")
+    if rev := query_block.get("review_requested"):
+        parts.append(f"review-requested:{_resolve(rev)}")
+    if assignee := query_block.get("assignee"):
+        parts.append(f"assignee:{_resolve(assignee)}")
+    if milestone := query_block.get("milestone"):
+        parts.append(f'milestone:"{milestone}"')
+    for label in (query_block.get("labels") or []):
+        parts.append(f'label:"{label}"')
+    return " ".join(parts)
+
+
+def fetch_search(query_block: dict, limit: int = 50,
+                 hydrate_checks: bool = True) -> list[dict]:
+    """Generic PR fetcher — runs `gh pr list --search` against the
+    current repo scope using a search string built from the queue's
+    `query:` block. Optionally hydrates each PR's `statusCheckRollup`
+    + `ci_status` so triage skills downstream can read them like
+    they do from the queue-specific fetchers.
+
+    Set `hydrate_checks=False` for big result sets where CI status
+    isn't load-bearing (e.g. a stale-PR-triage queue with hundreds
+    of cards) — saves N+1 `gh pr view` calls.
+    """
+    search = _build_search_query(query_block)
+    prs = _gh_json([
+        "gh", "pr", "list",
+        "--repo", _repo_slug(),
+        # State is owned by the search query; stop `gh` from
+        # double-filtering to open-only by default.
+        "--state", "all",
+        "--search", search,
+        "--json", LIST_FIELDS,
+        "--limit", str(limit),
+    ])
+    if not isinstance(prs, list):
+        return []
+    out: list[dict] = []
+    for pr in prs:
+        if hydrate_checks:
+            try:
+                checks = pr_checks(pr["number"])
+            except Exception:
+                checks = []
+            pr["statusCheckRollup"] = checks
+            pr["ci_status"] = ci_status(checks)
+        _stamp_repo(pr)
+        out.append(pr)
+    return out
+
+
 def fetch_dependabot_prs(limit: int = 50) -> list[dict]:
     """All open Dependabot PRs with hydrated check rollups, sorted oldest-
     update-first so long-languishing PRs get triage attention first."""

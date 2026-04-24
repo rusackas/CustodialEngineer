@@ -837,6 +837,7 @@ def update_queue_definition_endpoint(
     q_labels: str = Form(""),
     q_assignee: str = Form(""),
     q_milestone: str = Form(""),
+    q_search: str = Form(""),
 ):
     """Rewrite one queue's query in config.yaml, preserving comments
     and structure. Labels are a comma-separated string in the form;
@@ -855,6 +856,7 @@ def update_queue_definition_endpoint(
         "assignee": q_assignee.strip() or None,
         "milestone": q_milestone.strip() or None,
         "labels": labels_list or None,
+        "search": q_search.strip() or None,
     }
     # Prune None so we don't write empty keys into yaml.
     query_updates = {k: v for k, v in query_updates.items() if v is not None}
@@ -983,6 +985,7 @@ def queue_new_form(
     q_labels: str = Form(""),
     q_assignee: str = Form(""),
     q_milestone: str = Form(""),
+    q_search: str = Form(""),
 ):
     """Create a new queue from the structured form. Uses sensible
     defaults for the state machine (in triage / in progress /
@@ -997,6 +1000,7 @@ def queue_new_form(
     if q_milestone.strip(): query["milestone"] = q_milestone.strip()
     labels = [l.strip() for l in q_labels.split(",") if l.strip()]
     if labels: query["labels"] = labels
+    if q_search.strip(): query["search"] = q_search.strip()
 
     parsed = {
         "id": id.strip(),

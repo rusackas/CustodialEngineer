@@ -42,6 +42,16 @@ Optional but commonly useful:
   - `assignee` — login or `self`.
   - `milestone` — name (exact match).
   - `labels` — list of label names; GitHub requires ALL to match.
+  - `search` — raw GitHub search-bar syntax (e.g.
+    `is:pr is:open updated:<90d sort:updated-asc no:draft`).
+    When set, takes over for the structured fields above. Use this
+    for filters the structured fields can't express: relative
+    date filters (`updated:<90d`, `created:>2026-01-01`), sort
+    (`sort:updated-asc`, `sort:created-desc`), draft exclusion
+    (`no:draft`), commenters (`commenter:LOGIN`), etc. Prefer
+    structured fields when the prompt fits cleanly — they read more
+    obviously in YAML. Only emit `search:` when the user names
+    operators or filters that need it.
 
 Use the minimum set that expresses the user's intent. Don't emit
 empty maps, empty lists, or defaults the user didn't ask for.
