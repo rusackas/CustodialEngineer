@@ -1098,3 +1098,79 @@ def update_queue_settings(request: Request,
     update_queue_setting(queue_id, "intake_paused",
                          intake_paused.lower() in ("1", "true", "on", "yes"))
     return _reload_or_redirect(request)
+
+
+# ============================================================= tasks board
+# Ad-hoc tasks: user submits a prompt + repo, we spawn a `do-task`
+# session in a fresh worktree. Parallel track to the PR-triage queues.
+
+from . import tasks as _tasks  # noqa: E402
+
+
+@app.post("/tasks/new")
+def new_task(request: Request,
+             repo_id: str = Form(...),
+             prompt: str = Form(...),
+             task_type: str = Form(default=_tasks.TASK_TYPE_DEFAULT)):
+    """Create a task and spawn the `do-task` session. Returns to the
+    main page — the task appears in the In Progress column as soon
+    as the session acks startup."""
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    if not github.repo_by_id(repo_id):
+        raise HTTPException(status_code=400, detail=f"unknown repo: {repo_id}")
+    if task_type not in _tasks.TASK_TYPES:
+        task_type = _tasks.TASK_TYPE_DEFAULT
+    try:
+        task = _tasks.create_task(repo_id=repo_id, prompt=prompt,
+                                  task_type=task_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # Dispatch in a background thread so the POST returns quickly —
+    # worktree setup can shell out to `git fetch` which is slow.
+    def _dispatch():
+        try:
+            _tasks.dispatch_task(task["id"])
+        except Exception as exc:
+            _tasks.update_task(task["id"], status="stuck",
+                               last_result={
+                                   "status": "error",
+                                   "message": f"spawn failed: {exc}",
+                               })
+    threading.Thread(target=_dispatch, daemon=True).start()
+    return _reload_or_redirect(request)
+
+
+@app.post("/tasks/{task_id}/delete")
+def delete_task_endpoint(task_id: int):
+    """Remove a task record, abort any in-flight session, and prune
+    the worktree. Mirror of the per-queue-item delete path."""
+    try:
+        sessions.abort_sessions_for_item(None, task_id)
+    except Exception:
+        pass
+    _tasks.remove_task_worktree(task_id)
+    _tasks.delete_task(task_id)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.get("/fragments/tasks/body", response_class=HTMLResponse)
+def tasks_body(request: Request):
+    """HTML fragment for the tasks board — creation form + status
+    columns. Polled by HTMX like the queue-body fragments."""
+    items = _tasks.list_tasks()
+    by_status: dict[str, list[dict]] = {s: [] for s in _tasks.TASK_STATUSES}
+    for t in items:
+        by_status.setdefault(t.get("status", "in_progress"), []).append(t)
+    repos = github.list_repos()
+    return templates.TemplateResponse(
+        request, "_tasks_board.html",
+        {
+            "request": request,
+            "tasks_by_status": by_status,
+            "repos": repos,
+            "task_types": _tasks.TASK_TYPES,
+            "default_task_type": _tasks.TASK_TYPE_DEFAULT,
+        },
+    )

@@ -1560,6 +1560,157 @@ body {
   letter-spacing: 0;
 }
 .boards-tabs-spacer { flex: 1 0 auto; min-width: 10px; }
+
+/* Vertical separator before the Tasks tab — marks it as a different
+   kind of thing without shouting about it. */
+.boards-tabs-rule {
+  align-self: stretch;
+  width: 1px;
+  background: var(--rule-strong);
+  margin: 6px 10px;
+}
+.boards-tab-tasks {
+  color: var(--warn);
+}
+.boards-tab-tasks:hover { color: var(--warn); filter: brightness(1.15); }
+.boards-tab-tasks.is-active,
+.boards-tab-tasks[aria-selected="true"] {
+  color: var(--warn);
+  border-bottom-color: var(--warn);
+}
+.boards-tab-tasks-glyph {
+  font-size: 13px;
+  line-height: 1;
+  transform: translateY(1px);
+  color: var(--warn);
+}
+
+/* Tasks board — column layout + create form + cards. Reuses the
+   .queue / .state / .card chrome where it fits; differs where tasks
+   are conceptually distinct (free-form prompt, no PR metadata). */
+.tasks-queue-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.tasks-queue-loading {
+  padding: 20px;
+  color: var(--ink-mute);
+  font-style: italic;
+  text-align: center;
+}
+.task-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 2px;
+}
+.task-create-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 700;
+}
+.task-create-label select,
+.task-create-label textarea {
+  font: inherit;
+  font-family: var(--font-body);
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+  background: var(--bg-card);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  resize: vertical;
+}
+.task-create-label textarea:focus,
+.task-create-label select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.task-create-label-prompt textarea {
+  min-height: 100px;
+  line-height: 1.4;
+}
+
+/* Task card shape — same .card shell but swaps the PR-specific head
+   for a task id / repo / type triplet, and shows the prompt body
+   under the header instead of triage findings. */
+.task-card .card-title-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.task-card-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand);
+  letter-spacing: -0.005em;
+}
+.task-card-repo {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: -0.005em;
+}
+.task-card-type {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  color: var(--ink-soft);
+}
+.task-card-type-pr { background: var(--alert-important-soft); color: var(--alert-important-ink); }
+.task-card-type-question { background: var(--alert-note-soft); color: var(--alert-note-ink); }
+.task-card-type-issue { background: var(--alert-warning-soft); color: var(--alert-warning-ink); }
+.task-card-type-auto { background: var(--neutral-soft); color: var(--neutral-ink); }
+.task-card-heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 2px;
+}
+.task-card-prompt {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 8px 0 6px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+.task-card-links {
+  margin: 4px 0;
+  font-size: 11px;
+}
+.task-card-pr-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--brand);
+  text-decoration: none;
+  font-family: var(--mono);
+}
+.task-card-pr-link:hover { text-decoration: underline; }
 .boards-tabs-hint {
   padding: 0 6px 8px;
   font-family: var(--mono);

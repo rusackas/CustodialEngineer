@@ -1,0 +1,66 @@
+{# Individual task card — compact shape, different from _card.html
+   since there's no PR number / title / triage state. #}
+<article class="card task-card" data-task-id="{{ task.id }}">
+  <header class="card-head">
+    <div class="card-title">
+      <div class="card-title-text">
+        <div class="card-title-main">
+          <span class="task-card-id">task-{{ task.id }}</span>
+          <span class="task-card-repo">{{ task.repo_id }}</span>
+          <span class="task-card-type task-card-type-{{ task.task_type or 'auto' }}">
+            {{ task.task_type or 'auto' }}
+          </span>
+        </div>
+        {% if task.title %}
+          <div class="task-card-heading">{{ task.title }}</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card-meta">
+      <span class="card-ts tip" data-tip="Created {{ exact_time(task.created_at) }}">
+        {{ time_ago(task.created_at) }}
+      </span>
+      <span class="card-title-chips">
+        <form method="post" action="/tasks/{{ task.id }}/delete"
+              class="card-refresh-form">
+          <button type="submit" class="card-refresh"
+                  title="Delete this task, abort its session, prune the worktree.">
+            {{ icon('trash', size=11) }} delete
+          </button>
+        </form>
+      </span>
+    </div>
+  </header>
+
+  <div class="task-card-prompt" title="{{ task.prompt }}">{{ task.prompt }}</div>
+
+  {% if task.last_result %}
+    {% set r = task.last_result %}
+    <div class="result result-{{ r.status or 'completed' }}">
+      <strong>{{ r.status or 'completed' }}</strong>
+      {% if r.message %}— {{ r.message }}{% endif %}
+    </div>
+  {% endif %}
+
+  {% if task.pr_url %}
+    <div class="task-card-links">
+      <a href="{{ task.pr_url }}" target="_blank" rel="noopener"
+         class="task-card-pr-link">
+        {{ icon('git-pull-request', size=11) }} {{ task.pr_url | replace('https://github.com/', '') }}
+      </a>
+    </div>
+  {% endif %}
+
+  {% if task.session_id %}
+    <div class="card-session-footer">
+      <button type="button" class="card-session-btn"
+              data-session-id="{{ task.session_id }}"
+              data-pr-number=""
+              data-pr-title="task-{{ task.id }}: {{ task.title or (task.prompt[:60] + '…' if task.prompt|length > 60 else task.prompt) }}"
+              data-pr-url=""
+              title="Open the do-task session transcript.">
+        {{ icon('comment-discussion', size=11) }} session
+      </button>
+    </div>
+  {% endif %}
+</article>

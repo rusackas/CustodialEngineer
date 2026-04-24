@@ -166,6 +166,17 @@
       <span class="boards-tab-add-plus">+</span>
       <span class="boards-tab-add-label">new queue</span>
     </button>
+    <div class="boards-tabs-rule" aria-hidden="true"></div>
+    <div class="boards-tab-wrap boards-tab-wrap-tasks">
+      <button type="button" class="boards-tab boards-tab-tasks"
+              role="tab"
+              data-board-index="{{ queues | length }}"
+              data-queue-id="__tasks__"
+              aria-selected="false">
+        <span class="boards-tab-tasks-glyph" aria-hidden="true">✱</span>
+        <span class="boards-tab-title">Tasks</span>
+      </button>
+    </div>
     <div class="boards-tabs-spacer"></div>
     <div class="boards-tabs-hint">
       <kbd>←</kbd><kbd>→</kbd> switch
@@ -222,6 +233,26 @@
         </div>
       </section>
     {% endfor %}
+      {# Tasks board — ad-hoc prompts, one column per status + a
+         create form on the left. Separate polling endpoint so the
+         PR queues don't have to know about it. #}
+      <section class="queue tasks-queue" data-tasks-board>
+        <div class="queue-header">
+          <h2>
+            <span class="boards-tab-tasks-glyph" aria-hidden="true">✱</span>
+            Tasks
+          </h2>
+          <div class="queue-meta">
+            <span class="tasks-queue-hint">ad-hoc work — a session per prompt</span>
+          </div>
+        </div>
+        <div class="queue-body tasks-queue-body"
+             hx-get="/fragments/tasks/body"
+             hx-trigger="load, every 3s"
+             hx-swap="morph:innerHTML">
+          <div class="tasks-queue-loading">Loading tasks…</div>
+        </div>
+      </section>
     </div>
   </section>
 
