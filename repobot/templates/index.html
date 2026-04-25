@@ -543,7 +543,9 @@
             </div>
             <form method="post"
                   action="/queues/{{ queue.id }}/definition"
-                  class="settings-form settings-form-static">
+                  class="settings-form settings-form-static"
+                  data-fetch-submit
+                  data-on-success="reload">
               <label>
                 <span>Title <span class="field-info" data-tip="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" aria-label="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="title" value="{{ queue.title }}" />
@@ -797,6 +799,7 @@
                        data-states-json value="" />
               </section>
 
+              <div class="form-error" data-form-error hidden></div>
               <button type="submit">Save &amp; refetch</button>
             </form>
           </section>
@@ -891,6 +894,8 @@
           </div>
           <form method="post" action="/queues/new/form"
                 class="settings-form settings-form-static"
+                data-fetch-submit
+                data-on-success="reload"
                 hx-boost="false">
             <div class="settings-grid">
               <label>
@@ -1098,6 +1103,7 @@
                      data-states-json value="" />
             </section>
 
+            <div class="form-error" data-form-error hidden></div>
             <button type="submit">Create queue</button>
           </form>
         </section>
@@ -2606,6 +2612,96 @@
         });
       });
       hidden.value = JSON.stringify(out);
+    }, true);
+
+    // ============== Form submit with inline errors ================
+    // Forms with `data-fetch-submit` POST via fetch() instead of a
+    // native form navigation. On 200/303 we redirect to "/"; on 400
+    // / 422 / 5xx we show the server's error inline above the
+    // submit button instead of the browser navigating to a raw JSON
+    // page. Lightweight client-side pre-checks (at least one query
+    // discriminator) catch the common case before the request even
+    // fires, but the server validation is still authoritative — the
+    // inline-error path is the safety net for both bypassed JS and
+    // future server-only checks the client doesn't know about.
+    document.addEventListener('submit', async (e) => {
+      const form = e.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (!form.hasAttribute('data-fetch-submit')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      const errEl = form.querySelector('[data-form-error]');
+      const showError = (msg) => {
+        if (!errEl) return;
+        errEl.textContent = msg;
+        errEl.hidden = !msg;
+      };
+      showError('');
+
+      // Client-side pre-check: at least one query discriminator
+      // must be filled (matches `query_has_discriminator()` on the
+      // server). Saves a round trip for the most common mistake.
+      const discriminators = [
+        'q_author', 'q_review_requested', 'q_assignee',
+        'q_milestone', 'q_labels', 'q_search',
+      ];
+      const hasOne = discriminators.some(name => {
+        const el = form.querySelector(`[name="${name}"]`);
+        return el && (el.value || '').trim() !== '';
+      });
+      if (!hasOne) {
+        showError(
+          'Add at least one filter — Author, Review-requested, ' +
+          'Assignee, Milestone, Labels, or Search query — before ' +
+          'saving. `state: open` alone matches every open PR in the ' +
+          'repo, which is almost never what you want.'
+        );
+        // Surface visually + scroll to the first relevant field.
+        const target = form.querySelector('[name="q_search"]')
+                    || form.querySelector('[name="q_author"]');
+        if (target) target.focus();
+        return;
+      }
+
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.classList.add('loading');
+      }
+      try {
+        const fd = new FormData(form);
+        const r = await fetch(form.action, {
+          method: 'POST',
+          body: fd,
+          credentials: 'same-origin',
+          redirect: 'manual',  // we'll handle the 303 ourselves
+        });
+        if (r.ok || r.status === 303 || r.type === 'opaqueredirect') {
+          // Server redirects to "/" on success; navigating there
+          // refreshes the queue list (or shows the brand-new queue
+          // for the new-queue flow).
+          if (form.dataset.onSuccess === 'reload') {
+            window.location = '/';
+          }
+          return;
+        }
+        // Try to parse a {detail} payload — that's how FastAPI
+        // surfaces HTTPException messages.
+        let detail = `Save failed (${r.status}).`;
+        try {
+          const j = await r.json();
+          if (j && j.detail) detail = j.detail;
+        } catch (_) {}
+        showError(detail);
+      } catch (err) {
+        showError('Network error: ' + err.message);
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.classList.remove('loading');
+        }
+      }
     }, true);
 
     // ============== Theme picker ================
