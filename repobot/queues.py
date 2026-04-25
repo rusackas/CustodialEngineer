@@ -40,6 +40,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _emit(event_type: str, data: dict | None = None) -> None:
+    """Best-effort SSE broadcast. Called from every setter that
+    mutates queue items so the front-end can refetch surgically
+    instead of polling on a 3s timer. Wrapped in try/except so a
+    broken event hub never blocks the data write."""
+    try:
+        from . import events as _events
+        _events.broadcast(event_type, data or {})
+    except Exception as exc:
+        print(f"[queues] _emit({event_type}) failed: {exc}")
+
+
 def load_state() -> dict:
     """Build the queues + tasks + settings state dict from SQL. Same
     shape callers were used to from the JSON file."""
@@ -111,7 +123,9 @@ def upsert_items(queue_id: str, new_items: Iterable[dict], initial_state: str) -
             else:
                 item["title"] = incoming.get("title", item.get("title"))
                 item["raw"] = incoming.get("raw", item.get("raw"))
-    return _mutate(_m)
+    out = _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
+    return out
 
 
 def set_triage(queue_id: str, item_id, proposal: str, actions: list[str],
@@ -127,6 +141,7 @@ def set_triage(queue_id: str, item_id, proposal: str, actions: list[str],
                         item[k] = v
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_state(queue_id: str, item_id, new_state: str,
@@ -155,6 +170,7 @@ def set_item_state(queue_id: str, item_id, new_state: str,
             )
         except Exception as exc:
             print(f"[queues] record_state_transition failed: {exc}")
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def delete_item(queue_id: str, item_id) -> None:
@@ -164,6 +180,7 @@ def delete_item(queue_id: str, item_id) -> None:
             return
         bucket["items"] = [i for i in bucket["items"] if i["id"] != item_id]
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_parked_at(queue_id: str, item_id, when: str | None) -> None:
@@ -179,6 +196,7 @@ def set_item_parked_at(queue_id: str, item_id, when: str | None) -> None:
                     item["parked_at"] = when
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_result(queue_id: str, item_id, result: dict) -> None:
@@ -205,6 +223,7 @@ def set_item_result(queue_id: str, item_id, result: dict) -> None:
         )
     except Exception as exc:
         print(f"[queues] record_action_event failed: {exc}")
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def add_item_tokens(queue_id: str, item_id, usage: dict) -> None:
@@ -226,6 +245,7 @@ def add_item_tokens(queue_id: str, item_id, usage: dict) -> None:
                         tl[k] = tl.get(k, 0) + int(v)
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_plan(queue_id: str, item_id, plan: dict | None) -> None:
@@ -240,6 +260,7 @@ def set_item_plan(queue_id: str, item_id, plan: dict | None) -> None:
                     item["plan"] = plan
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_plan_status(queue_id: str, item_id, status: str | None) -> None:
@@ -255,6 +276,7 @@ def set_item_plan_status(queue_id: str, item_id, status: str | None) -> None:
                     item["plan_status"] = status
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_drafts(queue_id: str, item_id, drafts: dict | None) -> None:
@@ -269,6 +291,7 @@ def set_item_drafts(queue_id: str, item_id, drafts: dict | None) -> None:
                     item["drafts"] = drafts
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_drafts_status(queue_id: str, item_id, status: str | None) -> None:
@@ -283,6 +306,7 @@ def set_item_drafts_status(queue_id: str, item_id, status: str | None) -> None:
                     item["drafts_status"] = status
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_assessment(queue_id: str, item_id, assessment: dict | None) -> None:
@@ -298,6 +322,7 @@ def set_item_assessment(queue_id: str, item_id, assessment: dict | None) -> None
                     item["assessment"] = assessment
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_diff_summary(queue_id: str, item_id, summary: dict | None) -> None:
@@ -313,6 +338,7 @@ def set_item_diff_summary(queue_id: str, item_id, summary: dict | None) -> None:
                     item["diff_summary"] = summary
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 def set_item_session_id(queue_id: str, item_id, session_id: str | None,
@@ -328,6 +354,7 @@ def set_item_session_id(queue_id: str, item_id, session_id: str | None,
                     item[key] = session_id
                 break
     _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
 
 
 # ---------- runtime settings (UI-editable overrides on top of config.yaml) ----------

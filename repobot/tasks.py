@@ -35,7 +35,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .queues import _mutate, current_dry_run, load_state, _now
+from .queues import _emit, _mutate, current_dry_run, load_state, _now
 
 TASK_STATUSES = ("in_progress", "stuck", "done")
 TASK_TYPES = ("auto", "question", "issue", "pr")
@@ -99,6 +99,7 @@ def create_task(repo_id: str, prompt: str,
         created.update(record)
 
     _mutate(_m)
+    _emit("tasks-changed", {})
     return created
 
 
@@ -117,6 +118,7 @@ def update_task(task_id: int, **fields) -> dict | None:
                 return
 
     _mutate(_m)
+    _emit("tasks-changed", {})
     return updated or None
 
 
@@ -133,6 +135,7 @@ def delete_task(task_id: int) -> bool:
         removed["hit"] = len(t["items"]) < before
 
     _mutate(_m)
+    _emit("tasks-changed", {})
     return removed["hit"]
 
 

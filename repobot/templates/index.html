@@ -46,6 +46,60 @@
         return _origMorph(oldNode, newContent, merged);
       };
     })();
+
+    // Server-Sent Events: server pushes "queue-changed" /
+    // "tasks-changed" / etc. as soon as a mutation happens; client
+    // routes each event to the matching container, which fires its
+    // hx-trigger="sse-refresh" to refetch its body. The 30s fallback
+    // poll on each container backstops the rare case where the SSE
+    // connection drops without EventSource's auto-reconnect kicking
+    // back in.
+    document.addEventListener('DOMContentLoaded', function () {
+      let es;
+      let backoff = 1000;
+      function connect() {
+        try {
+          es = new EventSource('/events');
+        } catch (e) {
+          // EventSource construction itself failed — back off and
+          // retry. Should be rare.
+          setTimeout(connect, backoff);
+          backoff = Math.min(backoff * 2, 30000);
+          return;
+        }
+        es.addEventListener('hello', function () {
+          backoff = 1000;  // healthy connection — reset backoff
+        });
+        es.addEventListener('queue-changed', function (e) {
+          let data = {};
+          try { data = JSON.parse(e.data); } catch (_) {}
+          const qid = data.queue_id;
+          if (!qid) return;
+          const el = document.querySelector(
+            `[data-sse-queue="${qid}"]`);
+          if (el && window.htmx) {
+            window.htmx.trigger(el, 'sse-refresh');
+          }
+        });
+        es.addEventListener('tasks-changed', function () {
+          document.querySelectorAll('[data-sse-tasks]').forEach(
+            function (el) {
+              if (window.htmx) window.htmx.trigger(el, 'sse-refresh');
+            });
+        });
+        es.onerror = function () {
+          // Browser auto-reconnects EventSource by default, but if
+          // the server is fully down it'll keep retrying instantly.
+          // Close + manual reconnect with exponential backoff so we
+          // don't hammer a dead server.
+          if (es && es.readyState === EventSource.CLOSED) {
+            setTimeout(connect, backoff);
+            backoff = Math.min(backoff * 2, 30000);
+          }
+        };
+      }
+      connect();
+    });
   </script>
 </head>
 <body hx-ext="morph" hx-boost="true">
@@ -65,7 +119,7 @@
     <div class="app-header-row app-readout">
       <div class="readout-cluster" id="readout-cluster"
            hx-get="/fragments/header-readout"
-           hx-trigger="every 3s"
+           hx-trigger="every 10s"
            hx-swap="morph:innerHTML">
         {% include "_header_readout.html" %}
       </div>
@@ -339,8 +393,9 @@
         </div>
 
         <div class="queue-body" id="queue-body-{{ queue.id }}"
+             data-sse-queue="{{ queue.id }}"
              hx-get="/queues/{{ queue.id }}/body"
-             hx-trigger="every 3s"
+             hx-trigger="sse-refresh, every 30s"
              hx-swap="morph:innerHTML">
           {% include "_queue_body.html" %}
         </div>
@@ -404,8 +459,9 @@
           </div>
           {# Polled status columns — the only piece that refreshes. #}
           <div class="tasks-status-columns"
+               data-sse-tasks="1"
                hx-get="/fragments/tasks/body"
-               hx-trigger="load, every 3s"
+               hx-trigger="load, sse-refresh, every 30s"
                hx-swap="morph:innerHTML">
             <div class="tasks-queue-loading">Loading tasks…</div>
           </div>

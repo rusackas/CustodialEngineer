@@ -5,7 +5,7 @@ import time
 import json
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -570,6 +570,58 @@ def header_readout(request: Request):
         request, "_header_readout.html",
         {"request": request, "s": stats_data, "ttl": ttl,
          "rate_limit": github.rate_limit_snapshot()},
+    )
+
+
+@app.get("/events")
+async def events_stream(request: Request):
+    """Server-Sent Events stream. The client opens this once on
+    page load (`new EventSource('/events')`) and keeps it open;
+    every mutation that should refresh some part of the UI calls
+    `events.broadcast(...)`, which fans the event out to every
+    connected subscriber over this channel.
+
+    Replaces the every-3s queue/tasks/header polling — the page
+    only refetches a body when the server says something actually
+    changed. A 30s fallback poll on each container backstops the
+    rare case where the SSE link drops without `EventSource`'s
+    auto-reconnect kicking in.
+
+    Keepalive comments fire every 15s so reverse proxies / browser
+    timeouts don't kill an idle connection.
+    """
+    import asyncio as _asyncio
+    from . import events as _events
+
+    async def gen():
+        sub_q = _events.subscribe()
+        try:
+            # Initial hello so the client knows the channel is up
+            # (handy for diagnostics, also primes any handler that
+            # wants to flush on first event).
+            yield "event: hello\ndata: {}\n\n"
+            while True:
+                msg = await _asyncio.to_thread(_events._blocking_get,
+                                               sub_q, 15.0)
+                if msg is None:
+                    # No event in the last 15s — emit a comment to
+                    # keep the connection alive across proxies.
+                    yield ": keepalive\n\n"
+                    continue
+                yield (f"event: {msg['event']}\n"
+                       f"data: {json.dumps(msg['data'])}\n\n")
+        finally:
+            _events.unsubscribe(sub_q)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            # Disable nginx-style proxy buffering when present;
+            # streaming responses need to flush immediately.
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
     )
 
 
