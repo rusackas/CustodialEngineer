@@ -6,7 +6,16 @@
    look different (a free-form prompt instead of a PR title) and the
    first column is a form, not a state bucket. #}
 <div class="queue-body tasks-body">
-  <div class="state state-triage tasks-state-create">
+  {# `hx-preserve` + a stable id tells idiomorph to leave this whole
+     column alone on every 3s poll. Without it, the user's typed
+     prompt + repo/type selections wipe back to defaults on every
+     refresh tick. Tradeoff: if the user adds a new repo to the
+     registry mid-compose, the dropdown options here stay stale
+     until the next full-page nav (the form submit or any other
+     non-HTMX navigation). Acceptable cost vs. losing typed work. #}
+  <div class="state state-triage tasks-state-create"
+       id="tasks-create-column"
+       hx-preserve="true">
     <h3>
       <span class="state-token" aria-hidden="true"></span>
       <span class="state-name">new task</span>

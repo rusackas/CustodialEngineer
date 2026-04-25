@@ -540,8 +540,19 @@
                                 data-pr-url="{{ item.url }}"
                                 title="{{ tip_parts | join(' ') }}">{{ icon('comment', size=12) }} Open session</button>
                       {% elif 'prompt' in (item.actions or []) %}
+                        {# Preserve typed-but-not-submitted instructions
+                           across the 3s polling tick. Stable id ties
+                           the form to its (queue, item) so when the
+                           card moves columns mid-compose, the form
+                           moves with it intact. When the card stops
+                           offering `prompt` (session started, item
+                           moved past triage, etc.), the new HTML
+                           omits the form and hx-preserve lets it
+                           disappear correctly. #}
                         <form class="prompt-inline"
                               method="post"
+                              id="prompt-form-{{ queue.id }}-{{ item.id }}"
+                              hx-preserve="true"
                               action="/queues/{{ queue.id }}/items/{{ item.id }}/prompt">
                           <input type="text" name="instruction"
                                  placeholder="e.g., Close with a note that we already merged this in #12345."
