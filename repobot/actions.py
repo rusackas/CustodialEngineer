@@ -560,7 +560,12 @@ def continue_action(queue_id: str, item_id) -> str | None:
         head_ref = (item.get("raw") or {}).get("headRefName")
         if not head_ref:
             raise RuntimeError("PR has no headRefName; cannot create worktree.")
-        wt_path = worktree.ensure_worktree(item_id, head_ref)
+        # Pass the PR's actual repo slug so cross-repo queues fetch
+        # against the right origin (otherwise ensure_worktree falls
+        # back to the global default and refs/pull/{N}/head misses).
+        _slug = _item_repo_slug_for(queue_id, item)
+        wt_path = worktree.ensure_worktree(item_id, head_ref,
+                                           repo_slug=_slug)
         cwd = str(wt_path)
     else:
         cwd = str(worktree.repo_path())
@@ -679,7 +684,11 @@ def dispatch(queue_id: str, item_id, action_id: str,
             head_ref = (item.get("raw") or {}).get("headRefName")
             if not head_ref:
                 raise RuntimeError("PR has no headRefName; cannot create worktree.")
-            wt_path = worktree.ensure_worktree(item_id, head_ref)
+            # Same cross-repo fix as in the dispatch path — without
+            # repo_slug the fetch hits the global default clone.
+            _slug = _item_repo_slug_for(queue_id, item)
+            wt_path = worktree.ensure_worktree(item_id, head_ref,
+                                               repo_slug=_slug)
             cwd = str(wt_path)
         else:
             cwd = str(worktree.repo_path())

@@ -36,7 +36,8 @@ def worktree_path_for(pr_number: int) -> Path:
     return WORKTREES_DIR / f"pr-{pr_number}"
 
 
-def ensure_worktree(pr_number: int, head_ref: str) -> Path:
+def ensure_worktree(pr_number: int, head_ref: str,
+                    repo_slug: str | None = None) -> Path:
     """Create (or reuse) a worktree for the PR.
 
     Fetches the PR's head via GitHub's `refs/pull/{N}/head` ref instead
@@ -49,14 +50,33 @@ def ensure_worktree(pr_number: int, head_ref: str) -> Path:
     target the upstream head ref via `git push origin HEAD:{head_ref}`
     — the local branch name is a sandbox detail.
 
+    `repo_slug` (e.g. `apache/superset`) pins which clone to operate
+    in. Cross-repo queues MUST pass it so the fetch hits the right
+    origin — without it we fall back to the global default and try
+    to fetch `refs/pull/{N}/head` against the wrong repo (which
+    silently creates a useless local ref or errors out, depending on
+    whether the wrong-repo PR ref exists).
+
     `head_ref` is kept as a parameter for API compatibility / future use.
     """
     del head_ref  # unused; kept in signature for API stability
     target = worktree_path_for(pr_number)
     pr_ref = f"refs/ce-pr/{pr_number}"
     local_branch = f"ce/pr-{pr_number}"
+
+    # Resolve the clone to operate in: explicit repo_slug if provided,
+    # otherwise the global default. Ensure the clone exists (lazy
+    # init) before any git commands run against it.
+    if repo_slug and "/" in repo_slug:
+        from .workspace import WORKSPACE_DIR, ensure_repo
+        owner, name = repo_slug.split("/", 1)
+        ensure_repo(owner, name)
+        clone_path = WORKSPACE_DIR / name
+    else:
+        clone_path = repo_path()
+
     _git("fetch", "origin",
-         f"+refs/pull/{pr_number}/head:{pr_ref}")
+         f"+refs/pull/{pr_number}/head:{pr_ref}", cwd=clone_path)
 
     if (target / ".git").exists():
         _git("reset", "--hard", pr_ref, cwd=target)
@@ -65,7 +85,7 @@ def ensure_worktree(pr_number: int, head_ref: str) -> Path:
 
     WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
     _git("worktree", "add", "--force", "-B", local_branch,
-         str(target), pr_ref)
+         str(target), pr_ref, cwd=clone_path)
     return target
 
 
