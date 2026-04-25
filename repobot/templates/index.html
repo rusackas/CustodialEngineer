@@ -24,6 +24,29 @@
   </script>
   <script src="/static/htmx.min.js"></script>
   <script src="/static/idiomorph-ext.min.js"></script>
+  <script>
+    // Patch idiomorph's swap to leave the actively-focused element
+    // alone. Without this, the card-level prompt-form input and any
+    // other <input> / <textarea> that the user is currently typing
+    // into gets its `value` reset on every 3s morph poll because the
+    // server's HTML carries no `value` attribute. `ignoreActiveValue`
+    // tells idiomorph: "if the element is document.activeElement,
+    // skip value-syncing it" — so typing survives until blur.
+    // `ignoreActive` similarly skips morph-walking the focused
+    // element's children, which keeps an open <select> or other
+    // interactive widget from getting clobbered mid-interaction.
+    (function patchIdiomorph() {
+      if (typeof Idiomorph === 'undefined') return;
+      const _origMorph = Idiomorph.morph;
+      Idiomorph.morph = function (oldNode, newContent, config) {
+        const merged = Object.assign({
+          ignoreActive: true,
+          ignoreActiveValue: true,
+        }, config || {});
+        return _origMorph(oldNode, newContent, merged);
+      };
+    })();
+  </script>
 </head>
 <body hx-ext="morph" hx-boost="true">
   {% set s = stats or {} %}
@@ -324,8 +347,11 @@
       </section>
     {% endfor %}
       {# Tasks board — ad-hoc prompts, one column per status + a
-         create form on the left. Separate polling endpoint so the
-         PR queues don't have to know about it. #}
+         create form on the left. The create form is rendered
+         statically here (NEVER inside the polled fragment) so its
+         repo / type / prompt fields don't get clobbered every 3s
+         by the morph swap. The status columns are the only thing
+         the poll endpoint refreshes. #}
       <section class="queue tasks-queue" data-tasks-board>
         <div class="queue-header">
           <h2>
@@ -336,11 +362,53 @@
             <span class="tasks-queue-hint">ad-hoc work — a session per prompt</span>
           </div>
         </div>
-        <div class="queue-body tasks-queue-body"
-             hx-get="/fragments/tasks/body"
-             hx-trigger="load, every 3s"
-             hx-swap="morph:innerHTML">
-          <div class="tasks-queue-loading">Loading tasks…</div>
+        <div class="queue-body tasks-queue-body">
+          {# Static create form column. Outside the polled region;
+             never touched by morph. Repos here go stale only on a
+             full-page nav (which is fine — it's a rare config event). #}
+          <div class="state state-triage tasks-state-create">
+            <h3>
+              <span class="state-token" aria-hidden="true"></span>
+              <span class="state-name">new task</span>
+            </h3>
+            <form method="post" action="/tasks/new" class="task-create-form"
+                  hx-boost="false">
+              <label class="task-create-label">
+                <span>Repo</span>
+                <select name="repo_id" required>
+                  {% for r in repos %}
+                    <option value="{{ r.id }}">
+                      {{ r.display_name or r.slug }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label class="task-create-label">
+                <span>Type</span>
+                <select name="task_type">
+                  {% for t in ['auto', 'question', 'issue', 'pr'] %}
+                    <option value="{{ t }}"
+                      {% if t == 'auto' %}selected{% endif %}>{{ t }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label class="task-create-label task-create-label-prompt">
+                <span>Prompt</span>
+                <textarea name="prompt" rows="5" required
+                          placeholder="e.g. fix the z-index on the PR drawer so it sits above the modal backdrop"></textarea>
+              </label>
+              <button type="submit" class="action-primary">
+                {{ icon('rocket', size=12) }} Start task
+              </button>
+            </form>
+          </div>
+          {# Polled status columns — the only piece that refreshes. #}
+          <div class="tasks-status-columns"
+               hx-get="/fragments/tasks/body"
+               hx-trigger="load, every 3s"
+               hx-swap="morph:innerHTML">
+            <div class="tasks-queue-loading">Loading tasks…</div>
+          </div>
         </div>
       </section>
     </div>

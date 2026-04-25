@@ -1,88 +1,39 @@
-{# Tasks board fragment — rendered server-side at initial page load
-   and re-rendered by HTMX polling. Four columns: a creation form on
-   the left (in place of "triage"), then in progress / stuck / done.
-
-   Parallel to _queue_body.html but specific to ad-hoc tasks — cards
-   look different (a free-form prompt instead of a PR title) and the
-   first column is a form, not a state bucket. #}
-<div class="queue-body tasks-body">
-  {# `hx-preserve` + a stable id tells idiomorph to leave this whole
-     column alone on every 3s poll. Without it, the user's typed
-     prompt + repo/type selections wipe back to defaults on every
-     refresh tick. Tradeoff: if the user adds a new repo to the
-     registry mid-compose, the dropdown options here stay stale
-     until the next full-page nav (the form submit or any other
-     non-HTMX navigation). Acceptable cost vs. losing typed work. #}
-  <div class="state state-triage tasks-state-create"
-       id="tasks-create-column"
-       hx-preserve="true">
+{# Polled tasks-board fragment. Contains ONLY the three status columns
+   (in_progress / stuck / done); the create form is rendered statically
+   in `index.html` outside this fragment so its repo / type / prompt
+   inputs don't get morph-clobbered every 3s. The morph target on the
+   index side is `.tasks-status-columns`, and this template fills its
+   innerHTML — that's why there's no wrapping <div> here. #}
+{% set columns = [
+  ('in_progress', 'in progress', 'progress'),
+  ('stuck',       'stuck',       'triage'),
+  ('done',        'done',        'done'),
+] %}
+{% for status, label, tone in columns %}
+  {% set cards = tasks_by_status.get(status) or [] %}
+  <div class="state state-{{ tone }} {{ 'state-done' if status == 'done' else '' }} tasks-state-{{ status }}">
     <h3>
       <span class="state-token" aria-hidden="true"></span>
-      <span class="state-name">new task</span>
-    </h3>
-    <form method="post" action="/tasks/new" class="task-create-form"
-          hx-boost="false">
-      <label class="task-create-label">
-        <span>Repo</span>
-        <select name="repo_id" required>
-          {% for r in repos %}
-            <option value="{{ r.id }}">
-              {{ r.display_name or r.slug }}
-            </option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="task-create-label">
-        <span>Type</span>
-        <select name="task_type">
-          {% for t in task_types %}
-            <option value="{{ t }}"
-              {% if t == default_task_type %}selected{% endif %}>{{ t }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="task-create-label task-create-label-prompt">
-        <span>Prompt</span>
-        <textarea name="prompt" rows="5" required
-                  placeholder="e.g. fix the z-index on the PR drawer so it sits above the modal backdrop"></textarea>
-      </label>
-      <button type="submit" class="action-primary">
-        {{ icon('rocket', size=12) }} Start task
-      </button>
-    </form>
-  </div>
-
-  {% set columns = [
-    ('in_progress', 'in progress', 'progress'),
-    ('stuck',       'stuck',       'triage'),
-    ('done',        'done',        'done'),
-  ] %}
-  {% for status, label, tone in columns %}
-    {% set cards = tasks_by_status.get(status) or [] %}
-    <div class="state state-{{ tone }} {{ 'state-done' if status == 'done' else '' }} tasks-state-{{ status }}">
-      <h3>
-        <span class="state-token" aria-hidden="true"></span>
-        <span class="state-name">{{ label }}</span>
-        <span class="count">{{ cards | length }}</span>
-        {% if status == 'done' and cards %}
-          <form method="post" action="/tasks/clear-done"
-                class="clear-done-form"
-                title="Delete every task in the Done column. Aborts sessions and prunes worktrees.">
-            <button type="submit" class="clear-done">clear all</button>
-          </form>
-        {% endif %}
-      </h3>
-      {% if cards %}
-        {% for task in cards %}
-          {# Done tasks render in compact mode by default — the prompt
-             body collapses to a click-to-expand details/summary so a
-             long Done column stays scannable. #}
-          {% set _compact = (status == 'done') %}
-          {% include "_task_card.html" %}
-        {% endfor %}
-      {% else %}
-        <div class="empty">—</div>
+      <span class="state-name">{{ label }}</span>
+      <span class="count">{{ cards | length }}</span>
+      {% if status == 'done' and cards %}
+        <form method="post" action="/tasks/clear-done"
+              class="clear-done-form"
+              title="Delete every task in the Done column. Aborts sessions and prunes worktrees.">
+          <button type="submit" class="clear-done">clear all</button>
+        </form>
       {% endif %}
-    </div>
-  {% endfor %}
-</div>
+    </h3>
+    {% if cards %}
+      {% for task in cards %}
+        {# Done tasks render in compact mode by default — the prompt
+           body collapses to a click-to-expand details/summary so a
+           long Done column stays scannable. #}
+        {% set _compact = (status == 'done') %}
+        {% include "_task_card.html" %}
+      {% endfor %}
+    {% else %}
+      <div class="empty">—</div>
+    {% endif %}
+  </div>
+{% endfor %}

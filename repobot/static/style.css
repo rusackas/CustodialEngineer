@@ -2161,6 +2161,13 @@ body {
 /* Tasks board — column layout + create form + cards. Reuses the
    .queue / .state / .card chrome where it fits; differs where tasks
    are conceptually distinct (free-form prompt, no PR metadata). */
+/* The status-columns container is a passthrough — `display: contents`
+   lets its three children (in_progress / stuck / done) participate
+   in the parent .queue-body's flex layout as if the wrapper weren't
+   there. We need the wrapper as a stable morph target so the create
+   form (its sibling) stays untouched on every poll. */
+.tasks-status-columns { display: contents; }
+
 .tasks-queue-hint {
   font-family: var(--mono);
   font-size: 10px;
