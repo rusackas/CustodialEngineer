@@ -2209,11 +2209,15 @@ body {
   background: var(--accent-soft);
 }
 
-/* Tasks button styled as a pill in the toolbar — overrides the
-   tab look when it lives up here. The base .boards-tab styling
-   gives it the mono-uppercase voice; this adds pill chrome and
-   the warn color so it stays visually distinct from queue tabs
-   and the dashed new-queue button. */
+/* Ad-hoc button styled as a pill in the toolbar. The base
+   `.boards-tab` styling gives it the mono-uppercase voice; this
+   adds pill chrome and the warn color so it stays visually
+   distinct from queue tabs and the dashed new-queue button.
+   Active state mirrors hover — same soft warn-tinted fill, same
+   warn-color text — and signals selection through a font-weight
+   bump rather than a loud color flip. The previous solid-orange
+   active state was the loudest treatment in the whole app and
+   read as an alert at the moment when nothing was wrong. */
 .boards-toolbar-tasks {
   padding: 6px 12px !important;
   border: 1px solid var(--warn) !important;
@@ -2221,16 +2225,16 @@ body {
   margin-bottom: 0 !important;
   color: var(--warn);
   background: transparent;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, font-weight 0.15s ease;
 }
 .boards-toolbar-tasks:hover {
   background: var(--alert-warning-soft);
 }
 .boards-toolbar-tasks.is-active,
 .boards-toolbar-tasks[aria-selected="true"] {
-  background: var(--warn);
-  color: var(--bg-card);
-  border-color: var(--warn) !important;
+  background: var(--alert-warning-soft);
+  color: var(--warn);
+  font-weight: 700;
 }
 .boards-toolbar-tasks .boards-tab-tasks-glyph {
   color: inherit;
