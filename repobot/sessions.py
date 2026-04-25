@@ -240,7 +240,10 @@ _TOKEN_EVENTS_LOCK = threading.Lock()
 _TOKEN_WINDOW_SEC = 24 * 3600
 
 
-def _record_token_event(usage: Optional[dict]) -> None:
+def _record_token_event(usage: Optional[dict],
+                        *,
+                        session_id: Optional[str] = None,
+                        skill: Optional[str] = None) -> None:
     if not usage:
         return
     keys = ("input_tokens", "output_tokens",
@@ -261,6 +264,12 @@ def _record_token_event(usage: Optional[dict]) -> None:
             idx = len(_TOKEN_EVENTS)
         if idx:
             del _TOKEN_EVENTS[:idx]
+    # Durable shadow. Best-effort; never break the in-memory path.
+    try:
+        from . import db as _db
+        _db.record_token_event(session_id=session_id, skill=skill, usage=snap)
+    except Exception as exc:
+        print(f"[sessions] db record_token_event failed: {exc}")
 
 
 def _tokens_in_last(window_sec: float) -> dict:
@@ -357,6 +366,17 @@ def start_session(
         state.resumed_from = sdk_resume
     with _SESSIONS_LOCK:
         SESSIONS[state.session_id] = state
+    # Durable shadow: register the session in SQLite right away so a
+    # restart between here and the first turn doesn't lose it.
+    try:
+        from . import db as _db
+        _db.record_session_start(
+            state.session_id, skill, kind=kind,
+            queue_id=queue_id, item_id=item_id,
+            action_id=action_id,
+        )
+    except Exception as exc:
+        print(f"[sessions] db record_session_start failed: {exc}")
     asyncio.run_coroutine_threadsafe(
         _run_session(state, sdk_resume=sdk_resume,
                      initial_user_message=initial_user_message), loop,
@@ -442,25 +462,55 @@ def run_session_blocking(
 
 def get_snapshot(session_id: str) -> Optional[dict]:
     state = SESSIONS.get(session_id)
-    if state is None:
+    if state is not None:
+        return {
+            "session_id": state.session_id,
+            "status": state.status,
+            "skill": state.skill,
+            "kind": state.kind,
+            "queue_id": state.queue_id,
+            "item_id": state.item_id,
+            "action_id": state.action_id,
+            "transcript": list(state.transcript),
+            "final_result": state.final_result,
+            "created_at": state.created_at,
+            "finished_at": state.finished_at,
+            "resumable": bool(state.sdk_session_id),
+            "resumed_from": state.resumed_from,
+            "tokens": dict(state.tokens),
+            "context_usage": state.context_usage,
+        }
+    # Not live in memory — try the durable shadow. Lets the
+    # transcript modal keep working for sessions that closed before
+    # the last server restart, so a stamped session_id on a card
+    # always opens something rather than returning a 404.
+    try:
+        from . import db as _db
+        meta = _db.load_session_meta(session_id)
+        if meta is None:
+            return None
+        turns = _db.load_turns(session_id)
+        return {
+            "session_id": session_id,
+            "status": meta.get("status") or "closed",
+            "skill": meta.get("skill"),
+            "kind": meta.get("kind"),
+            "queue_id": meta.get("queue_id"),
+            "item_id": meta.get("item_id"),
+            "action_id": meta.get("action_id"),
+            "transcript": turns,
+            "final_result": meta.get("final_result"),
+            "created_at": meta.get("started_at"),
+            "finished_at": meta.get("closed_at"),
+            "resumable": bool(meta.get("sdk_session_id")),
+            "resumed_from": None,
+            "tokens": {},
+            "context_usage": None,
+            "from_db": True,
+        }
+    except Exception as exc:
+        print(f"[sessions] db get_snapshot fallback failed: {exc}")
         return None
-    return {
-        "session_id": state.session_id,
-        "status": state.status,
-        "skill": state.skill,
-        "kind": state.kind,
-        "queue_id": state.queue_id,
-        "item_id": state.item_id,
-        "action_id": state.action_id,
-        "transcript": list(state.transcript),
-        "final_result": state.final_result,
-        "created_at": state.created_at,
-        "finished_at": state.finished_at,
-        "resumable": bool(state.sdk_session_id),
-        "resumed_from": state.resumed_from,
-        "tokens": dict(state.tokens),
-        "context_usage": state.context_usage,
-    }
 
 
 def list_sessions() -> list[dict]:
@@ -706,6 +756,18 @@ async def _run_session(state: SessionState,
             sem.release()
         state.status = "closed" if state.status != "error" else state.status
         state.finished_at = time.time()
+        # Durable shadow: stamp the session row with closed_at + final
+        # status + the result emitted by the skill (if any).
+        try:
+            from . import db as _db
+            _db.record_session_close(
+                state.session_id,
+                status=state.status,
+                final_result=state.final_result,
+                sdk_session_id=state.sdk_session_id,
+            )
+        except Exception as exc:
+            print(f"[sessions] db record_session_close failed: {exc}")
         if state.on_close:
             try:
                 state.on_close(state)
@@ -784,6 +846,14 @@ async def _consume_turn(state: SessionState, client: ClaudeSDKClient,
             sid = (msg.data or {}).get("session_id")
             if sid and not state.sdk_session_id:
                 state.sdk_session_id = sid
+                # Stamp the SDK id onto the durable sessions row so a
+                # restart between here and the on_close hook can still
+                # resume via the SDK's own resume mechanism.
+                try:
+                    from . import db as _db
+                    _db.record_sdk_session_id(state.session_id, sid)
+                except Exception as exc:
+                    print(f"[sessions] db record_sdk_session_id failed: {exc}")
                 if (state.kind == "action"
                         and state.queue_id
                         and state.item_id is not None):
@@ -829,7 +899,9 @@ async def _consume_turn(state: SessionState, client: ClaudeSDKClient,
                     })
         elif isinstance(msg, ResultMessage):
             _accumulate_tokens(state.tokens, msg.usage)
-            _record_token_event(msg.usage)
+            _record_token_event(msg.usage,
+                                session_id=state.session_id,
+                                skill=state.skill)
             if state.queue_id and state.item_id is not None and msg.usage:
                 try:
                     from .queues import add_item_tokens
@@ -884,3 +956,21 @@ async def _consume_turn(state: SessionState, client: ClaudeSDKClient,
 def _append(state: SessionState, entry: dict) -> None:
     entry.setdefault("ts", time.time())
     state.transcript.append(entry)
+    # Durable shadow. Pull the visible body + meta out of the entry —
+    # the in-memory shape varies (text / tool_input / tool_output /
+    # error), the DB shape is uniform (role, kind, text, meta_json).
+    try:
+        from . import db as _db
+        from datetime import datetime, timezone
+        meta = {k: v for k, v in entry.items()
+                if k not in ("ts", "role", "kind", "text")}
+        _db.record_turn(
+            state.session_id,
+            ts=datetime.fromtimestamp(entry["ts"], timezone.utc).isoformat(),
+            role=entry.get("role", "system"),
+            kind=entry.get("kind"),
+            text=entry.get("text"),
+            meta=meta or None,
+        )
+    except Exception as exc:
+        print(f"[sessions] db record_turn failed: {exc}")
