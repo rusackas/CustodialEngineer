@@ -124,3 +124,28 @@ queues:
       - done
     query:
       state: open
+      search: is:pr is:open sort:updated-asc
+    hydrate:
+      ci_status: true
+      merge_state: true
+      review_threads: true
+    filter:
+      non_draft: true
+  - id: custodial-engineer-prs
+    title: Custodial Engineer PRs
+    max_in_flight: 10
+    query:
+      state: open
+      search: is:pr is:open
+    states:
+      - in triage
+      - in progress
+      - awaiting update
+      - done
+    initial_state: in triage
+    done_state: done
+    awaiting_state: awaiting update
+    hydrate:
+      ci_status: true
+      merge_state: true
+      review_threads: true

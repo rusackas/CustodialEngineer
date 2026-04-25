@@ -1206,16 +1206,20 @@
     </div>
   </div>
 
-  <aside id="drawer" class="drawer" aria-hidden="true">
-    <div class="drawer-backdrop" data-close-drawer></div>
-    <div class="drawer-panel" role="dialog" aria-modal="true">
-      <button type="button" class="drawer-close" data-close-drawer
-              aria-label="Close drawer">{{ icon('x', size=18) }}</button>
-      <div id="drawer-content" class="drawer-content">
-        <div class="drawer-loading">Loading…</div>
+  {# PR details modal — replaces the legacy side drawer. Wider canvas,
+     centered, scrollable. Same fetch + populate flow; only the chrome
+     and aesthetic changed. The id stays `drawer` so the existing JS
+     hooks line up without renaming. #}
+  <div id="drawer" class="modal pr-detail-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-drawer></div>
+    <div class="modal-body modal-body-pr" role="dialog" aria-modal="true">
+      <button type="button" class="modal-close" data-close-drawer
+              aria-label="Close PR details">{{ icon('x', size=16) }}</button>
+      <div id="drawer-content" class="pr-modal-content">
+        <div class="pr-modal-loading">Loading…</div>
       </div>
     </div>
-  </aside>
+  </div>
 
   <div id="reviewers-modal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-reviewers></div>
@@ -1408,7 +1412,8 @@
     let drawerLastFetch = 0;
 
     function openDrawer(queueId, itemId) {
-      drawerContent.innerHTML = '<div class="drawer-loading">Loading…</div>';
+      drawerContent.innerHTML =
+        '<div class="pr-modal-loading">Loading…</div>';
       drawer.classList.add('is-open');
       drawer.setAttribute('aria-hidden', 'false');
       document.body.classList.add('drawer-open');
@@ -1423,12 +1428,15 @@
         .then(html => {
           if (fetchId !== drawerLastFetch) return; // superseded
           drawerContent.innerHTML = html;
-          drawerContent.scrollTop = 0;
+          // Scroll the modal-body content area to the top, not the
+          // outer drawer container (which is just the modal shell).
+          const inner = drawerContent.querySelector('.pr-modal');
+          if (inner) inner.scrollTop = 0;
         })
         .catch(err => {
           if (fetchId !== drawerLastFetch) return;
           drawerContent.innerHTML =
-            `<div class="drawer-error">Could not load PR: ${err.message}</div>`;
+            `<div class="pr-modal-error">Could not load PR: ${err.message}</div>`;
         });
     }
 

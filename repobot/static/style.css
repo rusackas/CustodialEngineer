@@ -3443,62 +3443,544 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
   border-radius: var(--radius-pill);
 }
 
-/* ============================ PR drawer ============================ */
+/* ============================ PR detail modal =====================
+   Replaces the legacy side drawer. Wider canvas, centered, scrollable
+   — single column with strong eyebrow rhythm. The .modal/.modal-body
+   chrome comes from elsewhere; this block adds the PR-specific
+   sizing, content layout, and scan-optimized comment treatment.
+   ------------------------------------------------------------------ */
 
-.drawer {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  pointer-events: none;
-  visibility: hidden;
-}
-.drawer.is-open {
-  visibility: visible;
-  pointer-events: auto;
-}
-.drawer-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(var(--shadow-ink), 0.35);
-  opacity: 0;
-  transition: opacity 0.18s ease;
-}
-.drawer.is-open .drawer-backdrop { opacity: 1; }
-.drawer-panel {
-  position: absolute;
-  top: 0; right: 0; bottom: 0;
-  width: min(760px, 75vw);
-  background: var(--bg-card);
-  box-shadow: -8px 0 24px rgba(var(--shadow-ink), 0.35);
-  transform: translateX(100%);
-  transition: transform 0.2s ease;
+/* Modal sizing modifier — wider than the standard .modal-body for
+   prose readability. Keeps the same chrome (header, backdrop, close
+   button) as the rest of the app's modals. */
+.modal-body-pr {
+  width: min(900px, 92vw);
+  max-height: 86vh;
+  height: auto;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  padding: 0;
 }
-.drawer.is-open .drawer-panel { transform: translateX(0); }
-.drawer-close {
-  position: absolute;
-  top: 12px;
-  right: 14px;
-  background: none;
-  border: none;
-  line-height: 0;
-  color: var(--ink-mute);
-  cursor: pointer;
-  padding: 6px 8px;
-  border-radius: 6px;
-  z-index: 2;
-}
-.drawer-close:hover { background: var(--bg-inset); color: var(--ink); }
-.drawer-content {
-  flex: 1;
+.pr-modal-content {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  padding: 22px 28px 40px;
+  /* The inner scroll happens here so the modal-body chrome (close
+     button) stays pinned. */
+}
+.pr-modal {
+  padding: 22px 26px 28px;
+}
+.pr-modal-loading, .pr-modal-error {
+  padding: 60px 20px;
+  color: var(--ink-mute);
+  text-align: center;
+  font-size: 14px;
+}
+.pr-modal-error { color: var(--danger); }
+
+/* ---- Identity zone -------------------------------------------------
+   Title gets prominence; metadata + branch refs sit muted underneath.
+   PR icon + #number + state badge anchor the visual identity row. */
+.pr-identity {
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--rule-strong);
+  margin-bottom: 18px;
+}
+.pr-identity-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.pr-state-icon { line-height: 0; flex-shrink: 0; }
+.pr-state-icon.pr-state-open { color: var(--gh-open); }
+.pr-state-icon.pr-state-closed { color: var(--gh-closed); }
+.pr-state-icon.pr-state-merged { color: var(--gh-merged); }
+.pr-state-icon.pr-state-draft { color: var(--gh-draft); }
+
+.pr-number {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand);
+  text-decoration: none;
+  letter-spacing: -0.005em;
+}
+.pr-number:hover { text-decoration: underline; }
+
+.pr-state-badge {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--neutral-soft);
+  color: var(--neutral-ink);
+}
+.pr-state-badge-open { background: var(--alert-tip-soft); color: var(--alert-tip-ink); }
+.pr-state-badge-closed { background: var(--alert-caution-soft); color: var(--alert-caution-ink); }
+.pr-state-badge-merged { background: var(--alert-important-soft); color: var(--alert-important-ink); }
+.pr-state-badge-draft { background: var(--neutral-soft); color: var(--neutral-ink); }
+
+.pr-gh-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 7px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-mute);
+  text-decoration: none;
+  transition: color var(--ease-quick), background var(--ease-quick);
+}
+.pr-gh-link:hover { color: var(--brand); background: var(--accent-soft); }
+
+.pr-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
   color: var(--ink);
+  letter-spacing: -0.005em;
+}
+
+.pr-byline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-mute);
+  flex-wrap: wrap;
+}
+.pr-author {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.pr-byline-sep { color: var(--ink-faint); }
+.pr-refs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.pr-refs code {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+}
+.pr-ref-arrow { color: var(--ink-faint); }
+
+.pr-labels {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.pr-label {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  color: var(--ink-soft);
+  border: 1px solid var(--rule);
+}
+
+/* ---- Stat strip — instrument readout ------------------------------ */
+.pr-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 18px;
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+.pr-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+}
+.pr-stat-key {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin: 0;
+}
+.pr-stat-val {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+.pr-stat-mono { font-family: var(--mono); }
+.pr-stat-add { color: var(--ok); font-family: var(--mono); }
+.pr-stat-del { color: var(--danger); font-family: var(--mono); }
+.pr-stat-sep { color: var(--ink-faint); margin: 0 1px; }
+.pr-stat-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--neutral-soft);
+  color: var(--neutral-ink);
+}
+.pr-stat-tag-clean,
+.pr-stat-tag-mergeable,
+.pr-stat-tag-approved {
+  background: var(--alert-tip-soft);
+  color: var(--alert-tip-ink);
+}
+.pr-stat-tag-conflicting,
+.pr-stat-tag-changes-requested,
+.pr-stat-tag-dirty {
+  background: var(--alert-caution-soft);
+  color: var(--alert-caution-ink);
+}
+.pr-stat-tag-blocked,
+.pr-stat-tag-behind,
+.pr-stat-tag-review-required {
+  background: var(--alert-warning-soft);
+  color: var(--alert-warning-ink);
+}
+.pr-stat-tag-commented {
+  background: var(--alert-note-soft);
+  color: var(--alert-note-ink);
+}
+
+/* ---- Sections — eyebrow rhythm ------------------------------------ */
+.pr-section {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--rule);
+}
+.pr-section-tight { margin-top: 14px; }
+.pr-section-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.pr-section-eyebrow > span:first-child { flex: 0 0 auto; }
+.pr-section-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right,
+    var(--rule-strong) 0%,
+    var(--rule) 60%,
+    transparent 100%);
+}
+.pr-section-count {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  background: var(--bg-card);
+  color: var(--ink-soft);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+}
+.pr-section-empty {
+  font-size: 12px;
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+.pr-section-eyebrow-with-action { gap: 10px; }
+.pr-reviewer-action { margin: 0; }
+.pr-section-action {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 4px 9px;
+  background: var(--bg-card);
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background var(--ease-quick), color var(--ease-quick);
+}
+.pr-section-action:hover { background: var(--brand); color: var(--bg-card); }
+
+/* ---- Linked issues ------------------------------------------------- */
+.pr-issue-list { list-style: none; margin: 0; padding: 0; }
+.pr-issue {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.pr-issue-num {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--brand);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pr-issue-num:hover { text-decoration: underline; }
+.pr-issue-title { color: var(--ink-soft); }
+
+/* ---- CI checks ----------------------------------------------------- */
+.pr-check-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.pr-check-pill {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  letter-spacing: -0.005em;
+  text-transform: none;
+}
+.pr-check-pill-success { background: var(--alert-tip-soft); color: var(--alert-tip-ink); }
+.pr-check-pill-failure { background: var(--alert-caution-soft); color: var(--alert-caution-ink); }
+.pr-check-pill-pending { background: var(--alert-warning-soft); color: var(--alert-warning-ink); }
+.pr-check-details summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 4px 0;
+}
+.pr-check-details summary:hover { color: var(--ink); }
+.pr-checks {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.pr-check {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--bg-inset);
+}
+.pr-check:last-child { border-bottom: 0; }
+.pr-check-state {
+  min-width: 76px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+  background: var(--neutral-soft);
+  color: var(--neutral-ink);
+}
+.pr-check-success .pr-check-state { background: var(--alert-tip-soft); color: var(--alert-tip-ink); }
+.pr-check-failure .pr-check-state,
+.pr-check-timed_out .pr-check-state,
+.pr-check-action_required .pr-check-state,
+.pr-check-startup_failure .pr-check-state { background: var(--alert-caution-soft); color: var(--alert-caution-ink); }
+.pr-check-pending .pr-check-state { background: var(--alert-warning-soft); color: var(--alert-warning-ink); }
+.pr-check-skipped .pr-check-state,
+.pr-check-cancelled .pr-check-state,
+.pr-check-neutral .pr-check-state { background: var(--neutral-soft); color: var(--neutral-ink); }
+.pr-check a { color: var(--ink); text-decoration: none; }
+.pr-check a:hover { color: var(--brand); }
+
+/* ---- Reviewers ----------------------------------------------------- */
+.pr-reviewers-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.pr-reviewers-key {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  flex: 0 0 72px;
+}
+.pr-reviewer-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+.pr-reviewer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  color: var(--ink-soft);
+  font-size: 12px;
+  border: 1px solid var(--rule);
+}
+.pr-reviewer-chip-approved {
+  background: var(--alert-tip-soft);
+  color: var(--alert-tip-ink);
+  border-color: var(--ok);
+}
+.pr-reviewer-chip-changes_requested {
+  background: var(--alert-caution-soft);
+  color: var(--alert-caution-ink);
+  border-color: var(--danger);
+}
+.pr-reviewer-chip-commented {
+  background: var(--alert-note-soft);
+  color: var(--alert-note-ink);
+}
+.pr-reviewer-state {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---- Description prose -------------------------------------------- */
+.pr-prose {
   font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  max-width: 72ch;
+}
+.pr-prose p { margin: 0 0 10px; }
+.pr-prose code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--bg-inset);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.pr-prose pre {
+  background: var(--bg-inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+/* ---- Comments — hot path -----------------------------------------
+   Left-rail rhythm. No box per comment; just a 2px solid rail and
+   indent. Bots fade visually with a BOT eyebrow so humans dominate
+   the eye even when bots dominate volume. */
+.pr-comments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.pr-comment-byline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.pr-comment-author {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+}
+.pr-comment-bot-tag {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 1px 5px;
+  background: var(--bg-inset);
+  color: var(--ink-mute);
+  border-radius: 2px;
+  border: 1px solid var(--rule);
+  vertical-align: 1px;
+}
+.pr-comment-time {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  cursor: help;
+  letter-spacing: -0.005em;
+}
+.pr-comment-body {
+  border-left: 2px solid var(--rule-strong);
+  padding-left: 14px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  max-width: 72ch;
+}
+.pr-comment-body p { margin: 0 0 10px; }
+.pr-comment-body p:last-child { margin-bottom: 0; }
+.pr-comment-body pre {
+  background: var(--bg-inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+}
+.pr-comment-body code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--bg-inset);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.pr-comment-bot .pr-comment-author { color: var(--ink-mute); }
+.pr-comment-bot .pr-comment-body {
+  border-left-color: var(--rule);
+  color: var(--ink-soft);
+  font-size: 12.5px;
   line-height: 1.55;
 }
+
+/* ---- Legacy drawer-* markdown styling ----------------------------- */
 .drawer-loading, .drawer-error {
   padding: 60px 20px;
   color: var(--ink-mute);

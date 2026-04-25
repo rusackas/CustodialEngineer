@@ -669,7 +669,7 @@ def drawer(request: Request, queue_id: str, item_id: int):
         print(f"[drawer] history fetch failed: {exc}")
     history.sort(key=lambda r: r.get("ts") or "", reverse=True)
     return templates.TemplateResponse(
-        request, "drawer.html",
+        request, "pr_modal.html",
         {"pr": pr, "body_html": body_html, "comments": comments,
          "queue_id": queue_id, "item_id": item_id,
          "history": history},

@@ -1,0 +1,270 @@
+{# PR details modal body. Rendered into the in-app modal by the
+   /queues/{q}/items/{id}/drawer endpoint (kept the URL the same so
+   the JS hooks didn't have to migrate). The data shape matches the
+   legacy drawer.html; only the visual treatment changed.
+
+   Layout: single column, instrument-panel rhythm. Each section
+   anchored by a tracked-uppercase mono eyebrow + fading hairline
+   rule. Comments use a left-rail rhythm (no boxed chrome) so
+   skimming a long thread reads as one continuous scan. Bots fade
+   visually so humans dominate the eye even when bots dominate
+   volume. #}
+<div class="pr-modal">
+
+  {# === IDENTITY ZONE === #}
+  <header class="pr-identity">
+    <div class="pr-identity-top">
+      {% set _icon =
+            'git-pull-request-draft' if pr.isDraft else
+            'git-pull-request-closed' if (pr.state or '') == 'CLOSED' else
+            'git-merge' if (pr.state or '') == 'MERGED' else
+            'git-pull-request' %}
+      <span class="pr-state-icon pr-state-{{ (pr.state or 'OPEN') | lower }}{% if pr.isDraft %} pr-state-draft{% endif %}">
+        {{ icon(_icon, size=18) }}
+      </span>
+      <a class="pr-number" href="{{ pr.url }}" target="_blank" rel="noopener"
+         title="Open on GitHub">#{{ pr.number }}</a>
+      <span class="pr-state-badge pr-state-badge-{{ (pr.state or 'OPEN') | lower }}{% if pr.isDraft %} pr-state-badge-draft{% endif %}">
+        {% if pr.isDraft %}draft{% else %}{{ (pr.state or 'OPEN') | lower }}{% endif %}
+      </span>
+      <a class="pr-gh-link" href="{{ pr.url }}" target="_blank" rel="noopener"
+         title="Open on GitHub" aria-label="Open on GitHub">
+        {{ icon('link-external', size=14) }}
+      </a>
+    </div>
+
+    <h2 class="pr-title">{{ pr.title }}</h2>
+
+    <div class="pr-byline">
+      {% if pr.author and pr.author.login %}
+        <span class="pr-author">@{{ pr.author.login }}</span>
+        <span class="pr-byline-sep" aria-hidden="true">·</span>
+      {% endif %}
+      <span class="pr-refs">
+        <code class="pr-ref-base">{{ pr.baseRefName or 'master' }}</code>
+        <span class="pr-ref-arrow" aria-hidden="true">←</span>
+        <code class="pr-ref-head">{{ pr.headRefName or '?' }}</code>
+      </span>
+    </div>
+
+    {% if pr.labels %}
+      <div class="pr-labels">
+        {% for l in pr.labels %}<span class="pr-label">{{ l.name }}</span>{% endfor %}
+      </div>
+    {% endif %}
+  </header>
+
+  {# === STAT STRIP — instrument readout === #}
+  <dl class="pr-stats">
+    <div class="pr-stat">
+      <dt class="pr-stat-key">diff</dt>
+      <dd class="pr-stat-val">
+        <span class="pr-stat-add">+{{ pr.additions or 0 }}</span>
+        <span class="pr-stat-sep">/</span>
+        <span class="pr-stat-del">−{{ pr.deletions or 0 }}</span>
+      </dd>
+    </div>
+    <div class="pr-stat">
+      <dt class="pr-stat-key">files</dt>
+      <dd class="pr-stat-val pr-stat-mono">{{ pr.changedFiles or 0 }}</dd>
+    </div>
+    {% if pr.mergeable %}
+      <div class="pr-stat">
+        <dt class="pr-stat-key">mergeable</dt>
+        <dd class="pr-stat-val pr-stat-tag pr-stat-tag-{{ (pr.mergeable or '') | lower }}">{{ pr.mergeable }}</dd>
+      </div>
+    {% endif %}
+    {% if pr.reviewDecision %}
+      <div class="pr-stat">
+        <dt class="pr-stat-key">review</dt>
+        <dd class="pr-stat-val pr-stat-tag pr-stat-tag-{{ (pr.reviewDecision or '') | lower | replace('_', '-') }}">{{ pr.reviewDecision | replace('_', ' ') | lower }}</dd>
+      </div>
+    {% endif %}
+  </dl>
+
+  {# === LINKED ISSUES === #}
+  {% if pr.closingIssuesReferences %}
+    <section class="pr-section pr-section-tight">
+      <h4 class="pr-section-eyebrow">
+        <span>Linked issues</span>
+        <span class="pr-section-rule" aria-hidden="true"></span>
+      </h4>
+      <ul class="pr-issue-list">
+        {% for ref in pr.closingIssuesReferences %}
+          <li class="pr-issue">
+            <a href="{{ ref.url }}" target="_blank" rel="noopener" class="pr-issue-num">
+              {{ icon('issue-opened', size=12) }} #{{ ref.number }}
+            </a>
+            <span class="pr-issue-title">{{ ref.title }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {# === CI CHECKS === #}
+  {% if pr.statusCheckRollup %}
+    {% set success = pr.statusCheckRollup | selectattr('conclusion', 'equalto', 'SUCCESS') | list | length %}
+    {% set failure = pr.statusCheckRollup | selectattr('conclusion', 'equalto', 'FAILURE') | list | length %}
+    {% set pending = pr.statusCheckRollup | rejectattr('conclusion') | list | length %}
+    <section class="pr-section pr-section-tight">
+      <h4 class="pr-section-eyebrow">
+        <span>CI checks</span>
+        <span class="pr-check-summary">
+          <span class="pr-check-pill pr-check-pill-success">{{ success }} ✓</span>
+          {% if failure %}<span class="pr-check-pill pr-check-pill-failure">{{ failure }} ✗</span>{% endif %}
+          {% if pending %}<span class="pr-check-pill pr-check-pill-pending">{{ pending }} …</span>{% endif %}
+        </span>
+        <span class="pr-section-rule" aria-hidden="true"></span>
+      </h4>
+      <details class="pr-check-details">
+        <summary class="pr-check-details-toggle">
+          all {{ pr.statusCheckRollup | length }} checks
+        </summary>
+        <ul class="pr-checks">
+          {% for c in pr.statusCheckRollup %}
+            <li class="pr-check pr-check-{{ (c.conclusion or 'pending') | lower }}">
+              <span class="pr-check-state">{{ c.conclusion or c.state or '…' }}</span>
+              {% if c.detailsUrl %}
+                <a href="{{ c.detailsUrl }}" target="_blank" rel="noopener">{{ c.name or c.context or 'check' }}</a>
+              {% else %}
+                <span>{{ c.name or c.context or 'check' }}</span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </details>
+    </section>
+  {% endif %}
+
+  {# === REVIEWERS === #}
+  <section class="pr-section">
+    <h4 class="pr-section-eyebrow pr-section-eyebrow-with-action">
+      <span>Reviewers</span>
+      <span class="pr-section-rule" aria-hidden="true"></span>
+      {% if queue_id and item_id %}
+        <form method="post"
+              action="/queues/{{ queue_id }}/items/{{ item_id }}/request-reviewers"
+              class="pr-reviewer-action"
+              data-reviewer-picker="1"
+              data-candidates-url="/queues/{{ queue_id }}/items/{{ item_id }}/reviewer-candidates"
+              data-pr-number="{{ pr.number }}"
+              data-pr-title="{{ pr.title }}"
+              data-pr-url="{{ pr.url }}">
+          <button type="submit" class="pr-section-action"
+                  title="Open the reviewer picker for this PR">
+            {{ icon('person-fill', size=11) }} Request reviewers
+          </button>
+        </form>
+      {% endif %}
+    </h4>
+    {% if pr.reviewRequests %}
+      <div class="pr-reviewers-row">
+        <span class="pr-reviewers-key">requested</span>
+        <ul class="pr-reviewer-chips">
+          {% for r in pr.reviewRequests %}
+            <li class="pr-reviewer-chip">@{{ r.login or r.name or 'unknown' }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+    {% if pr.reviews %}
+      <div class="pr-reviewers-row">
+        <span class="pr-reviewers-key">reviews</span>
+        <ul class="pr-reviewer-chips">
+          {% for rv in pr.reviews %}
+            <li class="pr-reviewer-chip pr-reviewer-chip-{{ (rv.state or 'commented') | lower }}">
+              @{{ (rv.author or {}).login or 'unknown' }}
+              <span class="pr-reviewer-state">{{ (rv.state or 'COMMENTED') | replace('_', ' ') | lower }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+    {% if not pr.reviewRequests and not pr.reviews %}
+      <div class="pr-section-empty">No reviewers yet.</div>
+    {% endif %}
+  </section>
+
+  {# === DESCRIPTION === #}
+  <section class="pr-section">
+    <h4 class="pr-section-eyebrow">
+      <span>Description</span>
+      <span class="pr-section-rule" aria-hidden="true"></span>
+    </h4>
+    <div class="pr-prose drawer-md">
+      {% if body_html %}{{ body_html | safe }}
+      {% else %}<em class="pr-section-empty">No description.</em>{% endif %}
+    </div>
+  </section>
+
+  {# === COMMENTS — hot path === #}
+  {% if comments %}
+    <section class="pr-section">
+      <h4 class="pr-section-eyebrow">
+        <span>Comments</span>
+        <span class="pr-section-count">{{ comments | length }}</span>
+        <span class="pr-section-rule" aria-hidden="true"></span>
+      </h4>
+      <ol class="pr-comments">
+        {% for c in comments %}
+          {% set _author = c.author or 'unknown' %}
+          {% set _is_bot = _author.endswith('[bot]')
+                         or _author in ('dependabot', 'codecov', 'sonarcloud',
+                                        'sonar', 'dosu', 'coderabbitai',
+                                        'codecov-commenter', 'github-actions') %}
+          <li class="pr-comment{% if _is_bot %} pr-comment-bot{% endif %}">
+            <div class="pr-comment-byline">
+              <span class="pr-comment-author">@{{ _author }}</span>
+              {% if _is_bot %}<span class="pr-comment-bot-tag">BOT</span>{% endif %}
+              {% if c.createdAt %}
+                <span class="pr-comment-time tip" data-tip="{{ exact_time(c.createdAt) }}">
+                  {{ time_ago(c.createdAt) }}
+                </span>
+              {% endif %}
+            </div>
+            <div class="pr-comment-body drawer-md drawer-md-compact">{{ c.html | safe }}</div>
+          </li>
+        {% endfor %}
+      </ol>
+    </section>
+  {% endif %}
+
+  {# === BOT HISTORY (audit log) === #}
+  {% if history %}
+    <section class="pr-section">
+      <h4 class="pr-section-eyebrow">
+        <span>Bot history</span>
+        <span class="pr-section-count">{{ history | length }}</span>
+        <span class="pr-section-rule" aria-hidden="true"></span>
+      </h4>
+      <ol class="drawer-history-list">
+        {% for h in history %}
+          <li class="drawer-history-item drawer-history-{{ h.kind }}{% if h.status %} drawer-history-status-{{ h.status }}{% endif %}">
+            <div class="drawer-history-time tip" data-tip="{{ h.ts }}">
+              {{ time_ago(h.ts) }}
+            </div>
+            <div class="drawer-history-body">
+              {% if h.kind == 'transition' %}
+                <span class="drawer-history-tag drawer-history-tag-transition">state</span>
+                <span class="drawer-history-text">
+                  <code>{{ h.from_state or '—' }}</code>
+                  →
+                  <code>{{ h.to_state }}</code>
+                  {% if h.reason %}<span class="drawer-history-reason">· {{ h.reason }}</span>{% endif %}
+                </span>
+              {% else %}
+                <span class="drawer-history-tag drawer-history-tag-action">{{ h.action_id or 'action' }}</span>
+                <span class="drawer-history-status">{{ h.status or '—' }}</span>
+                {% if h.message %}
+                  <div class="drawer-history-message">{{ h.message }}</div>
+                {% endif %}
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    </section>
+  {% endif %}
+
+</div>
