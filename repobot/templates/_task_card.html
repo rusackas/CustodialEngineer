@@ -33,26 +33,33 @@
       <span class="card-ts tip" data-tip="Created {{ exact_time(task.created_at) }}">
         {{ time_ago(task.created_at) }}
       </span>
-      <span class="card-title-chips">
-        {% if task.status == 'stuck' %}
-          <form method="post" action="/tasks/{{ task.id }}/retry"
+      {# Non-compact cards keep retry / delete in the header-corner
+         chips. Compact (Done) cards move them into the session
+         footer below — at narrow column widths the meta row was
+         busy and the chips were wrapping off-screen or being
+         clipped by horizontal overflow inside the card. #}
+      {% if not _compact %}
+        <span class="card-title-chips">
+          {% if task.status == 'stuck' %}
+            <form method="post" action="/tasks/{{ task.id }}/retry"
+                  class="card-refresh-form">
+              <button type="submit" class="card-retriage card-icon-only"
+                      aria-label="Retry task"
+                      title="Re-dispatch this task with the same prompt. Aborts any running session and resets the worktree.">
+                {{ icon('history', size=12) }}
+              </button>
+            </form>
+          {% endif %}
+          <form method="post" action="/tasks/{{ task.id }}/delete"
                 class="card-refresh-form">
-            <button type="submit" class="card-retriage card-icon-only"
-                    aria-label="Retry task"
-                    title="Re-dispatch this task with the same prompt. Aborts any running session and resets the worktree.">
-              {{ icon('history', size=12) }}
+            <button type="submit" class="card-refresh card-icon-only"
+                    aria-label="Delete task"
+                    title="Delete this task, abort its session, prune the worktree.">
+              {{ icon('trash', size=12) }}
             </button>
           </form>
-        {% endif %}
-        <form method="post" action="/tasks/{{ task.id }}/delete"
-              class="card-refresh-form">
-          <button type="submit" class="card-refresh card-icon-only"
-                  aria-label="Delete task"
-                  title="Delete this task, abort its session, prune the worktree.">
-            {{ icon('trash', size=12) }}
-          </button>
-        </form>
-      </span>
+        </span>
+      {% endif %}
     </div>
   </header>
 
@@ -122,16 +129,46 @@
     {% endif %}
   {% endif %}
 
-  {% if task.session_id %}
+  {# Footer: session button (when present) on the left, delete/retry
+     icons on the right for compact cards. Non-compact cards already
+     render delete in the header-corner chips, so we only inline them
+     here for compact mode where the chips get clipped at narrow
+     widths. Same icon-only style as the header chips for visual
+     consistency with the unified button language. #}
+  {% if task.session_id or _compact %}
     <div class="card-session-footer">
-      <button type="button" class="card-session-btn"
-              data-session-id="{{ task.session_id }}"
-              data-pr-number=""
-              data-pr-title="task-{{ task.id }}: {{ task.title or (task.prompt[:60] + '…' if task.prompt|length > 60 else task.prompt) }}"
-              data-pr-url=""
-              title="Open the do-task session transcript.">
-        {{ icon('comment-discussion', size=11) }} session
-      </button>
+      {% if task.session_id %}
+        <button type="button" class="card-session-btn"
+                data-session-id="{{ task.session_id }}"
+                data-pr-number=""
+                data-pr-title="task-{{ task.id }}: {{ task.title or (task.prompt[:60] + '…' if task.prompt|length > 60 else task.prompt) }}"
+                data-pr-url=""
+                title="Open the do-task session transcript.">
+          {{ icon('comment-discussion', size=11) }} session
+        </button>
+      {% endif %}
+      {% if _compact %}
+        <span class="card-session-footer-actions">
+          {% if task.status == 'stuck' %}
+            <form method="post" action="/tasks/{{ task.id }}/retry"
+                  class="card-refresh-form">
+              <button type="submit" class="card-retriage card-icon-only"
+                      aria-label="Retry task"
+                      title="Re-dispatch this task with the same prompt. Aborts any running session and resets the worktree.">
+                {{ icon('history', size=12) }}
+              </button>
+            </form>
+          {% endif %}
+          <form method="post" action="/tasks/{{ task.id }}/delete"
+                class="card-refresh-form">
+            <button type="submit" class="card-refresh card-icon-only"
+                    aria-label="Delete task"
+                    title="Delete this task, abort its session, prune the worktree.">
+              {{ icon('trash', size=12) }}
+            </button>
+          </form>
+        </span>
+      {% endif %}
     </div>
   {% endif %}
 </article>

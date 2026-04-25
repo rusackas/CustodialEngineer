@@ -1026,68 +1026,16 @@ body {
 .settings-tab-pane { display: none; }
 .settings-tab-pane.is-active { display: block; }
 
-/* Reusable styled tooltip. Any element with `.tip[data-tip="..."]`
-   gets a dark-bubble tooltip above it on hover or keyboard focus.
-   Falls back to nothing when the browser doesn't support ::after
-   on the element (rare). */
+/* Tooltip system — see the JS portal in index.html for the actual
+   render path. We render tooltips into a single `<div class="tip-
+   portal">` appended to <body> so they're never clipped by ancestor
+   `overflow: hidden|auto|scroll` boundaries (modal panes, card
+   columns, the boards reel, etc. all clip). The CSS here only styles
+   the trigger affordances and the floating bubble itself. */
 .tip[data-tip] {
-  position: relative;
   cursor: help;
 }
-.tip[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  min-width: 120px;
-  max-width: 280px;
-  padding: 7px 10px;
-  background: var(--ink);
-  color: var(--bg-card);
-  border-radius: 5px;
-  font-family: var(--font-body);
-  font-size: 11.5px;
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-  line-height: 1.45;
-  white-space: pre-line;
-  text-align: left;
-  box-shadow: var(--shadow-pop);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.14s ease, transform 0.14s ease;
-  z-index: 200;
-}
-.tip[data-tip]::before {
-  content: "";
-  position: absolute;
-  bottom: calc(100% + 3px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  border: 5px solid transparent;
-  border-top-color: var(--ink);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.14s ease, transform 0.14s ease;
-  z-index: 201;
-}
-.tip[data-tip]:hover::after,
-.tip[data-tip]:focus-visible::after,
-.tip[data-tip]:hover::before,
-.tip[data-tip]:focus-visible::before {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-/* Inline "info" affordance next to a field label.
-   - Visual: single Octicon `info` glyph in ink-mute (no outer ring —
-     the SVG already has its own circle).
-   - Tooltip: a custom ::after popover fed by `data-tip`, styled in
-     the app palette. No more OS-level title tooltips. */
 .field-info {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1108,18 +1056,20 @@ body {
   display: block;
   vertical-align: baseline;
 }
-.field-info[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  min-width: 180px;
-  max-width: 280px;
-  padding: 8px 10px;
+
+/* The floating bubble. Positioned by JS via window coordinates;
+   rendered above every modal / drawer / overflow container by the
+   z-index ceiling. `pointer-events: none` so the tooltip can't
+   accidentally intercept clicks on its trigger. */
+.tip-portal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 9999;
+  max-width: 320px;
+  padding: 7px 10px;
   background: var(--ink);
   color: var(--bg-card);
-  border-radius: 5px;
   font-family: var(--font-body);
   font-size: 11.5px;
   font-weight: 400;
@@ -1128,32 +1078,32 @@ body {
   line-height: 1.45;
   white-space: pre-line;
   text-align: left;
+  border-radius: 5px;
   box-shadow: var(--shadow-pop);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.14s ease, transform 0.14s ease;
-  z-index: 200;
+  transform: translateY(4px);
 }
-.field-info[data-tip]::before {
-  /* small arrow pointing down to the icon */
+.tip-portal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.tip-portal::after {
+  /* Arrow — slot direction set via [data-placement]. */
   content: "";
   position: absolute;
-  bottom: calc(100% + 3px);
   left: 50%;
-  transform: translateX(-50%) translateY(4px);
+  margin-left: -5px;
   border: 5px solid transparent;
-  border-top-color: var(--ink);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.14s ease, transform 0.14s ease;
-  z-index: 201;
 }
-.field-info[data-tip]:hover::after,
-.field-info[data-tip]:focus-visible::after,
-.field-info[data-tip]:hover::before,
-.field-info[data-tip]:focus-visible::before {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
+.tip-portal[data-placement="top"]::after {
+  bottom: -10px;
+  border-top-color: var(--ink);
+}
+.tip-portal[data-placement="bottom"]::after {
+  top: -10px;
+  border-bottom-color: var(--ink);
 }
 
 /* YAML textarea — monospace, roomy. */
@@ -4883,6 +4833,16 @@ button.prompt-run:hover { background: var(--accent-strong); }
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
+}
+
+/* Compact (Done) task cards inline the delete/retry chips here so
+   they don't get lost in the narrow-column meta wrap. Sits on the
+   right of the footer next to the session button. */
+.card-session-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin-left: auto;
 }
 

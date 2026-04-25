@@ -1398,6 +1398,71 @@
     (function () {
       if (window.__indexInteractionsInited) return;
       window.__indexInteractionsInited = true;
+
+    // === Tooltip portal =====================================
+    // Single fixed-position bubble appended to <body>. Positioning
+    // is computed from each trigger's bounding rect on hover/focus.
+    // Replaces the previous CSS `::after` rendering, which got
+    // clipped by ancestor `overflow: hidden|auto|scroll` (modal
+    // panes, card columns, the boards reel — anywhere with a
+    // scrollbar). The portal sidesteps every clip ancestor by
+    // rendering at body scope with `position: fixed`.
+    const _tipPortal = document.createElement('div');
+    _tipPortal.className = 'tip-portal';
+    _tipPortal.setAttribute('role', 'tooltip');
+    document.body.appendChild(_tipPortal);
+    let _tipTrigger = null;
+    function _showTip(trigger) {
+      const text = trigger.getAttribute('data-tip');
+      if (!text) return;
+      _tipPortal.textContent = text;
+      // Mount before measuring so offsetHeight/width are accurate.
+      _tipPortal.classList.add('is-visible');
+      const r = trigger.getBoundingClientRect();
+      const bw = _tipPortal.offsetWidth;
+      const bh = _tipPortal.offsetHeight;
+      const margin = 8;
+      // Default: above. If not enough room above, flip to below.
+      const aboveTop = r.top - bh - margin;
+      const placement = aboveTop > 4 ? 'top' : 'bottom';
+      const top = placement === 'top' ? aboveTop : r.bottom + margin;
+      let left = r.left + r.width / 2 - bw / 2;
+      left = Math.max(4, Math.min(window.innerWidth - bw - 4, left));
+      _tipPortal.style.top = top + 'px';
+      _tipPortal.style.left = left + 'px';
+      _tipPortal.dataset.placement = placement;
+      _tipTrigger = trigger;
+    }
+    function _hideTip() {
+      _tipPortal.classList.remove('is-visible');
+      _tipTrigger = null;
+    }
+    document.addEventListener('mouseover', (e) => {
+      const t = e.target.closest('[data-tip]');
+      if (t && t !== _tipTrigger) _showTip(t);
+    });
+    document.addEventListener('mouseout', (e) => {
+      const t = e.target.closest('[data-tip]');
+      if (!t) return;
+      // Only hide if the mouse left the trigger entirely (not just
+      // moved to a child element).
+      if (!e.relatedTarget || !t.contains(e.relatedTarget)) _hideTip();
+    });
+    document.addEventListener('focusin', (e) => {
+      const t = e.target.closest('[data-tip]');
+      if (t) _showTip(t);
+    });
+    document.addEventListener('focusout', (e) => {
+      const t = e.target.closest('[data-tip]');
+      if (t === _tipTrigger) _hideTip();
+    });
+    // Hide on scroll (any container) and when the page is hidden —
+    // a stuck tooltip after a scroll/tab-blur is the worst kind of
+    // residue.
+    document.addEventListener('scroll', _hideTip, true);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) _hideTip();
+    });
     // Editable-comment modal: any form carrying `data-editable-body`
     // (close / approve-merge / dependabot-rebase / dependabot-recreate) is
     // intercepted on submit, the default body is shown in a modal for
@@ -2261,7 +2326,10 @@
 
     document.addEventListener('click', (e) => {
       if (isNewTabClick(e) && e.target.closest('a[href]')) return;
-      const btn = e.target.closest('.open-session');
+      // PR cards use `.open-session`, task cards use `.card-session-btn`
+      // — both fire the same modal. Match either so we don't have to
+      // unify the class names across two different card templates.
+      const btn = e.target.closest('.open-session, .card-session-btn');
       if (btn) {
         openModal(btn.dataset.sessionId, {
           prNumber: btn.dataset.prNumber,
