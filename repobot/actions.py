@@ -710,7 +710,12 @@ def dispatch(queue_id: str, item_id, action_id: str,
         if action_id in WRITE_ACTIONS and wt_path:
             try:
                 pr_num = int(item.get("number"))
-                push_remote, push_ref = github.ensure_push_remote(pr_num, wt_path)
+                # Pin the slug for the duration of pr_push_info's
+                # `gh pr view --repo {_repo_slug()}` so the lookup
+                # hits the PR's actual repo, not the global default.
+                with github.repo_scope(_item_repo_slug_for(queue_id, item)):
+                    push_remote, push_ref = github.ensure_push_remote(
+                        pr_num, wt_path)
             except Exception as exc:
                 # Fork without maintainer edits → graceful bail.
                 if spec["failure_state"]:
