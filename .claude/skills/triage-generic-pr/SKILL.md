@@ -144,12 +144,14 @@ Use this priority ladder. First match wins.
 5. **Draft PR**: `await-update` primary. Drafts mean the author is
    still working; let them be. Don't nudge a draft.
 
-6. **Clean** (no blockers, recently updated, not draft):
-   - If the PR has been sitting open without merge for a while
-     (>14d) → `prompt` primary; `summarize-diff` as an aid for the
-     human to decide.
-   - Otherwise → `prompt` primary, low-key proposal ("looks
-     unblocked — let me know what to do").
+6. **Clean** (CI green / unset, no conflicts, no open threads, not
+   draft):
+   - `approve-merge` primary. The dispatcher re-verifies
+     mergeStateStatus before actually merging, so this is safe to
+     propose even when signals are slightly stale. Draft an
+     `approval_comment` (see Output schema for tone rules).
+   - Add `prompt` and `summarize-diff` as fallbacks for when the
+     human wants a deeper read first.
 
 If at any point you're confused or the signals contradict, default
 to `prompt` primary. The human escape hatch is always correct.
@@ -174,6 +176,9 @@ One or two sentences, neutral tone, no "I'll" / "I'd" framing
 Always include `prompt` and `skip` in `actions`. The available
 universal actions:
 
+- `approve-merge` — approve and merge a clean PR. Surface as
+  primary when CI is green / unset, no conflicts, no unresolved
+  threads, and the PR is not a draft. Requires `approval_comment`.
 - `approve-ci` — click the "Approve and run workflow" gate.
   Idempotent — safe even if no runs are pending. Surface only when
   `needs_ci_approval` is true.
@@ -221,8 +226,9 @@ Return a single JSON object fenced as ```json ... ```:
     "PR description is one line"
   ],
   "suggested_comment": "Optional — pre-filled body for add-review-comment. First person, concrete (quote a file:line or specific question). Empty string if add-review-comment is not in actions.",
+  "approval_comment": "Optional — pre-filled review body for approve-merge. Reference the concrete merge-safety signal (CI green, no open threads, clean merge state). Author-aware: thank a human contributor briefly, stay neutral/mechanical for bot authors. Empty string when approve-merge is not in actions.",
   "nudge_comment": "Optional — pre-filled body for nudge-author. Polite maintainer voice; @-mention the PR author to ping; enumerate the concrete blockers (named CI checks, asker @ + path:line excerpt). Close with a low-pressure next step. Empty string when nudge-author is not in actions.",
-  "actions": ["nudge-author", "await-update", "summarize-diff", "prompt", "skip"],
+  "actions": ["approve-merge", "summarize-diff", "prompt", "skip"],
   "notes": {
     "classification": "stale",
     "age_days": 92,
@@ -238,6 +244,17 @@ Return a single JSON object fenced as ```json ... ```:
 - `suggested_comment` MUST be non-empty whenever `actions` contains
   `add-review-comment`. Ground it in something concrete (file:line,
   specific question). First person; no @-mentions of the user.
+- `approval_comment` MUST be non-empty whenever `actions` contains
+  `approve-merge`. Reference the concrete merge-safety signal
+  (CI status, merge state, lack of open threads) instead of a
+  generic "LGTM". Tailor to the PR author:
+  - Human author → brief first-person thanks + the merge-safety
+    verdict (e.g., "Thanks @alice — CI green, no open threads,
+    clean merge state. LGTM.").
+  - Bot author (Dependabot, renovate, etc.) → neutral/mechanical,
+    skip the thanks (e.g., "Dependabot version bump — CI green,
+    mergeStateStatus CLEAN.").
+  No @-mentions of `identity.github_username`.
 - `nudge_comment` MUST be non-empty whenever `actions` contains
   `nudge-author`. Open with `@{author.login}` so the author gets
   pinged. Enumerate the actual blockers — name failing checks if you

@@ -319,12 +319,15 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
       else `nudge-author` / `await-update`.
     - Unresolved threads → `await-update`.
     - Stale + nothing actionable → `nudge-author`, then `close`.
-    - Otherwise → `prompt` as primary; user decides.
+    - Clean (no blockers) → `approve-merge` as the obvious primary;
+      the action dispatcher re-verifies merge state before acting,
+      so it's safe to surface even on a fast-path read.
     """
     raw = item.get("raw") or {}
     has_conflicts = bool(raw.get("has_conflicts"))
     ci = (raw.get("ci_status") or "").lower()
     threads = raw.get("unresolved_threads") or []
+    is_draft = bool(raw.get("isDraft"))
     age = _age_days(raw)
     is_bot = (raw.get("author") or {}).get("is_bot") if isinstance(raw.get("author"), dict) else False
     needs_ci_approval = bool(raw.get("needs_ci_approval"))
@@ -367,7 +370,19 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
             actions.append("nudge-author")
         actions.append("close")
 
-    if not reasons:
+    # Clean PR (no blockers, not a draft, CI not pending) → propose
+    # approve-merge as the obvious next click. The dispatcher
+    # re-verifies mergeStateStatus before acting, so this is safe
+    # even when our cached signals are slightly stale.
+    is_clean = (not reasons
+                and not is_draft
+                and not has_conflicts
+                and ci in ("passing", "")
+                and not threads)
+    if is_clean:
+        actions.append("approve-merge")
+        msg = "Clean — no blockers detected. Approve-merge is safe to click."
+    elif not reasons:
         msg = "No blocking signal detected — manual triage."
     else:
         msg = "Needs attention: " + ", ".join(reasons) + "."

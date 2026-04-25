@@ -402,6 +402,10 @@
       <span class="boards-nav-label" data-board-nav-label="next"></span>
       <span class="boards-nav-arrow" aria-hidden="true">›</span>
     </button>
+    <div class="boards-empty" data-boards-empty role="status"
+         aria-live="polite">
+      No queues match this repo filter.
+    </div>
     <div class="boards-reel" id="boards-reel">
     {% for queue in queues %}
       {% set q_items = state.queues.get(queue.id, {}).get('items', []) %}
@@ -2942,8 +2946,12 @@
     function isFilteredOut(tab) {
       const filter = loadRepoFilter();
       if (!filter) return false;
-      // Tasks tab is repo-agnostic; never filter it.
-      if (tab.dataset.queueId === '__tasks__') return false;
+      // Tasks is repo-agnostic — show it only on "All repos". Picking
+      // any specific repo filters it out alongside the non-matching
+      // queue tabs. (Otherwise the Tasks board would be the lone
+      // survivor when a repo has no queues, which both looks broken
+      // and forces the active-board cursor onto it.)
+      if (tab.dataset.queueId === '__tasks__') return true;
       const repoId = tab.dataset.repoId || '';
       return repoId !== filter;
     }
@@ -3010,10 +3018,27 @@
         else { menu.setAttribute('hidden', ''); menu.open = false; }
       }
       if (countEl) countEl.textContent = String(hidden.size);
-      // If the active board just got hidden, hop to the next visible.
-      if (isHidden(_activeIndex)) {
+      // Empty state — when the filter has hidden every board, surface
+      // a quiet placeholder + clear the active selection so no tab
+      // sits in its bright "active" state with nothing visible behind
+      // it. Otherwise hop the active cursor to the next visible board.
+      const visibleCount = tabs.reduce(
+        (n, t) => n + (t.dataset.hidden === '1' ? 0 : 1), 0);
+      const emptyEl = document.querySelector('[data-boards-empty]');
+      if (emptyEl) emptyEl.classList.toggle('is-active', visibleCount === 0);
+      if (visibleCount === 0) {
+        tabs.forEach(t => {
+          t.setAttribute('aria-selected', 'false');
+          t.classList.remove('is-active');
+        });
+        bs.forEach(b => b.classList.remove('is-active'));
+      } else if (isHidden(_activeIndex)) {
         const next = nextVisible(_activeIndex, 1);
         if (next !== _activeIndex) activateBoard(next);
+      } else {
+        // Active board still visible — re-run activateBoard to refresh
+        // the prev/next labels since visibility may have shifted them.
+        activateBoard(_activeIndex);
       }
     }
 

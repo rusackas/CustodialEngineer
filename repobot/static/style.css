@@ -2248,6 +2248,33 @@ body {
    them slightly while collapsed (visually nothing — width is 0 —
    but the transition feels right when they unwind). */
 .boards-tab-wrap-filtered { display: none; }
+
+/* The Tasks button in the toolbar has no .boards-tab-wrap parent —
+   the JS pipeline applies the hide classes directly to the button
+   itself, so reuse the same selectors here. Tasks is repo-agnostic,
+   so any specific-repo filter selection collapses it out alongside
+   the non-matching queue tabs. */
+.boards-toolbar-tasks.boards-tab-wrap-hidden,
+.boards-toolbar-tasks.boards-tab-wrap-filtered { display: none; }
+
+/* Empty-state placeholder shown in the boards stage when the active
+   filter excludes every queue. Quiet — a tracked-mono caption rather
+   than a noisy "no results" banner. */
+.boards-empty {
+  display: none;
+  margin: 32px auto 0;
+  padding: 24px 32px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-align: center;
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius-md);
+  max-width: 360px;
+}
+.boards-empty.is-active { display: block; }
 .boards-tab-tasks {
   color: var(--warn);
 }
