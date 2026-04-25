@@ -38,7 +38,7 @@ DB_PATH = PROJECT_ROOT / "state" / "repobot.db"
 
 _LOCK = threading.RLock()
 _CONN: Optional[sqlite3.Connection] = None
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 def _now() -> str:
@@ -97,6 +97,9 @@ def _bootstrap(c: sqlite3.Connection) -> None:
         # at v1→v2 since `queue_items` is empty at that point; future
         # migrations don't touch this.
         _maybe_migrate_from_queues_json(c)
+    if current < 3:
+        _migrate_v3(c)
+        c.execute("INSERT INTO schema_version (version) VALUES (3)")
 
 
 def _migrate_v1(c: sqlite3.Connection) -> None:
@@ -193,6 +196,46 @@ def _migrate_v2(c: sqlite3.Connection) -> None:
     c.execute(
         "INSERT OR IGNORE INTO tasks_meta (rowid, next_id) VALUES (1, 1)"
     )
+
+
+def _migrate_v3(c: sqlite3.Connection) -> None:
+    """Phase 3: append-only audit tables for actions and state
+    transitions. Both small, both indexed for the common queries
+    ("what happened to PR #X" / "how often does action Y get used"
+    / "how long do PRs sit in column Z")."""
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS actions_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      queue_id TEXT,
+      item_id INTEGER,
+      action_id TEXT,
+      status TEXT,
+      message TEXT,
+      session_id TEXT,
+      meta_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_actions_log_item
+      ON actions_log(queue_id, item_id, ts);
+    CREATE INDEX IF NOT EXISTS idx_actions_log_ts
+      ON actions_log(ts);
+    CREATE INDEX IF NOT EXISTS idx_actions_log_action_ts
+      ON actions_log(action_id, ts);
+
+    CREATE TABLE IF NOT EXISTS state_transitions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      queue_id TEXT NOT NULL,
+      item_id INTEGER NOT NULL,
+      from_state TEXT,
+      to_state TEXT NOT NULL,
+      reason TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_transitions_item
+      ON state_transitions(queue_id, item_id, ts);
+    CREATE INDEX IF NOT EXISTS idx_transitions_ts
+      ON state_transitions(ts);
+    """)
 
 
 def _maybe_migrate_from_queues_json(c: sqlite3.Connection) -> None:
@@ -347,6 +390,173 @@ def flush_state_dict(state: dict) -> None:
     `.corrupt-` quarantined files."""
     with _LOCK:
         _flush_state_to_conn(conn(), state)
+
+
+# ============================================================ audit log
+# actions_log + state_transitions are append-only — every write is a
+# single INSERT. No mutation, no deletion. The append-only shape is
+# the whole point: it's the durable record of what happened, when.
+
+def record_action_event(*,
+                        queue_id: Optional[str] = None,
+                        item_id: Any = None,
+                        action_id: Optional[str] = None,
+                        status: Optional[str] = None,
+                        message: Optional[str] = None,
+                        session_id: Optional[str] = None,
+                        meta: Optional[dict] = None) -> None:
+    """Append one row to actions_log. Called from every place that
+    currently writes `last_result` so we keep the full history of
+    statuses, not just the latest."""
+    meta_json = (json.dumps(meta, default=str)
+                 if meta is not None else None)
+    _safe_exec(
+        """INSERT INTO actions_log
+           (ts, queue_id, item_id, action_id, status, message,
+            session_id, meta_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (_now(), queue_id,
+         int(item_id) if item_id is not None else None,
+         action_id, status, message, session_id, meta_json),
+    )
+
+
+def record_state_transition(*,
+                            queue_id: str,
+                            item_id: Any,
+                            from_state: Optional[str],
+                            to_state: str,
+                            reason: Optional[str] = None) -> None:
+    """Append one row to state_transitions. Called from set_item_state
+    after the mutation when the state actually changed."""
+    if item_id is None:
+        return
+    _safe_exec(
+        """INSERT INTO state_transitions
+           (ts, queue_id, item_id, from_state, to_state, reason)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (_now(), queue_id, int(item_id), from_state, to_state, reason),
+    )
+
+
+def actions_for_item(queue_id: str, item_id: Any,
+                     limit: int = 50) -> list[dict]:
+    """Recent actions on a specific item, newest first. Used by the
+    drawer's history pane (Phase 4 UI work)."""
+    try:
+        with _LOCK:
+            rows = conn().execute(
+                """SELECT ts, action_id, status, message, session_id
+                   FROM actions_log
+                   WHERE queue_id = ? AND item_id = ?
+                   ORDER BY id DESC LIMIT ?""",
+                (queue_id,
+                 int(item_id) if item_id is not None else None,
+                 limit),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        print(f"[db] actions_for_item failed: {exc}")
+        return []
+    return [dict(r) for r in rows]
+
+
+def transitions_for_item(queue_id: str, item_id: Any,
+                         limit: int = 50) -> list[dict]:
+    """State transition history for one item, oldest first so a
+    timeline view reads naturally."""
+    try:
+        with _LOCK:
+            rows = conn().execute(
+                """SELECT ts, from_state, to_state, reason
+                   FROM state_transitions
+                   WHERE queue_id = ? AND item_id = ?
+                   ORDER BY id LIMIT ?""",
+                (queue_id,
+                 int(item_id) if item_id is not None else None,
+                 limit),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        print(f"[db] transitions_for_item failed: {exc}")
+        return []
+    return [dict(r) for r in rows]
+
+
+def time_in_state_summary(queue_id: Optional[str] = None,
+                          since_iso: Optional[str] = None) -> list[dict]:
+    """For each (queue_id, from_state) pair, return the average time
+    items spent in that state before transitioning out. Uses the
+    LAG window function to look up each transition's predecessor.
+    """
+    where: list[str] = []
+    params: list[Any] = []
+    if queue_id:
+        where.append("queue_id = ?")
+        params.append(queue_id)
+    if since_iso:
+        where.append("ts >= ?")
+        params.append(since_iso)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    sql = f"""
+    WITH ordered AS (
+      SELECT
+        queue_id, item_id, ts, from_state, to_state,
+        LAG(ts) OVER (
+          PARTITION BY queue_id, item_id ORDER BY id
+        ) AS prev_ts,
+        LAG(to_state) OVER (
+          PARTITION BY queue_id, item_id ORDER BY id
+        ) AS prev_to
+      FROM state_transitions{where_sql}
+    )
+    SELECT
+      queue_id,
+      COALESCE(from_state, prev_to) AS state,
+      COUNT(*) AS n,
+      AVG(
+        (julianday(ts) - julianday(prev_ts)) * 86400.0
+      ) FILTER (WHERE prev_ts IS NOT NULL) AS avg_seconds
+    FROM ordered
+    GROUP BY queue_id, COALESCE(from_state, prev_to)
+    ORDER BY queue_id, avg_seconds DESC
+    """
+    try:
+        with _LOCK:
+            rows = conn().execute(sql, params).fetchall()
+    except sqlite3.Error as exc:
+        print(f"[db] time_in_state_summary failed: {exc}")
+        return []
+    return [dict(r) for r in rows]
+
+
+def recent_actions(limit: int = 50,
+                   action_id: Optional[str] = None,
+                   status: Optional[str] = None) -> list[dict]:
+    """Recent rows in actions_log, newest first. Optional filter on
+    action_id (e.g. only `attempt-fix` invocations) or status (e.g.
+    only `error`)."""
+    where: list[str] = []
+    params: list[Any] = []
+    if action_id:
+        where.append("action_id = ?")
+        params.append(action_id)
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    params.append(limit)
+    try:
+        with _LOCK:
+            rows = conn().execute(
+                f"""SELECT ts, queue_id, item_id, action_id, status,
+                           message, session_id
+                    FROM actions_log{where_sql}
+                    ORDER BY id DESC LIMIT ?""",
+                params,
+            ).fetchall()
+    except sqlite3.Error as exc:
+        print(f"[db] recent_actions failed: {exc}")
+        return []
+    return [dict(r) for r in rows]
 
 
 # ================================================================ writes

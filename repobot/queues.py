@@ -129,14 +129,32 @@ def set_triage(queue_id: str, item_id, proposal: str, actions: list[str],
     _mutate(_m)
 
 
-def set_item_state(queue_id: str, item_id, new_state: str) -> None:
+def set_item_state(queue_id: str, item_id, new_state: str,
+                   *, reason: str | None = None) -> None:
+    """Move an item to a new state. Records an append-only row in the
+    `state_transitions` table when the state actually changed; the
+    optional `reason` annotates *why* (e.g. "user-action",
+    "auto-refresh-stale", "triage-bucket"). Useful for time-in-column
+    analytics and for the drawer's history pane (Phase 4 UI)."""
+    prev_state: dict[str, str | None] = {"v": None}
+
     def _m(state):
         for item in queue_items(state, queue_id):
             if item["id"] == item_id:
+                prev_state["v"] = item.get("state")
                 item["state"] = new_state
                 item["state_changed_at"] = _now()
                 break
     _mutate(_m)
+    prev = prev_state["v"]
+    if prev != new_state:
+        try:
+            _db.record_state_transition(
+                queue_id=queue_id, item_id=item_id,
+                from_state=prev, to_state=new_state, reason=reason,
+            )
+        except Exception as exc:
+            print(f"[queues] record_state_transition failed: {exc}")
 
 
 def delete_item(queue_id: str, item_id) -> None:
@@ -164,6 +182,9 @@ def set_item_parked_at(queue_id: str, item_id, when: str | None) -> None:
 
 
 def set_item_result(queue_id: str, item_id, result: dict) -> None:
+    """Stamp the latest action result on an item AND append a row
+    to the audit log so the full history survives the next overwrite.
+    `last_result` is mutating-the-snapshot; `actions_log` is durable."""
     def _m(state):
         for item in queue_items(state, queue_id):
             if item["id"] == item_id:
@@ -171,6 +192,19 @@ def set_item_result(queue_id: str, item_id, result: dict) -> None:
                 item["last_result_at"] = _now()
                 break
     _mutate(_m)
+    try:
+        meta = result.get("meta") if isinstance(result, dict) else None
+        sid = ((meta or {}).get("session_id")
+               if isinstance(meta, dict) else None)
+        _db.record_action_event(
+            queue_id=queue_id, item_id=item_id,
+            action_id=(result or {}).get("action"),
+            status=(result or {}).get("status"),
+            message=(result or {}).get("message"),
+            session_id=sid,
+        )
+    except Exception as exc:
+        print(f"[queues] record_action_event failed: {exc}")
 
 
 def add_item_tokens(queue_id: str, item_id, usage: dict) -> None:
