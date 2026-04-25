@@ -123,6 +123,12 @@
                 <span>Auto-resume interrupted actions on restart</span>
               </label>
               <div class="settings-hint">Uses the saved SDK session id to pick up where each action left off.</div>
+              <label class="settings-toggle">
+                <input type="checkbox" name="dry_run"
+                       {% if dry_run %}checked{% endif %} />
+                <span>Dry run (skip GitHub writes)</span>
+              </label>
+              <div class="settings-hint">When on, action sessions skip every side-effecting `gh`/`git push` step and report what they <em>would</em> have done. Override on top of <code>actions.dry_run</code> in config.yaml; takes effect on the next action.</div>
               <button type="submit">Save</button>
             </form>
 

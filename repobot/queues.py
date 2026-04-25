@@ -366,3 +366,16 @@ def update_queue_setting(queue_id: str, key: str, value) -> None:
         s = _settings(state)
         s.setdefault("queues", {}).setdefault(queue_id, {})[key] = value
     _mutate(_m)
+
+
+def current_dry_run() -> bool:
+    """Effective dry-run setting. Resolves a runtime override from the
+    DB first (so the UI toggle wins), falling back to `actions.dry_run`
+    in config.yaml. Default True if neither is set — fail-safe; new
+    deployments don't accidentally make real GitHub writes."""
+    cfg = load_config()
+    cfg_default = bool((cfg.get("actions") or {}).get("dry_run", True))
+    override = get_global_setting("dry_run", None)
+    if override is None:
+        return cfg_default
+    return bool(override)

@@ -688,11 +688,14 @@ def _review_threads(number: int) -> tuple[str, list[dict]]:
 
 
 def _self_handle() -> str:
-    """The PR author we filter by. Prefers `identity.github_username`
-    from config; falls back to `@me` (gh's authenticated user)."""
-    cfg = load_config()
-    handle = (cfg.get("identity") or {}).get("github_username")
-    return handle or "@me"
+    """The PR author handle we filter by in GitHub search syntax.
+    Routes through `identity.current_user_id()` so the multi-user
+    contract is honored in one place; falls back to GitHub's `@me`
+    keyword when no user is configured (matches `gh`'s own behavior
+    for an unauthenticated handle slot)."""
+    from .identity import current_user_id
+    handle = current_user_id()
+    return "@me" if handle == "self" else handle
 
 
 def list_review_requested_prs(limit: int = 50) -> list[dict]:

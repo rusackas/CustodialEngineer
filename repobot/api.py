@@ -32,6 +32,7 @@ from .config import (
 from .queues import (
     _mutate,
     _now,
+    current_dry_run,
     delete_item,
     find_item,
     get_global_setting,
@@ -323,7 +324,7 @@ def index(request: Request):
         {
             "queues": queues_cfg,
             "state": state,
-            "dry_run": bool(cfg.get("actions", {}).get("dry_run", True)),
+            "dry_run": current_dry_run(),
             "pending": pending,
             "stats": stats_data,
             "live_by_item": live_by_item,
@@ -538,7 +539,7 @@ def _ctx_for_queue(request: Request, queue_id: str) -> dict:
         "state": state,
         "stats": stats_data,
         "live_by_item": live_by_item,
-        "dry_run": bool(cfg.get("actions", {}).get("dry_run", True)),
+        "dry_run": current_dry_run(),
         "q_items": q_items,
         "done_state": done_state,
         "awaiting_state": awaiting_state,
@@ -601,10 +602,25 @@ def drawer(request: Request, queue_id: str, item_id: int):
             "createdAt": c.get("createdAt"),
             "html": md.render(c.get("body"), owner=owner, name=name),
         })
+    # Per-PR audit history — interleave action results and state
+    # transitions into one chronological timeline (newest first), so
+    # the drawer can show "what happened to this PR" without the
+    # caller doing the merge.
+    history: list[dict] = []
+    try:
+        from . import db as _db
+        for r in _db.actions_for_item(queue_id, item_id, limit=40):
+            history.append({"kind": "action", "ts": r["ts"], **r})
+        for r in _db.transitions_for_item(queue_id, item_id, limit=40):
+            history.append({"kind": "transition", "ts": r["ts"], **r})
+    except Exception as exc:
+        print(f"[drawer] history fetch failed: {exc}")
+    history.sort(key=lambda r: r.get("ts") or "", reverse=True)
     return templates.TemplateResponse(
         request, "drawer.html",
         {"pr": pr, "body_html": body_html, "comments": comments,
-         "queue_id": queue_id, "item_id": item_id},
+         "queue_id": queue_id, "item_id": item_id,
+         "history": history},
     )
 
 
@@ -669,7 +685,7 @@ def submit_request_reviewers(queue_id: str, item_id: int,
                             detail="nudge selected but no comment body")
 
     cfg = load_config()
-    dry_run = bool(cfg.get("actions", {}).get("dry_run", True))
+    dry_run = current_dry_run()
     qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
     awaiting_state = qcfg.get("awaiting_state", "awaiting update")
 
@@ -785,12 +801,15 @@ def session_resume(session_id: str):
 def update_global(request: Request,
                   max_concurrent: int = Form(...),
                   auto_resume_on_boot: str = Form(""),
-                  auto_refresh_seconds: int = Form(180)):
+                  auto_refresh_seconds: int = Form(180),
+                  dry_run: str = Form("")):
     """Bump (or trim) the global session cap. Applies live via semaphore
     resize — new/queued sessions pick up the new cap immediately; existing
     in-flight sessions finish their current turn at the old cap.
     Also persists `auto_resume_on_boot` — when true, the startup sweep
-    resumes any interrupted action that left an SDK session id behind."""
+    resumes any interrupted action that left an SDK session id behind.
+    `dry_run` is a runtime override on top of `actions.dry_run` in
+    config.yaml — flipping it from the UI doesn't require a restart."""
     if max_concurrent < 1 or max_concurrent > 64:
         raise HTTPException(status_code=400,
                             detail="max_concurrent must be between 1 and 64")
@@ -798,6 +817,10 @@ def update_global(request: Request,
     update_global_setting(
         "auto_resume_on_boot",
         auto_resume_on_boot.lower() in ("1", "true", "on", "yes"),
+    )
+    update_global_setting(
+        "dry_run",
+        dry_run.lower() in ("1", "true", "on", "yes"),
     )
     # 0 disables auto-refresh entirely; any other value clamped to
     # >= 30s inside _auto_refresh_interval(). The change takes effect

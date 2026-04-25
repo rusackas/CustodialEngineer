@@ -35,7 +35,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .queues import _mutate, load_state, _now
+from .queues import _mutate, current_dry_run, load_state, _now
 
 TASK_STATUSES = ("in_progress", "stuck", "done")
 TASK_TYPES = ("auto", "question", "issue", "pr")
@@ -258,7 +258,7 @@ def dispatch_task(task_id: int) -> str:
     wt_path = ensure_task_worktree(task_id, task["repo_id"])
 
     cfg = load_config()
-    dry_run = bool(cfg.get("actions", {}).get("dry_run", True))
+    dry_run = current_dry_run()
     context = {
         "task": {
             "id": task["id"],

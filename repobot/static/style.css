@@ -3632,6 +3632,108 @@ button.clear-done:hover { background: var(--alert-caution-soft); }
 .drawer-comment-head strong { color: var(--ink-soft); }
 .drawer-comment-date { color: var(--ink-mute); font-size: 11px; }
 
+/* Bot-history timeline. Two row kinds (transition / action) share
+   layout but get color-coded tags so the eye can scan one before
+   the other. Status-colored left border tints success/failure rows. */
+.drawer-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.drawer-history-item {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+}
+.drawer-history-time {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  letter-spacing: -0.005em;
+  cursor: help;
+}
+.drawer-history-body {
+  font-size: 12px;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.drawer-history-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: var(--neutral-soft);
+  color: var(--neutral-ink);
+  white-space: nowrap;
+}
+.drawer-history-tag-transition {
+  background: var(--alert-note-soft);
+  color: var(--alert-note-ink);
+}
+.drawer-history-tag-action {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.drawer-history-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+  letter-spacing: -0.005em;
+}
+.drawer-history-text code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-card);
+  padding: 0 5px;
+  border-radius: 2px;
+}
+.drawer-history-reason {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+}
+.drawer-history-message {
+  width: 100%;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+/* Status-tinted left rail picks up the action's outcome at a glance.
+   Mirrors the .result-{status} palette used on cards. */
+.drawer-history-status-completed,
+.drawer-history-status-skipped,
+.drawer-history-status-skipped_dry_run {
+  border-left-color: var(--ok);
+}
+.drawer-history-status-error,
+.drawer-history-status-needs_human,
+.drawer-history-status-unparsed {
+  border-left-color: var(--danger);
+}
+.drawer-history-status-running,
+.drawer-history-status-queued,
+.drawer-history-status-starting {
+  border-left-color: var(--accent);
+}
+.drawer-history-status-interrupted {
+  border-left-color: var(--warn);
+}
+
 body.drawer-open { overflow: hidden; }
 
 .actions {

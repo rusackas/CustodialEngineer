@@ -20,6 +20,7 @@ from . import github, sessions, worktree
 from .config import load_config
 from .queues import (
     _now,
+    current_dry_run,
     find_item,
     load_state,
     set_item_assessment,
@@ -395,7 +396,7 @@ async def approve_drafts(queue_id: str, item_id, edited_drafts: dict) -> dict:
     # Session is gone — post directly. Every draft carries
     # `first_comment_id` + `reply_body`, so we have everything we need.
     cfg = load_config()
-    dry_run = bool(cfg.get("actions", {}).get("dry_run", True))
+    dry_run = current_dry_run()
     pr_number = item.get("number")
     if not pr_number:
         raise RuntimeError("item has no PR number; cannot post replies.")
@@ -542,7 +543,7 @@ def continue_action(queue_id: str, item_id) -> str | None:
     })
 
     cfg = load_config()
-    dry_run = bool(cfg.get("actions", {}).get("dry_run", True))
+    dry_run = current_dry_run()
     wt_path = None
     if spec["worktree_required"]:
         head_ref = (item.get("raw") or {}).get("headRefName")
@@ -659,7 +660,7 @@ def dispatch(queue_id: str, item_id, action_id: str,
     })
 
     cfg = load_config()
-    dry_run = bool(cfg.get("actions", {}).get("dry_run", True))
+    dry_run = current_dry_run()
 
     try:
         wt_path = None

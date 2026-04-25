@@ -158,3 +158,39 @@
     </div>
   </section>
 {% endif %}
+
+{# Bot history — append-only audit timeline from the local DB. Shows
+   every action result and state transition we recorded for this
+   item, newest first. Empty when the PR predates Phase 3 or hasn't
+   been touched by an action yet. #}
+{% if history %}
+  <section class="drawer-section drawer-history">
+    <h4>Bot history ({{ history | length }})</h4>
+    <ol class="drawer-history-list">
+      {% for h in history %}
+        <li class="drawer-history-item drawer-history-{{ h.kind }}{% if h.status %} drawer-history-status-{{ h.status }}{% endif %}">
+          <div class="drawer-history-time tip" data-tip="{{ h.ts }}">
+            {{ time_ago(h.ts) }}
+          </div>
+          <div class="drawer-history-body">
+            {% if h.kind == 'transition' %}
+              <span class="drawer-history-tag drawer-history-tag-transition">state</span>
+              <span class="drawer-history-text">
+                <code>{{ h.from_state or '—' }}</code>
+                →
+                <code>{{ h.to_state }}</code>
+                {% if h.reason %}<span class="drawer-history-reason">· {{ h.reason }}</span>{% endif %}
+              </span>
+            {% else %}
+              <span class="drawer-history-tag drawer-history-tag-action">{{ h.action_id or 'action' }}</span>
+              <span class="drawer-history-status">{{ h.status or '—' }}</span>
+              {% if h.message %}
+                <div class="drawer-history-message">{{ h.message }}</div>
+              {% endif %}
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endif %}
