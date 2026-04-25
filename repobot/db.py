@@ -38,7 +38,7 @@ DB_PATH = PROJECT_ROOT / "state" / "repobot.db"
 
 _LOCK = threading.RLock()
 _CONN: Optional[sqlite3.Connection] = None
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 def _now() -> str:
@@ -90,6 +90,13 @@ def _bootstrap(c: sqlite3.Connection) -> None:
     if current < 1:
         _migrate_v1(c)
         c.execute("INSERT INTO schema_version (version) VALUES (1)")
+    if current < 2:
+        _migrate_v2(c)
+        c.execute("INSERT INTO schema_version (version) VALUES (2)")
+        # One-shot import from the legacy JSON state file. Runs only
+        # at v1→v2 since `queue_items` is empty at that point; future
+        # migrations don't touch this.
+        _maybe_migrate_from_queues_json(c)
 
 
 def _migrate_v1(c: sqlite3.Connection) -> None:
@@ -145,6 +152,201 @@ def _migrate_v1(c: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS idx_token_events_skill_ts
       ON token_events(skill, ts);
     """)
+
+
+def _migrate_v2(c: sqlite3.Connection) -> None:
+    """Phase 2: queue items, tasks, and runtime settings migrate out
+    of state/queues.json. Hybrid schema — identity columns for
+    indexability, JSON column for the rest of the dict so the
+    in-memory shape round-trips losslessly without a per-field
+    migration."""
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS queue_items (
+      queue_id TEXT NOT NULL,
+      item_id INTEGER NOT NULL,
+      state TEXT,
+      data_json TEXT NOT NULL,
+      PRIMARY KEY (queue_id, item_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_queue_items_state
+      ON queue_items(queue_id, state);
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY,
+      status TEXT,
+      data_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_status
+      ON tasks(status);
+
+    CREATE TABLE IF NOT EXISTS tasks_meta (
+      next_id INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      scope TEXT NOT NULL,        -- 'global' or 'queue:<id>'
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      PRIMARY KEY (scope, key)
+    );
+    """)
+    c.execute(
+        "INSERT OR IGNORE INTO tasks_meta (rowid, next_id) VALUES (1, 1)"
+    )
+
+
+def _maybe_migrate_from_queues_json(c: sqlite3.Connection) -> None:
+    """One-shot importer: read state/queues.json (the legacy JSON
+    state file) into the new SQL tables, then archive the JSON file
+    so subsequent boots don't re-import. No-op if the file's missing
+    or the tables already have data."""
+    n = c.execute("SELECT COUNT(*) FROM queue_items").fetchone()[0]
+    n += c.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    n += c.execute("SELECT COUNT(*) FROM settings").fetchone()[0]
+    if n > 0:
+        return
+    json_path = PROJECT_ROOT / "state" / "queues.json"
+    if not json_path.exists():
+        return
+    try:
+        with open(json_path) as f:
+            state = json.load(f)
+    except Exception as exc:
+        print(f"[db] migration read of queues.json failed: {exc}")
+        return
+    try:
+        _flush_state_to_conn(c, state)
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        archive = json_path.with_name(f"queues.json.migrated-{ts}")
+        json_path.rename(archive)
+        n_q = sum(len((b or {}).get("items") or [])
+                  for b in (state.get("queues") or {}).values())
+        n_t = len(((state.get("tasks") or {}).get("items")) or [])
+        print(f"[db] migrated state/queues.json → SQL "
+              f"({n_q} queue items, {n_t} tasks). "
+              f"Archived as {archive.name}")
+    except Exception as exc:
+        print(f"[db] migration write to SQL failed: {exc}")
+
+
+def _flush_state_to_conn(c: sqlite3.Connection, state: dict) -> None:
+    """Internal: rewrite the four state tables from a dict, on the
+    given connection (no separate locking — caller holds the lock).
+    Used both by the JSON migrator and by the public flush_state_dict.
+    """
+    c.execute("BEGIN")
+    try:
+        c.execute("DELETE FROM queue_items")
+        c.execute("DELETE FROM tasks")
+        c.execute("DELETE FROM settings")
+
+        for qid, bucket in (state.get("queues") or {}).items():
+            for item in (bucket or {}).get("items") or []:
+                iid = item.get("id")
+                if iid is None:
+                    continue
+                c.execute(
+                    """INSERT INTO queue_items
+                       (queue_id, item_id, state, data_json)
+                       VALUES (?, ?, ?, ?)""",
+                    (qid, int(iid), item.get("state"),
+                     json.dumps(item, default=str)),
+                )
+
+        tasks_block = state.get("tasks") or {}
+        for task in tasks_block.get("items") or []:
+            tid = task.get("id")
+            if tid is None:
+                continue
+            c.execute(
+                """INSERT INTO tasks (id, status, data_json)
+                   VALUES (?, ?, ?)""",
+                (int(tid), task.get("status"),
+                 json.dumps(task, default=str)),
+            )
+        next_id = int(tasks_block.get("next_id") or 1)
+        c.execute("UPDATE tasks_meta SET next_id = ?", (next_id,))
+
+        settings = state.get("settings") or {}
+        for k, v in (settings.get("global") or {}).items():
+            c.execute(
+                """INSERT INTO settings (scope, key, value_json)
+                   VALUES (?, ?, ?)""",
+                ("global", k, json.dumps(v, default=str)),
+            )
+        for qid, kv in (settings.get("queues") or {}).items():
+            for k, v in (kv or {}).items():
+                c.execute(
+                    """INSERT INTO settings (scope, key, value_json)
+                       VALUES (?, ?, ?)""",
+                    (f"queue:{qid}", k, json.dumps(v, default=str)),
+                )
+        c.execute("COMMIT")
+    except Exception:
+        c.execute("ROLLBACK")
+        raise
+
+
+# ============================================================== state IO
+
+def load_state_dict() -> dict:
+    """Read the entire queue + task + settings state from SQL into
+    the same dict shape `queues.load_state()` previously returned
+    from queues.json. Callers downstream of `queues.load_state` see
+    no structural change.
+    """
+    state: dict = {"queues": {}}
+    with _LOCK:
+        c = conn()
+        for r in c.execute(
+            "SELECT queue_id, data_json FROM queue_items"
+        ).fetchall():
+            try:
+                item = json.loads(r["data_json"])
+            except json.JSONDecodeError:
+                continue
+            bucket = state["queues"].setdefault(
+                r["queue_id"], {"items": []})
+            bucket["items"].append(item)
+
+        task_rows = c.execute(
+            "SELECT data_json FROM tasks ORDER BY id"
+        ).fetchall()
+        next_id_row = c.execute(
+            "SELECT next_id FROM tasks_meta"
+        ).fetchone()
+        state["tasks"] = {
+            "items": [json.loads(r["data_json"]) for r in task_rows],
+            "next_id": int(next_id_row["next_id"]) if next_id_row else 1,
+        }
+
+        settings_rows = c.execute(
+            "SELECT scope, key, value_json FROM settings"
+        ).fetchall()
+    settings: dict = {"global": {}, "queues": {}}
+    for r in settings_rows:
+        try:
+            v = json.loads(r["value_json"])
+        except json.JSONDecodeError:
+            continue
+        scope = r["scope"]
+        if scope == "global":
+            settings["global"][r["key"]] = v
+        elif scope.startswith("queue:"):
+            qid = scope[len("queue:"):]
+            settings["queues"].setdefault(qid, {})[r["key"]] = v
+    state["settings"] = settings
+    return state
+
+
+def flush_state_dict(state: dict) -> None:
+    """Write the full state dict back to SQL in a single transaction.
+    Same write semantics as the legacy "rewrite the JSON file" path,
+    just atomic — partial writes can't happen, so no more
+    `.corrupt-` quarantined files."""
+    with _LOCK:
+        _flush_state_to_conn(conn(), state)
 
 
 # ================================================================ writes

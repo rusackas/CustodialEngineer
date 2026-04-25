@@ -1,16 +1,37 @@
-"""Queue state storage — persisted as JSON in state/queues.json.
+"""Queue state storage — persisted in SQLite via `repobot.db`.
 
-All reads/writes go through a single lock so background worker threads
-can safely update item state while the web handler reads it.
+Phase 2 of the storage migration. The legacy JSON file
+(`state/queues.json`) is no longer the source of truth; the four
+shapes inside it (queue items, tasks, global settings, per-queue
+settings) live in dedicated tables. The first run after the
+migration imports the JSON file once and archives it.
+
+The public API of this module is unchanged — `load_state()`,
+`_mutate(fn)`, and the per-item setters all behave identically from
+the caller's POV. Only the storage backend swapped.
+
+Why the dict-shape API stayed the same: 38 call sites across
+runner.py / sessions.py / api.py / actions.py / tasks.py read or
+mutate state via this module. Preserving the API let Phase 2 land
+without a sweeping rewrite, and the perf is fine — SQLite reads on
+~few hundred rows are sub-millisecond.
+
+Mutations still go through a global lock + read-modify-write +
+flush-everything pattern (same as the JSON file used to do), but
+the flush is now one SQLite transaction instead of a tmp-file
+rename. Partial writes are no longer possible — that closes the
+class of bugs that produced the `.corrupt-20260422` quarantined
+file.
 """
-import json
-import os
 import threading
 from datetime import datetime, timezone
 from typing import Iterable
 
+from . import db as _db
 from .config import PROJECT_ROOT, load_config
 
+# Kept for back-compat with any external import; no longer the
+# source of truth. The migrator archives the file at boot.
 STATE_PATH = PROJECT_ROOT / "state" / "queues.json"
 _LOCK = threading.Lock()
 
@@ -19,37 +40,27 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _atomic_write(state: dict) -> None:
-    """Write state to a tmp file then rename — a crash mid-write leaves
-    the original file untouched instead of truncating it."""
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_PATH.with_suffix(STATE_PATH.suffix + ".tmp")
-    with open(tmp, "w") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, STATE_PATH)
-
-
 def load_state() -> dict:
-    with _LOCK:
-        if not STATE_PATH.exists():
-            return {"queues": {}}
-        with open(STATE_PATH) as f:
-            return json.load(f)
+    """Build the queues + tasks + settings state dict from SQL. Same
+    shape callers were used to from the JSON file."""
+    return _db.load_state_dict()
 
 
 def save_state(state: dict) -> None:
+    """Replace the entire state in one transaction. Rare —
+    `_mutate(fn)` is the standard path."""
     with _LOCK:
-        _atomic_write(state)
+        _db.flush_state_dict(state)
 
 
 def _mutate(mutator):
-    """Read-modify-write under lock."""
+    """Read-modify-write under lock. Loads the current state from
+    SQL, lets the mutator function modify the dict in place, then
+    flushes it back atomically."""
     with _LOCK:
-        state = json.load(open(STATE_PATH)) if STATE_PATH.exists() else {"queues": {}}
+        state = _db.load_state_dict()
         mutator(state)
-        _atomic_write(state)
+        _db.flush_state_dict(state)
         return state
 
 
