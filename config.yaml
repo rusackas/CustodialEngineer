@@ -124,4 +124,3 @@ queues:
       - done
     query:
       state: open
-    repo: superset

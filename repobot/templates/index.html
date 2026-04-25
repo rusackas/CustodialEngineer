@@ -1027,21 +1027,28 @@
 
     commentModalSend.addEventListener('click', () => {
       if (!commentFormPending) return;
-      const form = commentFormPending;
+      // Re-find the form in the LIVE DOM by its action URL — the
+      // card might have been morph-swapped by a polling tick while
+      // the modal was open, leaving our reference attached to a
+      // detached subtree. requestSubmit() on a detached form fires
+      // an event that never bubbles to document, so HTMX never sees
+      // it and the click looks like it did nothing.
+      const action = commentFormPending.getAttribute('action');
+      const liveForm = (action
+        ? document.querySelector(`form[action="${action}"]`)
+        : null) || commentFormPending;
       const body = commentModalBody.value;
-      // Inject the edited body as a hidden field and mark confirmed so the
-      // submit handler lets it through without re-opening the modal.
-      let hidden = form.querySelector('input[name="comment_body"]');
+      let hidden = liveForm.querySelector('input[name="comment_body"]');
       if (!hidden) {
         hidden = document.createElement('input');
         hidden.type = 'hidden';
         hidden.name = 'comment_body';
-        form.appendChild(hidden);
+        liveForm.appendChild(hidden);
       }
       hidden.value = body;
-      form.dataset.editConfirmed = '1';
+      liveForm.dataset.editConfirmed = '1';
       closeCommentModal();
-      form.requestSubmit();
+      liveForm.requestSubmit();
     });
 
     document.addEventListener('keydown', (e) => {
@@ -1323,7 +1330,12 @@
 
     reviewersModalSend.addEventListener('click', () => {
       if (!reviewersFormPending) return;
-      const form = reviewersFormPending;
+      // Re-find the form in the live DOM in case the card morph-swapped
+      // while the modal was open (see commentModalSend for context).
+      const _action = reviewersFormPending.getAttribute('action');
+      const form = (_action
+        ? document.querySelector(`form[action="${_action}"]`)
+        : null) || reviewersFormPending;
       // Wipe any prior field injections — re-open can accumulate otherwise.
       form.querySelectorAll('input[data-reviewer-field]').forEach(n => n.remove());
       // Clear stale nudge-body state from any earlier attempt.

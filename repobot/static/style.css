@@ -3954,6 +3954,25 @@ button.resume:hover { background: var(--warn); opacity: 0.85; }
   max-height: 80vh;
   padding: 0 18px 18px;
 }
+/* Settings-modal panes need to scroll when their content overflows
+   the modal height — without this, anything below the visible
+   viewport got clipped by the parent .modal-body's overflow:hidden.
+   The active pane becomes the scroll container; tabs + header stay
+   pinned at the top of the modal. min-height:0 is the magic — flex
+   items default to min-content and won't shrink below it otherwise,
+   so overflow:auto would never engage. */
+.settings-modal .modal-body-narrow {
+  display: flex;
+  flex-direction: column;
+}
+.settings-modal .settings-tab-pane.is-active {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* Slight inset on the right so the scrollbar doesn't crowd the
+     form fields against the modal edge. */
+  padding-right: 4px;
+}
 .comment-modal-help {
   padding: 10px 0;
   font-size: 12px;
