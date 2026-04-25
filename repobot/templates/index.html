@@ -96,33 +96,117 @@
             </button>
           </div>
         </details>
-        <details class="settings-gear settings-gear-global">
+        <details class="settings-gear settings-gear-global"
+                 id="global-settings-popover">
           <summary title="Edit global settings" aria-label="Global settings">{{ icon('gear', size=16) }}</summary>
-          <form method="post" action="/settings/global" class="settings-form">
-            <label>
-              <span>Global session cap</span>
-              <input type="number" name="max_concurrent" min="1" max="64"
-                     value="{{ s.cap or 8 }}" required />
-            </label>
-            <div class="settings-hint">Applies live. Idle sessions release their slot.</div>
-            <label>
-              <span>Auto-refresh (seconds)</span>
-              <input type="number" name="auto_refresh_seconds" min="0" max="3600"
-                     value="{{ s.auto_refresh_seconds or 180 }}" required />
-            </label>
-            <div class="settings-hint">
-              How often each queue re-hits GitHub. Clamped to ≥ 30s;
-              0 disables. Bump higher if you hit rate limits. Takes
-              effect on next restart.
-            </div>
-            <label class="settings-toggle">
-              <input type="checkbox" name="auto_resume_on_boot"
-                     {% if s.auto_resume_on_boot %}checked{% endif %} />
-              <span>Auto-resume interrupted actions on restart</span>
-            </label>
-            <div class="settings-hint">Uses the saved SDK session id to pick up where each action left off.</div>
-            <button type="submit">Save</button>
-          </form>
+          <div class="settings-popover settings-popover-wide">
+            <form method="post" action="/settings/global" class="settings-form settings-form-static">
+              <label>
+                <span>Global session cap</span>
+                <input type="number" name="max_concurrent" min="1" max="64"
+                       value="{{ s.cap or 8 }}" required />
+              </label>
+              <div class="settings-hint">Applies live. Idle sessions release their slot.</div>
+              <label>
+                <span>Auto-refresh (seconds)</span>
+                <input type="number" name="auto_refresh_seconds" min="0" max="3600"
+                       value="{{ s.auto_refresh_seconds or 180 }}" required />
+              </label>
+              <div class="settings-hint">
+                How often each queue re-hits GitHub. Clamped to ≥ 30s;
+                0 disables. Bump higher if you hit rate limits. Takes
+                effect on next restart.
+              </div>
+              <label class="settings-toggle">
+                <input type="checkbox" name="auto_resume_on_boot"
+                       {% if s.auto_resume_on_boot %}checked{% endif %} />
+                <span>Auto-resume interrupted actions on restart</span>
+              </label>
+              <div class="settings-hint">Uses the saved SDK session id to pick up where each action left off.</div>
+              <button type="submit">Save</button>
+            </form>
+
+            {# Repos registry — add / remove / set-default. Each row
+               posts to its own action endpoint so the writes stay
+               atomic and the UI doesn't need to re-serialize the
+               whole list on every edit. #}
+            <section class="repos-manager" id="repos-manager">
+              <h4 class="repos-manager-header">
+                <span>Repos</span>
+                <span class="queue-toggles-rule" aria-hidden="true"></span>
+              </h4>
+              <div class="settings-hint">
+                Registered repos. Queues and tasks pick from this list.
+                The default applies wherever a queue or task doesn't
+                override.
+              </div>
+              <ul class="repos-list">
+                {% for r in repos %}
+                  <li class="repos-row {% if r.id == default_repo_id %}repos-row-default{% endif %}">
+                    <div class="repos-row-text">
+                      <div class="repos-row-name">
+                        {{ r.display_name or r.slug }}
+                        {% if r.id == default_repo_id %}
+                          <span class="repos-row-flag">default</span>
+                        {% endif %}
+                      </div>
+                      <div class="repos-row-slug">
+                        <code>{{ r.slug }}</code>
+                        <span class="repos-row-id">id: {{ r.id }}</span>
+                      </div>
+                    </div>
+                    <div class="repos-row-actions">
+                      {% if r.id != default_repo_id %}
+                        <form method="post" action="/repos/{{ r.id }}/set-default"
+                              class="repos-row-form">
+                          <button type="submit"
+                                  title="Make this the default repo for queues/tasks that don't override.">
+                            set default
+                          </button>
+                        </form>
+                        <form method="post" action="/repos/{{ r.id }}/delete"
+                              class="repos-row-form">
+                          <button type="submit" class="repos-row-delete"
+                                  title="Remove from the registry. Refused if any queue references it.">
+                            {{ icon('trash', size=11) }}
+                          </button>
+                        </form>
+                      {% endif %}
+                    </div>
+                  </li>
+                {% endfor %}
+              </ul>
+
+              <form method="post" action="/repos/new"
+                    class="settings-form settings-form-static repos-add-form"
+                    id="repo-add-form">
+                <div class="repos-add-grid">
+                  <label>
+                    <span>id</span>
+                    <input type="text" name="id" required
+                           pattern="[a-z0-9][a-z0-9_\-]{0,63}"
+                           placeholder="my-repo" />
+                  </label>
+                  <label>
+                    <span>display name</span>
+                    <input type="text" name="display_name"
+                           placeholder="optional" />
+                  </label>
+                  <label>
+                    <span>owner</span>
+                    <input type="text" name="owner" required
+                           placeholder="github org or user" />
+                  </label>
+                  <label>
+                    <span>name</span>
+                    <input type="text" name="name" required
+                           placeholder="repo name" />
+                  </label>
+                </div>
+                <button type="submit">+ add repo</button>
+              </form>
+            </section>
+          </div>
         </details>
       </div>
     </div>
@@ -337,33 +421,55 @@
                 <span>Title <span class="field-info" data-tip="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" aria-label="The column's display name. Used in tabs, nav pills, and the board header.&#10;&#10;Example: 'Dependabot PRs' or 'My open work'" tabindex="0">{{ icon('info', size=12) }}</span></span>
                 <input type="text" name="title" value="{{ queue.title }}" />
               </label>
-              {# Normalize the queue's `repo` field to {owner, name} for
-                 the legacy text inputs. New id-string form (e.g.
-                 `repo: superset`) doesn't fill these — the queue is
-                 using the registry and the inputs stay blank. A bare
-                 `owner/name` slug is split and shown. #}
-              {% if queue.repo is mapping %}
-                {% set _r = queue.repo %}
-              {% elif queue.repo is string and '/' in queue.repo %}
-                {% set _slug_parts = queue.repo.split('/', 1) %}
-                {% set _r = {'owner': _slug_parts[0], 'name': _slug_parts[1]} %}
-              {% else %}
-                {% set _r = {} %}
+              {# Resolve the queue's current `repo` field to a registry id
+                 for the select. Three legacy shapes accepted:
+                 - id string (`repo: superset`) → use directly
+                 - inline dict ({owner, name}) → match by slug
+                 - bare slug ("apache/superset") → match by slug
+                 - missing → empty (queue uses default_repo_id) #}
+              {% set _selected_repo = '' %}
+              {% if queue.repo is string and queue.repo %}
+                {% if '/' in queue.repo %}
+                  {% for r in repos %}
+                    {% if r.slug == queue.repo %}
+                      {% set _selected_repo = r.id %}
+                    {% endif %}
+                  {% endfor %}
+                {% else %}
+                  {% set _selected_repo = queue.repo %}
+                {% endif %}
+              {% elif queue.repo is mapping and queue.repo.get('owner') %}
+                {% set _slug = queue.repo.owner ~ '/' ~ queue.repo.name %}
+                {% for r in repos %}
+                  {% if r.slug == _slug %}
+                    {% set _selected_repo = r.id %}
+                  {% endif %}
+                {% endfor %}
               {% endif %}
-              <div class="settings-grid">
-                <label>
-                  <span>Repo owner <span class="field-info" data-tip="GitHub org/user that owns this repo.&#10;&#10;Leave blank to use the top-level repo.owner from config.yaml. Both owner AND name must be set to override; both blank clears the override." aria-label="GitHub org/user that owns this repo. Leave blank to use top-level config default. Both owner and name must be set together to override." tabindex="0">{{ icon('info', size=12) }}</span></span>
-                  <input type="text" name="repo_owner"
-                         value="{{ _r.get('owner', '') }}"
-                         placeholder="e.g. apache" />
-                </label>
-                <label>
-                  <span>Repo name <span class="field-info" data-tip="Repo name within the owner.&#10;&#10;Leave blank to use top-level config default. Example: 'superset', 'airflow'." aria-label="Repo name within the owner. Leave blank to use top-level config default. Example: 'superset', 'airflow'." tabindex="0">{{ icon('info', size=12) }}</span></span>
-                  <input type="text" name="repo_name"
-                         value="{{ _r.get('name', '') }}"
-                         placeholder="e.g. superset" />
-                </label>
-              </div>
+              <label class="settings-field-wide">
+                <span>Repo <span class="field-info" data-tip="Which repository this queue pulls from. Leave on the default to inherit `default_repo_id` from the global registry. Pick a specific entry to override per-queue.&#10;&#10;Add new repos via the gear icon in the top-right header." aria-label="Repository — pick from the registered repos, or inherit the global default." tabindex="0">{{ icon('info', size=12) }}</span></span>
+                <div class="repo-select-row">
+                  <select name="repo_id" class="repo-select">
+                    <option value=""
+                      {% if not _selected_repo %}selected{% endif %}>
+                      (default — {{ default_repo_id }})
+                    </option>
+                    {% for r in repos %}
+                      <option value="{{ r.id }}"
+                        {% if _selected_repo == r.id %}selected{% endif %}>
+                        {{ r.display_name or r.slug }}
+                        {% if r.id != r.slug %} · {{ r.id }}{% endif %}
+                      </option>
+                    {% endfor %}
+                  </select>
+                  <button type="button" class="repo-add-btn"
+                          data-open-repo-manager
+                          title="Manage the repo registry (add / remove / set default)"
+                          aria-label="Add or manage repos">
+                    + add repo
+                  </button>
+                </div>
+              </label>
               <div class="settings-grid">
                 <label>
                   <span>Author <span class="field-info" data-tip="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self' (you), 'app/dependabot' (a bot), 'rusackas' (a specific user). Leave blank for any author." aria-label="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self' (you), 'app/dependabot' (a bot), 'rusackas' (a specific user). Leave blank for any author." tabindex="0">{{ icon('info', size=12) }}</span></span>
@@ -650,15 +756,25 @@
                 <input type="number" name="max_in_flight" min="0" max="500"
                        value="10" required />
               </label>
-              <label>
-                <span>Repo owner <span class="field-info" data-tip="GitHub org/user that owns this repo.&#10;&#10;Leave blank to use the top-level repo.owner from config.yaml. Both owner AND name must be set to override." aria-label="GitHub org/user that owns this repo. Leave blank to use top-level config default." tabindex="0">{{ icon('info', size=12) }}</span></span>
-                <input type="text" name="repo_owner"
-                       placeholder="e.g. apache (blank = use top-level)" />
-              </label>
-              <label>
-                <span>Repo name <span class="field-info" data-tip="Repo name within the owner.&#10;&#10;Example: 'superset', 'airflow'. Leave blank to inherit." aria-label="Repo name within the owner. Leave blank to inherit top-level config default." tabindex="0">{{ icon('info', size=12) }}</span></span>
-                <input type="text" name="repo_name"
-                       placeholder="e.g. superset (blank = use top-level)" />
+              <label class="settings-field-wide settings-field-grid-span">
+                <span>Repo <span class="field-info" data-tip="Which repository this queue pulls from. Leave on the default to inherit `default_repo_id` from the global registry. Pick a specific entry to override per-queue." aria-label="Repository — pick from the registered repos, or inherit the global default." tabindex="0">{{ icon('info', size=12) }}</span></span>
+                <div class="repo-select-row">
+                  <select name="repo_id" class="repo-select">
+                    <option value="" selected>(default — {{ default_repo_id }})</option>
+                    {% for r in repos %}
+                      <option value="{{ r.id }}">
+                        {{ r.display_name or r.slug }}
+                        {% if r.id != r.slug %} · {{ r.id }}{% endif %}
+                      </option>
+                    {% endfor %}
+                  </select>
+                  <button type="button" class="repo-add-btn"
+                          data-open-repo-manager
+                          title="Manage the repo registry (add / remove / set default)"
+                          aria-label="Add or manage repos">
+                    + add repo
+                  </button>
+                </div>
               </label>
               <label>
                 <span>Author <span class="field-info" data-tip="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self', 'app/dependabot', 'rusackas'. Leave blank for any author." aria-label="Filter to PRs/issues by author login.&#10;&#10;Examples: 'self', 'app/dependabot', 'rusackas'. Leave blank for any author." tabindex="0">{{ icon('info', size=12) }}</span></span>
@@ -2018,6 +2134,25 @@
       }
       if (e.target.closest('[data-close-settings]')) {
         closeSettingsModals();
+      }
+      // "+ add repo" button anywhere → close any open settings modal,
+      // open the global-settings popover, scroll the repo manager
+      // into view, and focus the new-repo `id` field.
+      const repoMgrBtn = e.target.closest('[data-open-repo-manager]');
+      if (repoMgrBtn) {
+        e.preventDefault();
+        closeSettingsModals();
+        const popover = document.getElementById('global-settings-popover');
+        if (popover) {
+          popover.open = true;
+          requestAnimationFrame(() => {
+            const mgr = document.getElementById('repos-manager');
+            if (mgr) mgr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            const idInput = document.querySelector(
+              '#repo-add-form input[name="id"]');
+            if (idInput) idInput.focus();
+          });
+        }
       }
     });
 

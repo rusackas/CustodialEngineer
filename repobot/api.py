@@ -20,10 +20,13 @@ from .actions import (
 from .config import (
     PROJECT_ROOT,
     add_queue_block,
+    add_repo_block,
+    delete_repo_block,
     get_queue_block_yaml,
     load_config,
     new_queue_template,
     replace_queue_block,
+    set_default_repo,
     update_queue_definition,
 )
 from .queues import (
@@ -326,6 +329,9 @@ def index(request: Request):
             "live_by_item": live_by_item,
             "queue_attention_counts": queue_attention_counts,
             "rate_limit": github.rate_limit_snapshot(),
+            "repos": github.list_repos(),
+            "default_repo_id": (cfg.get("default_repo_id")
+                                or github.list_repos()[0]["id"]),
         },
     )
 
@@ -829,8 +835,7 @@ def update_queue_definition_endpoint(
     request: Request,
     queue_id: str,
     title: str = Form(""),
-    repo_owner: str = Form(""),
-    repo_name: str = Form(""),
+    repo_id: str = Form(""),
     q_author: str = Form(""),
     q_state: str = Form("open"),
     q_review_requested: str = Form(""),
@@ -898,16 +903,19 @@ def update_queue_definition_endpoint(
     # leaving every checkbox in the form unchecked.
     updates["hydrate"] = hydrate_updates or None
     updates["filter"] = filter_updates or None
-    # Per-queue repo override. Both fields must be filled in to set;
-    # both empty clears any override (queue falls back to top-level).
-    owner = repo_owner.strip()
-    name = repo_name.strip()
-    if owner and name:
-        updates["repo"] = {"owner": owner, "name": name}
-    elif not owner and not name:
-        # Explicit clear (empty both fields) → remove the override.
+    # Per-queue repo override (registry id reference). Empty value =
+    # use the global default; non-empty = override with the named repo.
+    rid = (repo_id or "").strip()
+    if rid:
+        if not github.repo_by_id(rid):
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown repo: {rid}. Add it to the repos "
+                       f"registry first.",
+            )
+        updates["repo"] = rid
+    else:
         updates["repo"] = None
-    # Mixed (one filled, one empty) is ambiguous — ignore.
     try:
         update_queue_definition(queue_id, updates)
     except (KeyError, ValueError) as exc:
@@ -1011,8 +1019,7 @@ def queue_new_form(
     id: str = Form(...),
     title: str = Form(...),
     max_in_flight: int = Form(10),
-    repo_owner: str = Form(""),
-    repo_name: str = Form(""),
+    repo_id: str = Form(""),
     q_author: str = Form(""),
     q_state: str = Form("open"),
     q_review_requested: str = Form(""),
@@ -1073,9 +1080,15 @@ def queue_new_form(
     }
     if hydrate: parsed["hydrate"] = hydrate
     if post_filter: parsed["filter"] = post_filter
-    if repo_owner.strip() and repo_name.strip():
-        parsed["repo"] = {"owner": repo_owner.strip(),
-                          "name": repo_name.strip()}
+    rid = (repo_id or "").strip()
+    if rid:
+        if not github.repo_by_id(rid):
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown repo: {rid}. Add it to the repos "
+                       f"registry first.",
+            )
+        parsed["repo"] = rid
     _post_add_queue(parsed)
     return RedirectResponse(url="/", status_code=303)
 
@@ -1170,6 +1183,50 @@ def update_queue_settings(request: Request,
 # session in a fresh worktree. Parallel track to the PR-triage queues.
 
 from . import tasks as _tasks  # noqa: E402
+
+
+# ============================================================ repos registry
+# CRUD over the top-level `repos:` list in config.yaml. Driven by the
+# global settings popover; queue forms reference entries by id.
+
+@app.post("/repos/new")
+def repo_new(request: Request,
+             id: str = Form(...),
+             owner: str = Form(...),
+             name: str = Form(...),
+             display_name: str = Form("")):
+    """Append a new entry to the repos registry."""
+    try:
+        add_repo_block({
+            "id": id, "owner": owner, "name": name,
+            "display_name": display_name,
+        })
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _reload_or_redirect(request)
+
+
+@app.post("/repos/{repo_id}/delete")
+def repo_delete(request: Request, repo_id: str):
+    """Remove a repo from the registry. Refuses if it's the default
+    or referenced by any queue (with an actionable message)."""
+    try:
+        delete_repo_block(repo_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown repo: {repo_id}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _reload_or_redirect(request)
+
+
+@app.post("/repos/{repo_id}/set-default")
+def repo_set_default(request: Request, repo_id: str):
+    """Set the top-level default_repo_id."""
+    try:
+        set_default_repo(repo_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown repo: {repo_id}")
+    return _reload_or_redirect(request)
 
 
 @app.post("/tasks/new")

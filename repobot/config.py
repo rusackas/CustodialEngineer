@@ -21,9 +21,12 @@ def load_config() -> dict:
 # considered infrastructure (queue id, state machine, initial_state)
 # and requires a config-file edit by hand. Keeps the editor tight and
 # means accidental form submissions can't corrupt the core shape.
-EDITABLE_QUEUE_FIELDS = {"title", "max_in_flight", "query", "repo"}
+EDITABLE_QUEUE_FIELDS = {"title", "max_in_flight", "query", "repo",
+                         "hydrate", "filter"}
 EDITABLE_QUERY_KEYS = {"author", "state", "review_requested", "labels",
-                       "milestone", "head", "base", "assignee"}
+                       "milestone", "head", "base", "assignee", "search"}
+EDITABLE_HYDRATE_KEYS = {"ci_status", "merge_state", "review_threads"}
+EDITABLE_FILTER_KEYS = {"attention_only", "non_draft"}
 
 
 def update_queue_definition(queue_id: str, updates: dict) -> dict:
@@ -63,12 +66,18 @@ def update_queue_definition(queue_id: str, updates: dict) -> dict:
         target["max_in_flight"] = int(updates["max_in_flight"])
     if "repo" in updates:
         repo_val = updates["repo"]
-        if repo_val is None:
+        if repo_val is None or repo_val == "":
             target.pop("repo", None)
+        elif isinstance(repo_val, str):
+            # Registry id reference (e.g. `repo: superset`) — preferred
+            # form now that the top-level `repos:` registry exists.
+            target["repo"] = repo_val
         elif isinstance(repo_val, dict) and repo_val.get("owner") and repo_val.get("name"):
+            # Legacy inline form, still supported for back-compat.
             target["repo"] = {"owner": repo_val["owner"], "name": repo_val["name"]}
         else:
-            raise ValueError("repo must be {owner, name} or None")
+            raise ValueError(
+                "repo must be a registry id string, {owner, name} dict, or None")
     if "query" in updates:
         q = target.get("query") or {}
         for k, v in query_updates.items():
@@ -77,6 +86,26 @@ def update_queue_definition(queue_id: str, updates: dict) -> dict:
             else:
                 q[k] = v
         target["query"] = q
+    if "hydrate" in updates:
+        h = updates["hydrate"]
+        if not h:
+            target.pop("hydrate", None)
+        else:
+            bad_h = set(h) - EDITABLE_HYDRATE_KEYS
+            if bad_h:
+                raise ValueError(
+                    f"not editable hydrate keys: {', '.join(sorted(bad_h))}")
+            target["hydrate"] = {k: bool(v) for k, v in h.items() if v}
+    if "filter" in updates:
+        f = updates["filter"]
+        if not f:
+            target.pop("filter", None)
+        else:
+            bad_f = set(f) - EDITABLE_FILTER_KEYS
+            if bad_f:
+                raise ValueError(
+                    f"not editable filter keys: {', '.join(sorted(bad_f))}")
+            target["filter"] = {k: bool(v) for k, v in f.items() if v}
 
     # Atomic write: stage to .tmp then rename. Same pattern as the
     # state-file writer — avoids leaving a truncated config.yaml if
@@ -183,6 +212,89 @@ def new_queue_template(qid: str = "my-queue",
     buf = io.StringIO()
     y.dump(block, buf)
     return buf.getvalue()
+
+
+_REPO_ID_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9_\-]{0,63}$")
+
+
+def add_repo_block(entry: dict) -> dict:
+    """Append a new entry to the top-level `repos:` registry. Validates
+    id is slug-shaped and unique; owner + name are required strings.
+    Returns the normalized entry on success."""
+    rid = (entry.get("id") or "").strip()
+    if not _REPO_ID_RE.match(rid):
+        raise ValueError(
+            f"id `{rid}` must be slug-shaped (a-z 0-9 _ -, 1-64 chars).")
+    owner = (entry.get("owner") or "").strip()
+    name = (entry.get("name") or "").strip()
+    if not owner or not name:
+        raise ValueError("owner and name are required")
+
+    y = _yaml_roundtrip()
+    with open(CONFIG_PATH) as f:
+        doc = y.load(f)
+    repos = doc.get("repos") or []
+    if any((r or {}).get("id") == rid for r in repos):
+        raise ValueError(f"repo id `{rid}` already exists")
+    new_entry = {"id": rid, "owner": owner, "name": name}
+    display = (entry.get("display_name") or "").strip()
+    if display:
+        new_entry["display_name"] = display
+    repos.append(new_entry)
+    doc["repos"] = repos
+
+    import os
+    tmp = CONFIG_PATH.with_suffix(".yaml.tmp")
+    with open(tmp, "w") as f:
+        y.dump(doc, f)
+    os.replace(tmp, CONFIG_PATH)
+    return dict(new_entry)
+
+
+def delete_repo_block(repo_id: str) -> None:
+    """Remove a repo from the top-level registry. Refuses if it's the
+    current default OR if any queue references it via `repo: <id>`."""
+    y = _yaml_roundtrip()
+    with open(CONFIG_PATH) as f:
+        doc = y.load(f)
+    repos = doc.get("repos") or []
+    if not any((r or {}).get("id") == repo_id for r in repos):
+        raise KeyError(repo_id)
+    if doc.get("default_repo_id") == repo_id:
+        raise ValueError(
+            f"`{repo_id}` is the default repo — pick a different "
+            f"default before removing it.")
+    queues = doc.get("queues") or []
+    in_use = [q.get("id") for q in queues if q.get("repo") == repo_id]
+    if in_use:
+        raise ValueError(
+            f"`{repo_id}` is referenced by queues: "
+            f"{', '.join(in_use)}. Repoint or remove those queues first.")
+    doc["repos"] = [r for r in repos if (r or {}).get("id") != repo_id]
+
+    import os
+    tmp = CONFIG_PATH.with_suffix(".yaml.tmp")
+    with open(tmp, "w") as f:
+        y.dump(doc, f)
+    os.replace(tmp, CONFIG_PATH)
+
+
+def set_default_repo(repo_id: str) -> None:
+    """Update the top-level `default_repo_id`. The id must exist in
+    the registry."""
+    y = _yaml_roundtrip()
+    with open(CONFIG_PATH) as f:
+        doc = y.load(f)
+    repos = doc.get("repos") or []
+    if not any((r or {}).get("id") == repo_id for r in repos):
+        raise KeyError(repo_id)
+    doc["default_repo_id"] = repo_id
+
+    import os
+    tmp = CONFIG_PATH.with_suffix(".yaml.tmp")
+    with open(tmp, "w") as f:
+        y.dump(doc, f)
+    os.replace(tmp, CONFIG_PATH)
 
 
 def replace_queue_block(queue_id: str, yaml_text: str) -> dict:

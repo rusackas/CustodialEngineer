@@ -1488,6 +1488,210 @@ body {
   .toggle-row-attn .toggle-switch:checked::before {
   background: var(--warn);
 }
+
+/* ============================ repo picker ===========================
+   Replaces the legacy "repo owner" + "repo name" text inputs in the
+   queue settings forms. A select pulls from the global registry; a
+   small "+ add repo" button next to it opens the global settings
+   popover and focuses the repo-add form. */
+.repo-select-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.repo-select {
+  flex: 1 1 auto;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.repo-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.repo-add-btn {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 0 12px;
+  background: var(--bg-card);
+  color: var(--brand);
+  border: 1px dashed var(--brand);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--ease-quick), color var(--ease-quick);
+}
+.repo-add-btn:hover {
+  background: var(--brand);
+  color: var(--bg-card);
+  border-style: solid;
+}
+.settings-field-grid-span { grid-column: 1 / -1; }
+
+/* ========================== repos manager ===========================
+   Global-settings panel section. Lists every registered repo with
+   "set default" + remove actions, plus an inline add form below. */
+.settings-popover-wide {
+  min-width: 380px;
+  max-width: 460px;
+  max-height: 78vh;
+  overflow-y: auto;
+}
+.repos-manager {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--rule-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.repos-manager-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.repos-manager-header > span:first-child { flex: 0 0 auto; }
+.repos-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.repos-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+.repos-row-default {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.repos-row-text { flex: 1; min-width: 0; }
+.repos-row-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.repos-row-flag {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 1px 6px;
+  background: var(--brand);
+  color: var(--bg-card);
+  border-radius: 2px;
+}
+.repos-row-slug {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+.repos-row-slug code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-card);
+  padding: 0 5px;
+  border-radius: 2px;
+}
+.repos-row-id {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: -0.005em;
+}
+.repos-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.repos-row-form { margin: 0; }
+.repos-row-form button {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--ink-soft);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.repos-row-form button:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.repos-row-delete {
+  color: var(--ink-mute) !important;
+  padding: 3px 6px !important;
+  display: inline-flex;
+  align-items: center;
+}
+.repos-row-delete:hover {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+  background: var(--danger-soft) !important;
+}
+
+/* Inline add form: 2x2 grid for {id, display_name, owner, name}
+   plus a submit button below. */
+.repos-add-form {
+  margin-top: 4px;
+  padding: 10px;
+  background: var(--bg-inset);
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-sm);
+  gap: 8px;
+}
+.repos-add-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.repos-add-form label {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px;
+}
+.repos-add-form input {
+  font-family: var(--mono) !important;
+  font-size: 12px !important;
+  padding: 5px 8px !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
 .settings-section button[type="submit"] {
   align-self: flex-end;
 }
