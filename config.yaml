@@ -149,3 +149,4 @@ queues:
       ci_status: true
       merge_state: true
       review_threads: true
+    repo: ce

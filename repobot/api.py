@@ -223,6 +223,48 @@ def _sweep_stale_session_state() -> None:
 _sweep_stale_session_state()
 
 
+def _backfill_stale_item_raw() -> None:
+    """One-shot startup backfill: any item whose `raw` is missing
+    `author` or `createdAt` gets a per-PR refetch. This catches items
+    that were fetched before LIST_FIELDS expanded and have since
+    dropped out of the live `gh pr list` results (closed, merged,
+    dismissed-as-reviewer) — they'd never get refreshed by the
+    auto-refresh tick because they're not in any fresh fetch.
+
+    Runs in a background thread so startup isn't blocked. Each
+    refresh is one `gh pr view` call, scoped to the item's own repo.
+    Skipped silently if a refresh fails (the item just stays stale,
+    same as today)."""
+    from .runner import refresh_one_item
+    state = load_state()
+    targets: list[tuple[str, object]] = []
+    for qid, bucket in (state.get("queues") or {}).items():
+        for item in (bucket or {}).get("items") or []:
+            raw = item.get("raw") or {}
+            if not raw.get("author") or not raw.get("createdAt"):
+                if item.get("id") is not None:
+                    targets.append((qid, item["id"]))
+    if not targets:
+        return
+    print(f"[startup] backfilling raw on {len(targets)} stale "
+          f"item(s) — running in background")
+
+    def _run():
+        ok = 0
+        for qid, iid in targets:
+            try:
+                refresh_one_item(qid, iid)
+                ok += 1
+            except Exception as exc:
+                print(f"[backfill] {qid}/{iid}: {exc}")
+        print(f"[startup] backfill done: {ok}/{len(targets)}")
+    threading.Thread(target=_run, daemon=True,
+                     name="raw-backfill").start()
+
+
+_backfill_stale_item_raw()
+
+
 def _auto_refresh_interval() -> int:
     """Resolve the auto-refresh interval at boot. Global setting
     (user-editable) wins over config.yaml default so the user can
@@ -237,9 +279,12 @@ def _auto_refresh_interval() -> int:
 
 def _start_auto_refresh() -> None:
     """One daemon thread per queue. Each wakes every N seconds and calls
-    `run_queue` (non-blocking triage fan-out) to keep the hopper full.
-    Deep refresh — re-checking existing items' CI — is still manual via
-    the Refresh button."""
+    `run_queue` (non-blocking triage fan-out) to keep the hopper full
+    and refresh `raw` on every existing item from the same fetch (free
+    — the GH API call already happened, this just merges its results).
+    Without that merge, items frozen on the board with stale `raw`
+    (e.g. from before LIST_FIELDS expanded) never pick up newer fields
+    like `author` / `createdAt` until the user manually clicks Update."""
     interval = _auto_refresh_interval()
     if interval <= 0:
         return
@@ -247,7 +292,8 @@ def _start_auto_refresh() -> None:
         def loop(qid=q["id"]):
             while True:
                 try:
-                    run_queue(qid, wait_for_triage=False)
+                    run_queue(qid, wait_for_triage=False,
+                              refresh_existing=True)
                 except Exception as exc:
                     print(f"[auto-refresh {qid}] {exc}")
                 time.sleep(interval)
