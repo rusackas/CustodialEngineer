@@ -14,9 +14,12 @@
               <span class="count">{{ cards|length }}</span>
               {% if st == done_state and cards %}
                 <form method="post" action="/queues/{{ queue.id }}/clear-done"
-                      class="clear-done-form"
-                      title="Delete every card in this column. Any PR still in the upstream feed will come back on the next Update.">
-                  <button type="submit" class="clear-done">clear all</button>
+                      class="clear-done-form">
+                  <button type="submit" class="clear-done"
+                          aria-label="Clear all done cards"
+                          title="Delete every card in this column. Any PR still in the upstream feed will come back on the next Update.">
+                    {{ icon('trash', size=12) }}
+                  </button>
                 </form>
               {% endif %}
             </h3>

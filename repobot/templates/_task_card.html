@@ -37,17 +37,19 @@
         {% if task.status == 'stuck' %}
           <form method="post" action="/tasks/{{ task.id }}/retry"
                 class="card-refresh-form">
-            <button type="submit" class="card-retriage"
+            <button type="submit" class="card-retriage card-icon-only"
+                    aria-label="Retry task"
                     title="Re-dispatch this task with the same prompt. Aborts any running session and resets the worktree.">
-              {{ icon('history', size=11) }} retry
+              {{ icon('history', size=12) }}
             </button>
           </form>
         {% endif %}
         <form method="post" action="/tasks/{{ task.id }}/delete"
               class="card-refresh-form">
-          <button type="submit" class="card-refresh"
+          <button type="submit" class="card-refresh card-icon-only"
+                  aria-label="Delete task"
                   title="Delete this task, abort its session, prune the worktree.">
-            {{ icon('trash', size=11) }} delete
+            {{ icon('trash', size=12) }}
           </button>
         </form>
       </span>
