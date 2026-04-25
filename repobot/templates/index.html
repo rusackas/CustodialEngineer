@@ -376,9 +376,6 @@
                   data-settings-tab="form">Form</button>
           <button type="button" class="settings-tab"
                   role="tab" aria-selected="false"
-                  data-settings-tab="yaml">Raw YAML</button>
-          <button type="button" class="settings-tab"
-                  role="tab" aria-selected="false"
                   data-settings-tab="prompt">Prompt</button>
         </div>
 
@@ -619,6 +616,63 @@
 
               </div>
 
+              {# State machine section. Each row is one column. Roles
+                 (initial / done / awaiting) are exclusive across rows
+                 — the JS enforces single-select. Renaming a column
+                 migrates every item that was in it (server-side via
+                 the `_state_renames` map). The list serializes to the
+                 hidden `states_json` field on submit. #}
+              <section class="state-machine-section">
+                <h4 class="state-machine-header">
+                  <span>State machine</span>
+                  <span class="queue-toggles-rule" aria-hidden="true"></span>
+                </h4>
+                <div class="settings-section-help state-machine-help">
+                  Each row is one column on the board. Pick which is the
+                  initial column (where new items land), the done column,
+                  and the optional awaiting-update column. Renaming a
+                  column moves all its items along with it; deleting
+                  refuses if items are still in there.
+                </div>
+                <label class="settings-toggle state-machine-multi-toggle">
+                  <input type="checkbox" name="multi_bucket"
+                         data-state-multi-toggle
+                         {% if (queue.initial_states or []) | length > 1 %}checked{% endif %} />
+                  <span>Multi-bucket triage (more than one initial column)</span>
+                </label>
+                {% set _initials = queue.initial_states or [queue.initial_state] %}
+                <ul class="state-machine-list" data-state-list>
+                  {% for s in queue.states %}
+                    <li class="state-machine-row" data-original-name="{{ s }}">
+                      <input type="text" class="state-machine-name"
+                             value="{{ s }}" required
+                             aria-label="State name" />
+                      <label class="state-machine-role state-machine-role-initial">
+                        <input type="checkbox" data-role="initial"
+                               {% if s in _initials %}checked{% endif %} />
+                        <span>initial</span>
+                      </label>
+                      <label class="state-machine-role state-machine-role-done">
+                        <input type="checkbox" data-role="done"
+                               {% if s == queue.done_state %}checked{% endif %} />
+                        <span>done</span>
+                      </label>
+                      <label class="state-machine-role state-machine-role-awaiting">
+                        <input type="checkbox" data-role="awaiting"
+                               {% if s == queue.awaiting_state %}checked{% endif %} />
+                        <span>awaiting</span>
+                      </label>
+                      <button type="button" class="state-machine-delete"
+                              title="Remove this column">×</button>
+                    </li>
+                  {% endfor %}
+                </ul>
+                <button type="button" class="state-machine-add"
+                        data-state-add>+ add column</button>
+                <input type="hidden" name="states_json"
+                       data-states-json value="" />
+              </section>
+
               <button type="submit">Save &amp; refetch</button>
             </form>
           </section>
@@ -647,40 +701,14 @@
           </section>
         </div>
 
-        <div class="settings-tab-pane" data-settings-pane="yaml"
-             data-raw-url="/queues/{{ queue.id }}/definition/raw">
-          <section class="settings-section">
-            <div class="settings-section-title">Raw YAML</div>
-            <div class="settings-section-help">
-              Escape hatch for anything the form can't express. Edit
-              the queue's full <code>config.yaml</code> block below;
-              the <code>id</code> field can't change (the state file
-              is keyed by it). Save writes back to <code>config.yaml</code>,
-              clears this queue's cards, and re-fetches.
-            </div>
-            <form method="post"
-                  action="/queues/{{ queue.id }}/definition/raw"
-                  class="settings-form settings-form-static settings-form-yaml">
-              <textarea name="yaml_text"
-                        class="settings-yaml-textarea"
-                        spellcheck="false"
-                        data-yaml-editor
-                        rows="20"
-                        placeholder="Loading queue definition…"></textarea>
-              <div class="settings-yaml-error" data-yaml-error></div>
-              <button type="submit">Save &amp; refetch</button>
-            </form>
-          </section>
-        </div>
-
         <div class="settings-tab-pane" data-settings-pane="prompt"
              data-compose-context="edit">
           <section class="settings-section">
             <div class="settings-section-title">Prompt</div>
             <div class="settings-section-help">
               Describe what you want to change in plain English.
-              Claude will draft the YAML for you; you'll land in the
-              Raw YAML tab to review before saving.
+              Claude will draft the queue config for you and populate
+              the Form tab — review there before saving.
             </div>
             <form class="settings-form settings-form-static settings-form-prompt"
                   data-compose-form>
@@ -726,9 +754,6 @@
                 data-settings-tab="form">Form</button>
         <button type="button" class="settings-tab"
                 role="tab" aria-selected="false"
-                data-settings-tab="yaml">Raw YAML</button>
-        <button type="button" class="settings-tab"
-                role="tab" aria-selected="false"
                 data-settings-tab="prompt">Prompt</button>
       </div>
 
@@ -736,9 +761,9 @@
         <section class="settings-section">
           <div class="settings-section-title">Identity &amp; query</div>
           <div class="settings-section-help">
-            Form mode uses the standard state machine (in triage → in
-            progress → awaiting update → done). For a custom state
-            machine, switch to the Raw YAML tab.
+            Defaults to the standard state machine (in triage → in
+            progress → awaiting update → done). Customize columns and
+            roles in the State machine section below.
           </div>
           <form method="post" action="/queues/new/form"
                 class="settings-form settings-form-static"
@@ -893,30 +918,62 @@
               </section>
             </div>
 
-            <button type="submit">Create queue</button>
-          </form>
-        </section>
-      </div>
+            {# State machine. Seeds with the standard 4-column setup;
+               user can rename / add / delete / re-role before saving.
+               Same structure as the edit-queue version. #}
+            <section class="state-machine-section">
+              <h4 class="state-machine-header">
+                <span>State machine</span>
+                <span class="queue-toggles-rule" aria-hidden="true"></span>
+              </h4>
+              <div class="settings-section-help state-machine-help">
+                Columns on the board. Pick which is the initial column,
+                the done column, and the awaiting-update column. The
+                Form tab supports any state machine you want to define
+                — no Raw YAML needed.
+              </div>
+              <label class="settings-toggle state-machine-multi-toggle">
+                <input type="checkbox" name="multi_bucket"
+                       data-state-multi-toggle />
+                <span>Multi-bucket triage (more than one initial column)</span>
+              </label>
+              <ul class="state-machine-list" data-state-list>
+                {% for s, role in [
+                    ('in triage', 'initial'),
+                    ('in progress', ''),
+                    ('awaiting update', 'awaiting'),
+                    ('done', 'done')
+                ] %}
+                  <li class="state-machine-row" data-original-name="">
+                    <input type="text" class="state-machine-name"
+                           value="{{ s }}" required
+                           aria-label="State name" />
+                    <label class="state-machine-role state-machine-role-initial">
+                      <input type="checkbox" data-role="initial"
+                             {% if role == 'initial' %}checked{% endif %} />
+                      <span>initial</span>
+                    </label>
+                    <label class="state-machine-role state-machine-role-done">
+                      <input type="checkbox" data-role="done"
+                             {% if role == 'done' %}checked{% endif %} />
+                      <span>done</span>
+                    </label>
+                    <label class="state-machine-role state-machine-role-awaiting">
+                      <input type="checkbox" data-role="awaiting"
+                             {% if role == 'awaiting' %}checked{% endif %} />
+                      <span>awaiting</span>
+                    </label>
+                    <button type="button" class="state-machine-delete"
+                            title="Remove this column">×</button>
+                  </li>
+                {% endfor %}
+              </ul>
+              <button type="button" class="state-machine-add"
+                      data-state-add>+ add column</button>
+              <input type="hidden" name="states_json"
+                     data-states-json value="" />
+            </section>
 
-      <div class="settings-tab-pane" data-settings-pane="yaml"
-           data-raw-url="/queues/new/template">
-        <section class="settings-section">
-          <div class="settings-section-title">Raw YAML</div>
-          <div class="settings-section-help">
-            Full control. Edit the template below and save to add the
-            queue. State machine, query, and all other fields are at
-            your disposal.
-          </div>
-          <form method="post" action="/queues/new/raw"
-                class="settings-form settings-form-static settings-form-yaml"
-                hx-boost="false">
-            <textarea name="yaml_text"
-                      class="settings-yaml-textarea"
-                      spellcheck="false"
-                      data-yaml-editor
-                      rows="20"
-                      placeholder="Loading template…"></textarea>
-            <div class="settings-yaml-error" data-yaml-error></div>
             <button type="submit">Create queue</button>
           </form>
         </section>
@@ -928,8 +985,8 @@
           <div class="settings-section-title">Prompt</div>
           <div class="settings-section-help">
             Describe the queue you want in plain English. Claude will
-            draft the YAML; you'll land in the Raw YAML tab to review
-            before creating.
+            draft the queue config and populate the Form tab — review
+            there before creating.
           </div>
           <form class="settings-form settings-form-static settings-form-prompt"
                 data-compose-form>
@@ -2098,27 +2155,8 @@
         pane.classList.toggle('is-active',
           pane.dataset.settingsPane === which);
       });
-      if (which === 'yaml') {
-        const pane = modal.querySelector('[data-settings-pane="yaml"]');
-        loadYamlEditor(pane);
-      }
     }
 
-    async function loadYamlEditor(pane) {
-      if (!pane || pane.dataset.yamlLoaded === '1') return;
-      const ta = pane.querySelector('[data-yaml-editor]');
-      if (!ta) return;
-      try {
-        const r = await fetch(pane.dataset.rawUrl,
-                              { credentials: 'same-origin' });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const d = await r.json();
-        ta.value = d.yaml || '';
-        pane.dataset.yamlLoaded = '1';
-      } catch (err) {
-        ta.placeholder = 'Failed to load YAML: ' + err.message;
-      }
-    }
     function closeSettingsModals() {
       document.querySelectorAll('[data-settings-modal].is-open')
         .forEach(el => {
@@ -2186,21 +2224,6 @@
       const prompt = (promptTa && promptTa.value || '').trim();
       if (!prompt) return;
 
-      const yamlPane = modal.querySelector(
-        '[data-settings-pane="yaml"]');
-      const yamlTa = yamlPane
-        && yamlPane.querySelector('[data-yaml-editor]');
-      // For edit mode, seed the skill with the current YAML so it
-      // can preserve fields the prompt doesn't mention.
-      let currentYaml = '';
-      if (pane.dataset.composeContext === 'edit' && yamlTa) {
-        // Make sure the YAML tab has been loaded at least once.
-        if (yamlPane.dataset.yamlLoaded !== '1') {
-          await loadYamlEditor(yamlPane);
-        }
-        currentYaml = yamlTa.value || '';
-      }
-
       if (errorEl) errorEl.textContent = '';
       if (statusEl) {
         statusEl.innerHTML =
@@ -2210,7 +2233,6 @@
 
       const fd = new FormData();
       fd.append('prompt', prompt);
-      if (currentYaml) fd.append('current_yaml', currentYaml);
 
       try {
         const r = await fetch('/queues/compose',
@@ -2225,22 +2247,83 @@
           return;
         }
         const data = await r.json();
-        // Drop the YAML into the sibling YAML editor and mark it
-        // loaded so the tab switch doesn't re-fetch the template.
-        if (yamlTa && data.yaml) {
-          yamlTa.value = data.yaml;
-          yamlPane.dataset.yamlLoaded = '1';
+        // Server parsed the AI's YAML into form-shaped fields; pour
+        // them into the Form tab and flip there so the user reviews
+        // in the editable surface they'll save from. If the parse
+        // failed (no `fields`), surface the raw message and bail.
+        if (data.fields) {
+          populateFormFromFields(modal, data.fields);
+          setSettingsTab(modal, 'form');
+        } else if (statusEl) {
+          statusEl.textContent =
+            data.message || 'composed (form parse failed)';
         }
-        if (statusEl) {
+        if (statusEl && data.fields) {
           statusEl.textContent = data.message || 'composed';
         }
-        // Flip to the YAML tab so the user can review / edit / save.
-        setSettingsTab(modal, 'yaml');
       } catch (err) {
         if (errorEl) errorEl.textContent = 'Network error: ' + err.message;
       } finally {
         if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
       }
+    }
+
+    // Populate the Form tab's fields from a compose-queue response.
+    // Mirrors the `_yaml_to_form_fields` shape on the server side —
+    // anything outside that schema is ignored.
+    function populateFormFromFields(modal, f) {
+      const formPane = modal.querySelector('[data-settings-pane="form"]');
+      if (!formPane) return;
+      const setVal = (sel, v) => {
+        const el = formPane.querySelector(sel);
+        if (el) el.value = v == null ? '' : v;
+      };
+      const setCheck = (sel, v) => {
+        const el = formPane.querySelector(sel);
+        if (el) el.checked = !!v;
+      };
+      // Identity / repo / paging
+      if (f.id != null) setVal('input[name="id"]', f.id);
+      setVal('input[name="title"]', f.title);
+      if (f.max_in_flight != null)
+        setVal('input[name="max_in_flight"]', f.max_in_flight);
+      // Repo: try registry id first, then slug. The select keeps the
+      // empty (default) option selected if neither matches.
+      const repoSel = formPane.querySelector('select[name="repo_id"]');
+      if (repoSel) {
+        const target = (f.repo_id || '').trim();
+        repoSel.value = '';
+        for (const opt of repoSel.options) {
+          if (opt.value === target) { repoSel.value = target; break; }
+        }
+      }
+      const q = f.query || {};
+      setVal('input[name="q_author"]', q.author);
+      const stateSel = formPane.querySelector('select[name="q_state"]');
+      if (stateSel && q.state) stateSel.value = q.state;
+      setVal('input[name="q_review_requested"]', q.review_requested);
+      setVal('input[name="q_assignee"]', q.assignee);
+      setVal('input[name="q_milestone"]', q.milestone);
+      setVal('input[name="q_labels"]', (q.labels || []).join(', '));
+      setVal('textarea[name="q_search"]', q.search);
+      const h = f.hydrate || {};
+      setCheck('input[name="h_ci_status"]', h.ci_status);
+      setCheck('input[name="h_merge_state"]', h.merge_state);
+      setCheck('input[name="h_review_threads"]', h.review_threads);
+      const fl = f.filter || {};
+      setCheck('input[name="f_attention_only"]', fl.attention_only);
+      setCheck('input[name="f_non_draft"]', fl.non_draft);
+      // State machine: rebuild the row list from scratch.
+      const list = formPane.querySelector('[data-state-list]');
+      const multiToggle = formPane.querySelector(
+        '[data-state-multi-toggle]');
+      if (list && Array.isArray(f.states)) {
+        list.innerHTML = '';
+        for (const s of f.states) {
+          list.appendChild(buildStateRow(s));
+        }
+      }
+      if (multiToggle) multiToggle.checked = !!f.multi_bucket;
     }
 
     // YAML save: let the form POST normally via hx-boost, but catch
@@ -2267,6 +2350,139 @@
         closeSettingsModals();
       }
     });
+
+    // ============== State machine editor ================
+    // Each row in `[data-state-list]` is one column of the queue's
+    // state machine. Roles (initial / done / awaiting) are exclusive
+    // across rows: ticking one un-ticks the others. `initial` is
+    // exclusive only when the multi-bucket toggle is OFF; when ON,
+    // multiple rows can be initial (the review-requested setup).
+    // On form submit we serialize the row list into the hidden
+    // `states_json` field; the server takes it from there.
+
+    function buildStateRow(name) {
+      const li = document.createElement('li');
+      li.className = 'state-machine-row';
+      li.dataset.originalName = '';
+      li.innerHTML = `
+        <input type="text" class="state-machine-name"
+               value="${escapeHtml(name || '')}" required
+               aria-label="State name">
+        <label class="state-machine-role state-machine-role-initial">
+          <input type="checkbox" data-role="initial"><span>initial</span>
+        </label>
+        <label class="state-machine-role state-machine-role-done">
+          <input type="checkbox" data-role="done"><span>done</span>
+        </label>
+        <label class="state-machine-role state-machine-role-awaiting">
+          <input type="checkbox" data-role="awaiting"><span>awaiting</span>
+        </label>
+        <button type="button" class="state-machine-delete"
+                title="Remove this column">×</button>`;
+      return li;
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    document.addEventListener('click', (e) => {
+      // Add a column.
+      const addBtn = e.target.closest('[data-state-add]');
+      if (addBtn) {
+        const list = addBtn.parentElement
+          .querySelector('[data-state-list]');
+        if (list) list.appendChild(buildStateRow(''));
+        return;
+      }
+      // Delete a column.
+      const delBtn = e.target.closest('.state-machine-delete');
+      if (delBtn) {
+        const row = delBtn.closest('.state-machine-row');
+        const list = row && row.parentElement;
+        // Refuse to delete the last row — every queue needs at least
+        // one column.
+        if (list && list.querySelectorAll('.state-machine-row').length > 1) {
+          row.remove();
+        }
+      }
+    });
+
+    // Role exclusivity: `done` and `awaiting` are always at-most-one
+    // across all rows in the same list. `initial` is at-most-one
+    // unless the multi-bucket toggle is on.
+    document.addEventListener('change', (e) => {
+      const cb = e.target;
+      if (!(cb instanceof HTMLInputElement)) return;
+      const role = cb.dataset && cb.dataset.role;
+      if (!role || !cb.checked) return;
+      const row = cb.closest('.state-machine-row');
+      const list = row && row.parentElement;
+      if (!list) return;
+      // Find the multi-bucket toggle in the same form, if any.
+      const form = list.closest('form');
+      const multi = form
+        && form.querySelector('[data-state-multi-toggle]');
+      const allowMulti = role === 'initial'
+        && multi && multi.checked;
+      if (allowMulti) return;
+      list.querySelectorAll(
+        `input[type="checkbox"][data-role="${role}"]`,
+      ).forEach(other => {
+        if (other !== cb) other.checked = false;
+      });
+    });
+
+    // Multi-bucket toggle off → collapse to a single initial row
+    // (keep the first checked one, untick the rest).
+    document.addEventListener('change', (e) => {
+      const t = e.target;
+      if (!(t instanceof HTMLInputElement)) return;
+      if (!t.dataset || !('stateMultiToggle' in t.dataset)) return;
+      if (t.checked) return;
+      const form = t.closest('form');
+      if (!form) return;
+      let kept = false;
+      form.querySelectorAll(
+        '[data-state-list] input[type="checkbox"][data-role="initial"]',
+      ).forEach(cb => {
+        if (cb.checked) {
+          if (!kept) kept = true;
+          else cb.checked = false;
+        }
+      });
+    });
+
+    // On form submit (any settings form with a state-machine list),
+    // serialize the row list into the hidden `states_json` field so
+    // the server gets a clean payload + can detect renames via
+    // `original_name`.
+    document.addEventListener('submit', (e) => {
+      const form = e.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      const list = form.querySelector('[data-state-list]');
+      const hidden = form.querySelector('[data-states-json]');
+      if (!list || !hidden) return;
+      const out = [];
+      list.querySelectorAll('.state-machine-row').forEach(row => {
+        const nameInput = row.querySelector('.state-machine-name');
+        const name = (nameInput && nameInput.value || '').trim();
+        if (!name) return;
+        out.push({
+          name,
+          original_name: row.dataset.originalName || '',
+          is_initial: !!row.querySelector(
+            'input[data-role="initial"]:checked'),
+          is_done: !!row.querySelector(
+            'input[data-role="done"]:checked'),
+          is_awaiting: !!row.querySelector(
+            'input[data-role="awaiting"]:checked'),
+        });
+      });
+      hidden.value = JSON.stringify(out);
+    }, true);
 
     // ============== Theme picker ================
     // data-theme on <html>. "auto" means follow OS; we re-apply on

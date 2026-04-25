@@ -392,6 +392,83 @@ def flush_state_dict(state: dict) -> None:
         _flush_state_to_conn(conn(), state)
 
 
+def items_in_states(queue_id: str,
+                    state_names: list[str] | set[str]) -> dict[str, int]:
+    """Count items currently sitting in each of the given state names,
+    for one queue. Returns `{state_name: count}` for any state with
+    occupants; states with zero items are omitted from the result.
+
+    Used by the state-machine editor to refuse a delete that would
+    orphan items — we'd rather make the user move them first than
+    silently strip their state and have the runner resurrect them
+    in some default column."""
+    if not state_names:
+        return {}
+    placeholders = ",".join("?" * len(state_names))
+    out: dict[str, int] = {}
+    try:
+        with _LOCK:
+            rows = conn().execute(
+                f"""SELECT state, COUNT(*) AS n
+                    FROM queue_items
+                    WHERE queue_id = ? AND state IN ({placeholders})
+                    GROUP BY state""",
+                (queue_id, *state_names),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        print(f"[db] items_in_states failed: {exc}")
+        return {}
+    for r in rows:
+        if r["n"]:
+            out[r["state"]] = int(r["n"])
+    return out
+
+
+def rename_item_states(queue_id: str,
+                       rename_map: dict[str, str]) -> int:
+    """Apply a {old → new} state rename to every queue_items row in
+    one queue. Updates both the `state` column and the embedded
+    `data_json["state"]` so the in-memory dict shape stays
+    consistent.
+
+    Returns the count of rows touched. Wrapped in a single
+    transaction so a partial rename can't happen.
+    """
+    if not rename_map:
+        return 0
+    n = 0
+    with _LOCK:
+        c = conn()
+        c.execute("BEGIN")
+        try:
+            for old, new in rename_map.items():
+                if not old or old == new:
+                    continue
+                rows = c.execute(
+                    """SELECT queue_id, item_id, data_json FROM queue_items
+                       WHERE queue_id = ? AND state = ?""",
+                    (queue_id, old),
+                ).fetchall()
+                for r in rows:
+                    try:
+                        item = json.loads(r["data_json"])
+                    except json.JSONDecodeError:
+                        continue
+                    item["state"] = new
+                    c.execute(
+                        """UPDATE queue_items SET state = ?, data_json = ?
+                           WHERE queue_id = ? AND item_id = ?""",
+                        (new, json.dumps(item, default=str),
+                         r["queue_id"], r["item_id"]),
+                    )
+                    n += 1
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+    return n
+
+
 # ============================================================ audit log
 # actions_log + state_transitions are append-only — every write is a
 # single INSERT. No mutation, no deletion. The append-only shape is

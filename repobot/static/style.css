@@ -1489,6 +1489,164 @@ body {
   background: var(--warn);
 }
 
+/* ========================== state machine ===========================
+   One row per column on the queue's board. Roles (initial / done /
+   awaiting) are exclusive across rows — the JS enforces that;
+   visually they're three small chips each row carries. Drag-handle
+   left out for now; +/× cover the common case.
+   ------------------------------------------------------------------ */
+.state-machine-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--rule-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.state-machine-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.state-machine-header > span:first-child { flex: 0 0 auto; }
+.state-machine-help {
+  font-size: 11px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+.state-machine-multi-toggle {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--ink) !important;
+}
+.state-machine-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.state-machine-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+.state-machine-name {
+  flex: 1;
+  min-width: 100px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.state-machine-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.state-machine-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--ink-mute);
+  border: 1px solid var(--rule);
+  cursor: pointer;
+  transition: color var(--ease-quick), background var(--ease-quick), border-color var(--ease-quick);
+}
+.state-machine-role input[type="checkbox"] {
+  margin: 0;
+  width: 11px;
+  height: 11px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.state-machine-role:has(input:checked) {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+.state-machine-role-done:has(input:checked) {
+  background: var(--alert-tip-soft);
+  color: var(--alert-tip-ink);
+  border-color: var(--ok);
+}
+.state-machine-role-awaiting:has(input:checked) {
+  background: var(--alert-warning-soft);
+  color: var(--alert-warning-ink);
+  border-color: var(--warn);
+}
+.state-machine-delete {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: color var(--ease-quick), border-color var(--ease-quick), background var(--ease-quick);
+}
+.state-machine-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.state-machine-add {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  padding: 4px 10px;
+  background: var(--bg-card);
+  color: var(--brand);
+  border: 1px dashed var(--brand);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--ease-quick), color var(--ease-quick);
+}
+.state-machine-add:hover {
+  background: var(--brand);
+  color: var(--bg-card);
+  border-style: solid;
+}
+
 /* ============================ repo picker ===========================
    Replaces the legacy "repo owner" + "repo name" text inputs in the
    queue settings forms. A select pulls from the global registry; a

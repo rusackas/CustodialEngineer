@@ -22,7 +22,13 @@ def load_config() -> dict:
 # and requires a config-file edit by hand. Keeps the editor tight and
 # means accidental form submissions can't corrupt the core shape.
 EDITABLE_QUEUE_FIELDS = {"title", "max_in_flight", "query", "repo",
-                         "hydrate", "filter"}
+                         "hydrate", "filter",
+                         "states", "initial_state", "initial_states",
+                         "done_state", "awaiting_state",
+                         # Internal-use only — see _state_machine_renames
+                         # docstring. Carries the {old_name: new_name}
+                         # mapping so the helper can migrate items.
+                         "_state_renames"}
 EDITABLE_QUERY_KEYS = {"author", "state", "review_requested", "labels",
                        "milestone", "head", "base", "assignee", "search"}
 EDITABLE_HYDRATE_KEYS = {"ci_status", "merge_state", "review_threads"}
@@ -106,6 +112,91 @@ def update_queue_definition(queue_id: str, updates: dict) -> dict:
                 raise ValueError(
                     f"not editable filter keys: {', '.join(sorted(bad_f))}")
             target["filter"] = {k: bool(v) for k, v in f.items() if v}
+
+    # State machine edits. The form sends `states` (the ordered list)
+    # plus the role assignments (initial / done / awaiting). For
+    # multi-bucket queues, `initial_states` carries the list of
+    # pre-triage buckets and supersedes `initial_state` for the runner;
+    # we still write `initial_state` as the first bucket so single-state
+    # call sites have a fallback. Renames migrate every affected item
+    # in SQL so we don't orphan rows that were sitting in a renamed
+    # state.
+    if "states" in updates:
+        new_states = list(updates["states"] or [])
+        if not new_states:
+            raise ValueError("states must have at least one entry")
+        seen: set[str] = set()
+        for s in new_states:
+            if not isinstance(s, str) or not s.strip():
+                raise ValueError("every state must be a non-empty string")
+            if s in seen:
+                raise ValueError(f"duplicate state name: {s!r}")
+            seen.add(s)
+        old_states = list(target.get("states") or [])
+        # Caller-supplied rename map: {old_name: new_name}. The form
+        # tracks each row's original name client-side and passes it
+        # through so we can distinguish a rename from a delete + add.
+        renames = updates.get("_state_renames") or {}
+        if not isinstance(renames, dict):
+            raise ValueError("_state_renames must be a mapping")
+        # Refuse to delete a state that still has items in it. Renames
+        # are fine — we'll migrate them next.
+        renamed_old = set(renames.keys())
+        deleted = [s for s in old_states
+                   if s not in new_states and s not in renamed_old]
+        if deleted:
+            from . import db as _db
+            occupied = _db.items_in_states(queue_id, deleted)
+            if occupied:
+                msg = ", ".join(f"{s} ({n})" for s, n in occupied.items())
+                raise ValueError(
+                    "Can't delete states with items in them: "
+                    f"{msg}. Move those items to another column first.")
+        # Apply renames to items in SQL.
+        if renames:
+            from . import db as _db
+            _db.rename_item_states(queue_id, renames)
+        target["states"] = new_states
+
+    if "initial_states" in updates:
+        ss = updates.get("initial_states")
+        if ss is None:
+            target.pop("initial_states", None)
+        else:
+            ss = list(ss)
+            avail = set(target.get("states") or updates.get("states") or [])
+            for s in ss:
+                if s not in avail:
+                    raise ValueError(
+                        f"initial_states[{s!r}] is not in `states`")
+            target["initial_states"] = ss
+    if "initial_state" in updates:
+        s = updates["initial_state"]
+        avail = set(target.get("states") or updates.get("states") or [])
+        if s not in avail:
+            raise ValueError(
+                f"initial_state {s!r} is not in `states`")
+        target["initial_state"] = s
+    if "done_state" in updates:
+        s = updates["done_state"]
+        if s is None:
+            target.pop("done_state", None)
+        else:
+            avail = set(target.get("states") or updates.get("states") or [])
+            if s not in avail:
+                raise ValueError(
+                    f"done_state {s!r} is not in `states`")
+            target["done_state"] = s
+    if "awaiting_state" in updates:
+        s = updates["awaiting_state"]
+        if s is None:
+            target.pop("awaiting_state", None)
+        else:
+            avail = set(target.get("states") or updates.get("states") or [])
+            if s not in avail:
+                raise ValueError(
+                    f"awaiting_state {s!r} is not in `states`")
+            target["awaiting_state"] = s
 
     # Atomic write: stage to .tmp then rename. Same pattern as the
     # state-file writer — avoids leaving a truncated config.yaml if

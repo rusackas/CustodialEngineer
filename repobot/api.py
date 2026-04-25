@@ -871,14 +871,26 @@ def update_queue_definition_endpoint(
     h_review_threads: str = Form(""),
     f_attention_only: str = Form(""),
     f_non_draft: str = Form(""),
+    states_json: str = Form(""),
+    multi_bucket: str = Form(""),
 ):
     """Rewrite one queue's query in config.yaml, preserving comments
     and structure. Labels are a comma-separated string in the form;
-    stored as a list. On success, clear this queue's items so the
-    next fetch tick repopulates against the new query — otherwise
-    stale cards from the old query linger on the board."""
+    stored as a list. The state machine arrives as `states_json` (a
+    list of `{name, original_name, is_initial, is_done, is_awaiting}`)
+    so we can detect renames vs adds vs deletes. Renames migrate
+    every affected item in SQL; deletes refuse if items still occupy
+    the column.
+
+    On a query change, clear this queue's items so the next fetch
+    tick repopulates against the new query — otherwise stale cards
+    from the old query linger on the board. Pure state-machine
+    edits (no query change) keep their items intact (the renamer
+    already migrated them)."""
     queues_cfg = get_queues_config()
-    if not any(q.get("id") == queue_id for q in queues_cfg):
+    q_existing = next((q for q in queues_cfg
+                       if q.get("id") == queue_id), None)
+    if q_existing is None:
         raise HTTPException(status_code=404, detail="unknown queue")
 
     labels_list = [l.strip() for l in q_labels.split(",") if l.strip()]
@@ -939,19 +951,93 @@ def update_queue_definition_endpoint(
         updates["repo"] = rid
     else:
         updates["repo"] = None
+
+    # State machine: parse the JSON the form serialized from the row
+    # editor. Each entry carries its original_name so we can
+    # distinguish a rename from a delete + add. update_queue_definition
+    # does the validation (unique names, role assignments must be in
+    # `states`, deleted columns can't have items, etc.).
+    if states_json.strip():
+        try:
+            entries = json.loads(states_json)
+            if not isinstance(entries, list):
+                raise ValueError("states_json must be a JSON array")
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"states_json: {exc}")
+        new_states: list[str] = []
+        renames: dict[str, str] = {}
+        initial_list: list[str] = []
+        done_state = None
+        awaiting_state = None
+        seen: set[str] = set()
+        for e in entries:
+            if not isinstance(e, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="each states_json entry must be an object")
+            name = (e.get("name") or "").strip()
+            if not name:
+                raise HTTPException(
+                    status_code=400, detail="state name is required")
+            if name in seen:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"duplicate state name: {name!r}")
+            seen.add(name)
+            new_states.append(name)
+            orig = (e.get("original_name") or "").strip()
+            if orig and orig != name:
+                renames[orig] = name
+            if e.get("is_initial"):
+                initial_list.append(name)
+            if e.get("is_done"):
+                done_state = name
+            if e.get("is_awaiting"):
+                awaiting_state = name
+        if not initial_list:
+            raise HTTPException(
+                status_code=400,
+                detail="at least one state must be marked initial")
+        if not (multi_bucket or "").lower() in ("on", "true", "1", "yes"):
+            # Single-bucket queue — keep only the first initial.
+            initial_list = initial_list[:1]
+        updates["states"] = new_states
+        updates["_state_renames"] = renames
+        updates["initial_state"] = initial_list[0]
+        if len(initial_list) > 1:
+            updates["initial_states"] = initial_list
+        else:
+            # Drop the multi-bucket field when collapsing back to one.
+            updates["initial_states"] = None
+        updates["done_state"] = done_state
+        updates["awaiting_state"] = awaiting_state
+
+    # Did the query actually change? If not, skip the post-save wipe
+    # so pure state-machine edits keep their items (already migrated
+    # by the rename helper). The structured fields are compared at
+    # the same shape we'd serialize them.
+    old_query = q_existing.get("query") or {}
+    new_query_for_compare = {k: v for k, v in query_updates.items()
+                             if v not in (None, "", [])}
+    old_query_for_compare = {k: v for k, v in old_query.items()
+                             if v not in (None, "", [])}
+    query_changed = (new_query_for_compare != old_query_for_compare)
+
     try:
         update_queue_definition(queue_id, updates)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Wipe this queue's items so the next fetch repopulates from the
-    # new query. Without this, cards matching the OLD query stick
-    # around until the user manually deletes or closes them.
-    def _clear(state):
-        bucket = state.get("queues", {}).get(queue_id)
-        if bucket:
-            bucket["items"] = []
-    _mutate(_clear)
+    if query_changed:
+        # Wipe this queue's items so the next fetch repopulates from
+        # the new query. Without this, cards matching the OLD query
+        # stick around until the user manually deletes or closes them.
+        def _clear(state):
+            bucket = state.get("queues", {}).get(queue_id)
+            if bucket:
+                bucket["items"] = []
+        _mutate(_clear)
 
     # Kick an immediate fetch in a background thread so the user sees
     # new cards show up without waiting for the auto-refresh tick.
@@ -998,11 +1084,83 @@ def queue_compose(
             status_code=400,
             detail=message or "compose skill returned no YAML"
         )
+    # Also parse the YAML to a form-shaped dict so the client can
+    # populate the structured form directly. The skill keeps emitting
+    # YAML (its native output); we translate here. Failure is
+    # graceful — the caller still gets the YAML string.
+    fields = None
+    try:
+        from ruamel.yaml import YAML as _YAML
+        parsed = _YAML(typ="safe").load(yaml_out)
+        if isinstance(parsed, dict):
+            fields = _yaml_to_form_fields(parsed)
+    except Exception as exc:
+        print(f"[compose] YAML→form parse failed: {exc}")
     return JSONResponse({
         "yaml": yaml_out,
+        "fields": fields,
         "message": message,
         "session_id": session_id,
     })
+
+
+def _yaml_to_form_fields(parsed: dict) -> dict:
+    """Translate a parsed queue YAML dict into the form-shape JSON
+    the client populates. Mirrors the structured fields the form
+    knows about; fields outside that set are ignored (the form can't
+    render them anyway). Used by the compose-queue endpoint to
+    populate the new-queue / edit-queue form after AI generation."""
+    q = (parsed.get("query") or {}) if isinstance(parsed.get("query"), dict) else {}
+    repo_val = parsed.get("repo")
+    if isinstance(repo_val, dict):
+        owner = repo_val.get("owner") or ""
+        name = repo_val.get("name") or ""
+        repo_id_or_slug = f"{owner}/{name}" if owner and name else ""
+    else:
+        repo_id_or_slug = repo_val or ""
+    hydrate = parsed.get("hydrate") or {}
+    pfilter = parsed.get("filter") or {}
+    states = list(parsed.get("states") or [])
+    initial_states = list(parsed.get("initial_states") or [])
+    initial_state = parsed.get("initial_state") or (
+        initial_states[0] if initial_states else None)
+    done_state = parsed.get("done_state")
+    awaiting_state = parsed.get("awaiting_state")
+    state_rows = []
+    for s in states:
+        state_rows.append({
+            "name": s,
+            "original_name": "",
+            "is_initial": (s in initial_states or s == initial_state),
+            "is_done": (s == done_state),
+            "is_awaiting": (s == awaiting_state),
+        })
+    return {
+        "id": parsed.get("id") or "",
+        "title": parsed.get("title") or "",
+        "max_in_flight": parsed.get("max_in_flight") or 10,
+        "repo_id": repo_id_or_slug,
+        "query": {
+            "author": q.get("author") or "",
+            "state": q.get("state") or "open",
+            "review_requested": q.get("review_requested") or "",
+            "assignee": q.get("assignee") or "",
+            "milestone": q.get("milestone") or "",
+            "labels": q.get("labels") or [],
+            "search": q.get("search") or "",
+        },
+        "hydrate": {
+            "ci_status": bool(hydrate.get("ci_status")),
+            "merge_state": bool(hydrate.get("merge_state")),
+            "review_threads": bool(hydrate.get("review_threads")),
+        },
+        "filter": {
+            "attention_only": bool(pfilter.get("attention_only")),
+            "non_draft": bool(pfilter.get("non_draft")),
+        },
+        "states": state_rows,
+        "multi_bucket": len(initial_states) > 1,
+    }
 
 
 @app.get("/queues/new/template")
@@ -1055,11 +1213,14 @@ def queue_new_form(
     h_review_threads: str = Form(""),
     f_attention_only: str = Form(""),
     f_non_draft: str = Form(""),
+    states_json: str = Form(""),
+    multi_bucket: str = Form(""),
 ):
-    """Create a new queue from the structured form. Uses sensible
-    defaults for the state machine (in triage / in progress /
-    awaiting update / done). For custom state machines, use the
-    Raw YAML tab instead."""
+    """Create a new queue from the structured form. Defaults to the
+    standard state machine (in triage / in progress / awaiting update
+    / done). The form's state-machine section can override every
+    column name + role; pass it as `states_json` (same shape as the
+    edit-queue handler)."""
     query: dict = {}
     if q_author.strip(): query["author"] = q_author.strip()
     if q_state.strip(): query["state"] = q_state.strip()
@@ -1091,16 +1252,17 @@ def queue_new_form(
     if _on(f_attention_only): post_filter["attention_only"] = True
     if _on(f_non_draft): post_filter["non_draft"] = True
 
+    # State machine: same parsing shape as the edit handler. When
+    # the form didn't render the section (e.g., raw POST bypasses),
+    # fall back to the standard four-state machine.
+    state_machine = _parse_states_json(states_json, multi_bucket)
     parsed = {
         "id": id.strip(),
         "title": title.strip(),
         "max_in_flight": int(max_in_flight),
-        "initial_state": "in triage",
-        "done_state": "done",
-        "awaiting_state": "awaiting update",
-        "states": ["in triage", "in progress", "awaiting update", "done"],
         "query": query,
     }
+    parsed.update(state_machine)
     if hydrate: parsed["hydrate"] = hydrate
     if post_filter: parsed["filter"] = post_filter
     rid = (repo_id or "").strip()
@@ -1114,6 +1276,76 @@ def queue_new_form(
         parsed["repo"] = rid
     _post_add_queue(parsed)
     return RedirectResponse(url="/", status_code=303)
+
+
+def _parse_states_json(states_json: str, multi_bucket: str) -> dict:
+    """Translate the form's `states_json` payload into the queue
+    schema's state-machine fields. Returns a dict with `states`,
+    `initial_state`, `initial_states` (multi-bucket only),
+    `done_state`, `awaiting_state`. Falls back to the standard
+    4-state machine when no payload is given.
+    """
+    if not (states_json or "").strip():
+        return {
+            "initial_state": "in triage",
+            "done_state": "done",
+            "awaiting_state": "awaiting update",
+            "states": ["in triage", "in progress",
+                       "awaiting update", "done"],
+        }
+    try:
+        entries = json.loads(states_json)
+        if not isinstance(entries, list):
+            raise ValueError("states_json must be a JSON array")
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"states_json: {exc}")
+    new_states: list[str] = []
+    initial_list: list[str] = []
+    done_state = None
+    awaiting_state = None
+    seen: set[str] = set()
+    for e in entries:
+        if not isinstance(e, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="each states_json entry must be an object")
+        name = (e.get("name") or "").strip()
+        if not name:
+            raise HTTPException(
+                status_code=400, detail="state name is required")
+        if name in seen:
+            raise HTTPException(
+                status_code=400,
+                detail=f"duplicate state name: {name!r}")
+        seen.add(name)
+        new_states.append(name)
+        if e.get("is_initial"):
+            initial_list.append(name)
+        if e.get("is_done"):
+            done_state = name
+        if e.get("is_awaiting"):
+            awaiting_state = name
+    if not new_states:
+        raise HTTPException(
+            status_code=400,
+            detail="states must have at least one entry")
+    if not initial_list:
+        raise HTTPException(
+            status_code=400,
+            detail="at least one state must be marked initial")
+    is_multi = (multi_bucket or "").lower() in ("on", "true", "1", "yes")
+    out: dict = {
+        "states": new_states,
+        "initial_state": initial_list[0],
+    }
+    if is_multi and len(initial_list) > 1:
+        out["initial_states"] = initial_list
+    if done_state:
+        out["done_state"] = done_state
+    if awaiting_state:
+        out["awaiting_state"] = awaiting_state
+    return out
 
 
 @app.post("/queues/new/raw")
