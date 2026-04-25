@@ -12,7 +12,7 @@ from contextvars import ContextVar
 
 from .config import load_config
 
-LIST_FIELDS = "number,title,url,mergeable,createdAt,updatedAt,headRefName,isDraft,author"
+LIST_FIELDS = "number,title,url,mergeable,createdAt,updatedAt,headRefName,isDraft,author,reviewDecision"
 CHECK_FIELDS = "statusCheckRollup"
 
 

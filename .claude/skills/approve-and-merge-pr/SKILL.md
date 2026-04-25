@@ -147,6 +147,22 @@ Emit a single fenced JSON block:
 ## Guardrails
 
 - NEVER force-merge (`--admin`), NEVER bypass checks.
-- NEVER self-approve a non-Dependabot PR (this skill assumes the
-  queue has filtered to `author:app/dependabot`).
+- **Self-authored PRs**: when the PR's `author.login` equals
+  `identity.github_username`, GitHub blocks the explicit `--approve`
+  step (you can't approve your own work). Skip the `gh pr review
+  --approve` call and go straight to `gh pr merge --squash --auto`.
+  - If `reviewDecision == "REVIEW_REQUIRED"` or `"CHANGES_REQUESTED"`,
+    bail with `status: needs_human` and a message like "self-authored
+    PR but branch protection requires another reviewer — ask a
+    collaborator to approve before retrying." The triage layer
+    normally catches this earlier; we re-check at action time so a
+    direct/manual click doesn't leak through.
+  - If `reviewDecision` is `null` (no review requirement) or
+    `APPROVED`, attempt the merge. GitHub will surface its own
+    error if branch protection still blocks; pass it through as
+    `status: needs_human` with the verbatim error.
+- For all other PRs (someone else's work), the skill IS approving on
+  behalf of `identity.github_username`. Voice rules above apply:
+  don't @-mention the operator, don't write attribution like
+  "approved via repobot."
 - If in doubt, `status: needs_human` with a specific reason.

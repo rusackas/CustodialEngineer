@@ -323,15 +323,28 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
       the action dispatcher re-verifies merge state before acting,
       so it's safe to surface even on a fast-path read.
     """
+    from .identity import current_user_id
     raw = item.get("raw") or {}
     has_conflicts = bool(raw.get("has_conflicts"))
     ci = (raw.get("ci_status") or "").lower()
     threads = raw.get("unresolved_threads") or []
     is_draft = bool(raw.get("isDraft"))
     age = _age_days(raw)
+    author_login = (raw.get("author") or {}).get("login") if isinstance(raw.get("author"), dict) else None
     is_bot = (raw.get("author") or {}).get("is_bot") if isinstance(raw.get("author"), dict) else False
     needs_ci_approval = bool(raw.get("needs_ci_approval"))
     push_allowed = _can_push_back(raw)
+    # Self-merge feasibility check. `reviewDecision` reflects GitHub's
+    # branch-protection verdict for the PR — null on repos that don't
+    # require reviews, REVIEW_REQUIRED / CHANGES_REQUESTED when an
+    # external approver is needed, APPROVED when greenlit. We can't
+    # propose approve-merge to the bot's operator on a PR they wrote
+    # themselves if branch protection still wants a separate reviewer
+    # — GitHub blocks self-approval and would also block the merge.
+    me = current_user_id()
+    self_authored = (me != "self" and author_login and author_login == me)
+    review_decision = (raw.get("reviewDecision") or "").upper()
+    review_pending = review_decision in ("REVIEW_REQUIRED", "CHANGES_REQUESTED")
 
     reasons: list[str] = []
     actions: list[str] = []
@@ -374,14 +387,27 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
     # approve-merge as the obvious next click. The dispatcher
     # re-verifies mergeStateStatus before acting, so this is safe
     # even when our cached signals are slightly stale.
+    #
+    # Exception: self-authored PR on a repo with branch protection
+    # requiring reviews. The bot can't approve its operator's own PR
+    # (GitHub blocks self-approval), so proposing approve-merge would
+    # only lead to a needs_human bounce. Surface await-update instead
+    # — once another reviewer approves, the card auto-unparks and the
+    # next triage can propose merge cleanly.
     is_clean = (not reasons
                 and not is_draft
                 and not has_conflicts
                 and ci in ("passing", "")
                 and not threads)
-    if is_clean:
+    self_merge_blocked = is_clean and self_authored and review_pending
+    if is_clean and not self_merge_blocked:
         actions.append("approve-merge")
         msg = "Clean — no blockers detected. Approve-merge is safe to click."
+    elif self_merge_blocked:
+        actions.append("await-update")
+        msg = ("Clean signals, but you're the author and branch "
+               "protection requires another reviewer's approval — "
+               "parking until someone else greenlights it.")
     elif not reasons:
         msg = "No blocking signal detected — manual triage."
     else:
@@ -413,6 +439,14 @@ def triage_generic_pr(item: dict, queue_id: str | None = None
         "has_conflicts": bool(raw.get("has_conflicts")),
         "merge_state_status": raw.get("mergeStateStatus"),
         "unresolved_threads": raw.get("unresolved_threads") or [],
+        "maintainer_can_modify": bool(raw.get("maintainer_can_modify")),
+        "is_cross_repository": bool(raw.get("is_cross_repository")),
+        "needs_ci_approval": bool(raw.get("needs_ci_approval")),
+        # Branch-protection signal — feeds the self-merge feasibility
+        # branch in the priority ladder.
+        "review_decision": raw.get("reviewDecision"),
+        "author_login": (raw.get("author") or {}).get("login")
+                        if isinstance(raw.get("author"), dict) else None,
     }
     skill = _resolve_triage_skill(queue_id)
     try:

@@ -25,7 +25,7 @@ fine; no mutations.
 - `pr` — `{owner, name, number, url, title, head_ref, mergeable,
   merge_state_status, ci_status, has_conflicts, unresolved_threads,
   updated_at, is_draft, maintainer_can_modify, is_cross_repository,
-  needs_ci_approval}`.
+  needs_ci_approval, review_decision, author_login}`.
   - `unresolved_threads` is a list of
     `{id, path, line, is_outdated, first_author, first_body,
     comments_count}` — every still-open review thread.
@@ -40,12 +40,23 @@ fine; no mutations.
     `WAITING` or `ACTION_REQUIRED` — the first-time-contributor
     "Approve and run workflow" gate. When true, `approve-ci` is the
     obvious primary; CI can't even start until that click.
+  - `review_decision` is GitHub's verdict on whether branch
+    protection is satisfied: `null` on repos that don't require
+    reviews, `REVIEW_REQUIRED` / `CHANGES_REQUESTED` when an
+    external approver is needed, `APPROVED` when greenlit. Combine
+    with `author_login` to decide whether self-merge is feasible
+    (see ladder #6 below).
 - `identity.github_username` — the human running the tool. Use this
   to:
   - phrase the proposal sensibly when relevant (don't @-mention
     them);
   - decide whether unresolved threads are likely "feedback from
-    others" vs. their own.
+    others" vs. their own;
+  - **detect self-authored PRs**: when `author_login ==
+    identity.github_username` and `review_decision` is
+    `REVIEW_REQUIRED` / `CHANGES_REQUESTED`, branch protection
+    requires another reviewer — don't propose `approve-merge`,
+    GitHub will block it.
 
 ## Priority: what to surface
 
@@ -146,7 +157,14 @@ Use this priority ladder. First match wins.
 
 6. **Clean** (CI green / unset, no conflicts, no open threads, not
    draft):
-   - `approve-merge` primary. The dispatcher re-verifies
+   - **Branch-protection feasibility check first.** If `author_login
+     == identity.github_username` AND `review_decision in
+     (REVIEW_REQUIRED, CHANGES_REQUESTED)` → branch protection
+     requires another reviewer's approval; the bot can't self-approve
+     past it. Propose `await-update` primary; once an external review
+     lands the card auto-unparks and the next triage will see
+     `review_decision == APPROVED` and propose merge cleanly.
+   - Otherwise: `approve-merge` primary. The dispatcher re-verifies
      mergeStateStatus before actually merging, so this is safe to
      propose even when signals are slightly stale. Draft an
      `approval_comment` (see Output schema for tone rules).
