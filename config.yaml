@@ -55,6 +55,7 @@ auto_refresh:
 queues:
   - id: failing-dependabot-prs   # legacy id; handles ALL open dependabot PRs now
     title: Dependabot PRs
+    repo: superset
     max_in_flight: 10
     initial_state: in triage
     done_state: done
@@ -72,6 +73,7 @@ queues:
 
   - id: my-prs
     title: My PRs
+    repo: superset
     max_in_flight: 10
     initial_state: in triage
     done_state: done
@@ -90,6 +92,7 @@ queues:
 
   - id: review-requested
     title: Review requested
+    repo: superset
     max_in_flight: 15
     # Two pre-triage buckets; the fetcher picks one per PR based on GH
     # signals (mergeStateStatus / CI / conflicts). Items stay in their
@@ -113,6 +116,7 @@ queues:
       state: open
   - id: stale-pr-triage
     title: Stale PR triage
+    repo: superset
     max_in_flight: 10
     initial_state: in triage
     done_state: done

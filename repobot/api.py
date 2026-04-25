@@ -456,6 +456,8 @@ def index(request: Request):
             "repos": github.list_repos(),
             "default_repo_id": (cfg.get("default_repo_id")
                                 or github.list_repos()[0]["id"]),
+            "queue_repo_ids": {q["id"]: github.queue_repo_id(q)
+                               for q in queues_cfg},
             "triage_skills": _list_triage_skills(),
         },
     )
@@ -1146,19 +1148,23 @@ def update_queue_definition_endpoint(
     # `triage-generic-pr` (or whatever the queue's built-in triager
     # picks) — passing None to update_queue_definition deletes the key.
     updates["triage_skill"] = triage_skill.strip() or None
-    # Per-queue repo override (registry id reference). Empty value =
-    # use the global default; non-empty = override with the named repo.
+    # Per-queue repo. Required — every queue must explicitly target a
+    # registered repo (no implicit "use default" fallback). The form
+    # marks the select required, so empty here means a programmatic
+    # POST that's missing the field.
     rid = (repo_id or "").strip()
-    if rid:
-        if not github.repo_by_id(rid):
-            raise HTTPException(
-                status_code=400,
-                detail=f"unknown repo: {rid}. Add it to the repos "
-                       f"registry first.",
-            )
-        updates["repo"] = rid
-    else:
-        updates["repo"] = None
+    if not rid:
+        raise HTTPException(
+            status_code=400,
+            detail="Pick a repo. Every queue needs an explicit target.",
+        )
+    if not github.repo_by_id(rid):
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown repo: {rid}. Add it to the repos "
+                   f"registry first.",
+        )
+    updates["repo"] = rid
 
     # State machine: parse the JSON the form serialized from the row
     # editor. Each entry carries its original_name so we can
@@ -1478,14 +1484,18 @@ def queue_new_form(
     if triage_skill.strip():
         parsed["triage_skill"] = triage_skill.strip()
     rid = (repo_id or "").strip()
-    if rid:
-        if not github.repo_by_id(rid):
-            raise HTTPException(
-                status_code=400,
-                detail=f"unknown repo: {rid}. Add it to the repos "
-                       f"registry first.",
-            )
-        parsed["repo"] = rid
+    if not rid:
+        raise HTTPException(
+            status_code=400,
+            detail="Pick a repo. Every queue needs an explicit target.",
+        )
+    if not github.repo_by_id(rid):
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown repo: {rid}. Add it to the repos "
+                   f"registry first.",
+        )
+    parsed["repo"] = rid
     _post_add_queue(parsed)
     return RedirectResponse(url="/", status_code=303)
 

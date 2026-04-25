@@ -1933,11 +1933,80 @@ body {
    ←/→/1..9 also move between them.
    ------------------------------------------------------------------- */
 
+/* === BOARDS NAV ============================================
+   Two stacked rows: a toolbar (filters left, management actions
+   right) and the queue tabs row underneath. The bottom border
+   on .boards-tabs anchors both rows visually. */
+.boards-bar {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 14px;
+}
+
+.boards-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 4px;
+  border-bottom: 1px dashed var(--rule);
+  min-height: 38px;
+}
+.boards-toolbar-spacer { flex: 1 1 auto; min-width: 12px; }
+.boards-toolbar-filters,
+.boards-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Filter control — tracked-mono "repo" eyebrow + a quiet select.
+   Matches the field-info / queue-toggles voice elsewhere. */
+.boards-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.boards-filter-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.boards-filter-select {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  min-width: 140px;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.boards-filter-select:hover { border-color: var(--rule-strong); }
+.boards-filter-select:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  color: var(--brand);
+}
+/* Active state — when the filter isn't "All repos", make the
+   select wear the brand color so it's obvious something's
+   filtering the tabs below. */
+.boards-filter-select[data-active="1"] {
+  border-color: var(--brand);
+  color: var(--brand);
+  font-weight: 700;
+}
+
 .boards-tabs {
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  margin-bottom: 14px;
   padding: 0 2px;
   border-bottom: 1px solid var(--rule-strong);
   overflow-x: auto;
@@ -2035,14 +2104,13 @@ body {
   border-color: var(--danger);
 }
 
-/* "N hidden" pill at the end of the tab row, with a popover listing
-   the queues you can restore. Uses <details> so Esc/outside-click
-   close is browser-native. */
+/* "N hidden" pill — lives in the toolbar's actions cluster,
+   surfaces only when the user has hidden one or more queues. The
+   details/summary pattern gives us Esc + outside-click close for
+   free. */
 .boards-hidden-menu {
   position: relative;
   align-self: center;
-  margin-left: 6px;
-  margin-bottom: -1px;
 }
 .boards-hidden-menu > summary {
   list-style: none;
@@ -2122,13 +2190,10 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 9px 12px 11px;
-  margin-left: 4px;
-  margin-bottom: -1px;
+  padding: 6px 12px;
   background: transparent;
   border: 1px dashed var(--rule-strong);
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--radius-pill);
   cursor: pointer;
   color: var(--ink-mute);
   font-family: var(--mono);
@@ -2143,6 +2208,33 @@ body {
   border-color: var(--brand);
   background: var(--accent-soft);
 }
+
+/* Tasks button styled as a pill in the toolbar — overrides the
+   tab look when it lives up here. The base .boards-tab styling
+   gives it the mono-uppercase voice; this adds pill chrome and
+   the warn color so it stays visually distinct from queue tabs
+   and the dashed new-queue button. */
+.boards-toolbar-tasks {
+  padding: 6px 12px !important;
+  border: 1px solid var(--warn) !important;
+  border-radius: var(--radius-pill) !important;
+  margin-bottom: 0 !important;
+  color: var(--warn);
+  background: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.boards-toolbar-tasks:hover {
+  background: var(--alert-warning-soft);
+}
+.boards-toolbar-tasks.is-active,
+.boards-toolbar-tasks[aria-selected="true"] {
+  background: var(--warn);
+  color: var(--bg-card);
+  border-color: var(--warn) !important;
+}
+.boards-toolbar-tasks .boards-tab-tasks-glyph {
+  color: inherit;
+}
 .boards-tab-add-plus {
   font-size: 15px;
   line-height: 1;
@@ -2151,14 +2243,11 @@ body {
 }
 .boards-tabs-spacer { flex: 1 0 auto; min-width: 10px; }
 
-/* Vertical separator before the Tasks tab — marks it as a different
-   kind of thing without shouting about it. */
-.boards-tabs-rule {
-  align-self: stretch;
-  width: 1px;
-  background: var(--rule-strong);
-  margin: 6px 10px;
-}
+/* Filtered-out tabs stay in the row but collapse their wrap so the
+   layout doesn't jump as the filter selection changes. We also fade
+   them slightly while collapsed (visually nothing — width is 0 —
+   but the transition feels right when they unwind). */
+.boards-tab-wrap-filtered { display: none; }
 .boards-tab-tasks {
   color: var(--warn);
 }

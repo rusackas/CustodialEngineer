@@ -84,6 +84,21 @@ def repo_by_id(repo_id: str) -> dict | None:
     return None
 
 
+def queue_repo_id(queue_cfg: dict) -> str:
+    """Return the registry-id of the repo this queue resolves to. If
+    the queue's `repo:` field is an id reference, use it. If it's an
+    inline slug or dict, look the slug up in the registry and return
+    the matching id. Otherwise fall back to the global default repo's
+    id. Used by the UI for the repo-filter dropdown — each tab needs
+    a stable `data-repo-id` so the filter can compare against the
+    selected option."""
+    slug = queue_repo_slug(queue_cfg)
+    for r in list_repos():
+        if r["slug"] == slug:
+            return r["id"]
+    return slug  # unregistered slug — fall back to the slug as id
+
+
 def default_repo_slug() -> str:
     """The fallback repo slug when nothing more specific is set.
 
