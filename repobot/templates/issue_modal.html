@@ -1,0 +1,146 @@
+{# Issue details modal body — slimmer than pr_modal.html since
+   issues have no CI / merge state / review threads. Reuses the same
+   visual rhythm: tracked-uppercase mono eyebrows, dashed hairline
+   rules, comment left-rail with bot fade. #}
+<div class="pr-modal pr-modal-issue">
+
+  {# === IDENTITY ZONE === #}
+  <header class="pr-identity">
+    <div class="pr-identity-top">
+      {% set _state = (issue.state or 'OPEN') | upper %}
+      {% set _icon =
+            'issue-closed' if _state == 'CLOSED' else
+            'issue-opened' %}
+      <span class="pr-state-icon pr-state-{{ _state | lower }}">
+        {{ icon(_icon, size=18) }}
+      </span>
+      <a class="pr-number" href="{{ issue.url }}" target="_blank" rel="noopener"
+         title="Open on GitHub">#{{ issue.number }}</a>
+      <span class="pr-state-badge pr-state-badge-{{ _state | lower }}">
+        {{ _state | lower }}{% if issue.stateReason %} · {{ issue.stateReason | lower }}{% endif %}
+      </span>
+      <a class="pr-gh-link" href="{{ issue.url }}" target="_blank" rel="noopener"
+         title="Open on GitHub" aria-label="Open on GitHub">
+        {{ icon('link-external', size=14) }}
+      </a>
+    </div>
+
+    <h2 class="pr-title">{{ issue.title }}</h2>
+
+    <div class="pr-byline">
+      {% if issue.author and issue.author.login %}
+        <span class="pr-author">@{{ issue.author.login }}</span>
+      {% endif %}
+    </div>
+
+    {% if issue.labels %}
+      <div class="pr-labels">
+        {% for l in issue.labels %}<span class="pr-label">{{ l.name }}</span>{% endfor %}
+      </div>
+    {% endif %}
+  </header>
+
+  {# === STAT STRIP — issue version === #}
+  <dl class="pr-stats">
+    {% if issue.assignees %}
+      <div class="pr-stat">
+        <dt class="pr-stat-key">assignees</dt>
+        <dd class="pr-stat-val">
+          {% for a in issue.assignees %}@{{ a.login }}{% if not loop.last %}, {% endif %}{% endfor %}
+        </dd>
+      </div>
+    {% endif %}
+    {% if issue.milestone %}
+      <div class="pr-stat">
+        <dt class="pr-stat-key">milestone</dt>
+        <dd class="pr-stat-val">{{ issue.milestone.title }}</dd>
+      </div>
+    {% endif %}
+    <div class="pr-stat">
+      <dt class="pr-stat-key">comments</dt>
+      <dd class="pr-stat-val pr-stat-mono">{{ (issue.comments or []) | length }}</dd>
+    </div>
+  </dl>
+
+  {# === DESCRIPTION === #}
+  <section class="pr-section">
+    <h4 class="pr-section-eyebrow">
+      <span>Description</span>
+      <span class="pr-section-rule" aria-hidden="true"></span>
+    </h4>
+    <div class="pr-prose drawer-md">
+      {% if body_html %}{{ body_html | safe }}
+      {% else %}<em class="pr-section-empty">No description.</em>{% endif %}
+    </div>
+  </section>
+
+  {# === COMMENTS === #}
+  {% if comments %}
+    <section class="pr-section">
+      <h4 class="pr-section-eyebrow">
+        <span>Comments</span>
+        <span class="pr-section-count">{{ comments | length }}</span>
+        <span class="pr-section-rule" aria-hidden="true"></span>
+      </h4>
+      <ol class="pr-comments">
+        {% for c in comments %}
+          {% set _author = c.author or 'unknown' %}
+          {% set _is_bot = _author.endswith('[bot]')
+                         or _author in ('dependabot', 'codecov', 'sonarcloud',
+                                        'sonar', 'dosu', 'coderabbitai',
+                                        'codecov-commenter', 'github-actions') %}
+          <li class="pr-comment{% if _is_bot %} pr-comment-bot{% endif %}">
+            <div class="pr-comment-byline">
+              <span class="pr-comment-author">@{{ _author }}</span>
+              {% if _is_bot %}<span class="pr-comment-bot-tag">BOT</span>{% endif %}
+              {% if c.createdAt %}
+                <span class="pr-comment-time tip" data-tip="{{ exact_time(c.createdAt) }}">
+                  {{ time_ago(c.createdAt) }}
+                </span>
+              {% endif %}
+            </div>
+            <div class="pr-comment-body drawer-md drawer-md-compact">{{ c.html | safe }}</div>
+          </li>
+        {% endfor %}
+      </ol>
+    </section>
+  {% endif %}
+
+  {# === BOT HISTORY === #}
+  {% if history %}
+    <section class="pr-section">
+      <h4 class="pr-section-eyebrow">
+        <span>Bot history</span>
+        <span class="pr-section-count">{{ history | length }}</span>
+        <span class="pr-section-rule" aria-hidden="true"></span>
+      </h4>
+      <ol class="drawer-history-list">
+        {% for h in history %}
+          <li class="drawer-history-item drawer-history-{{ h.kind }}{% if h.status %} drawer-history-status-{{ h.status }}{% endif %}">
+            <div class="drawer-history-time tip" data-tip="{{ h.ts }}">
+              {{ time_ago(h.ts) }}
+            </div>
+            <div class="drawer-history-body">
+              {% if h.kind == 'transition' %}
+                <span class="drawer-history-tag drawer-history-tag-transition">state</span>
+                <span class="drawer-history-text">
+                  <code>{{ h.from_state or '—' }}</code>
+                  →
+                  <code>{{ h.to_state }}</code>
+                  {% if h.reason %}<span class="drawer-history-reason">· {{ h.reason }}</span>{% endif %}
+                </span>
+              {% else %}
+                <span class="drawer-history-tag drawer-history-tag-action">{{ h.action_id or 'action' }}</span>
+                <span class="drawer-history-status">{{ h.status or '—' }}</span>
+                {% if h.message %}
+                  <div class="drawer-history-message">{{ h.message }}</div>
+                {% endif %}
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    </section>
+  {% endif %}
+
+</div>

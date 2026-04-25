@@ -470,3 +470,198 @@ def triage_generic_pr(item: dict, queue_id: str | None = None
     msg, actions = _mechanical_generic_triage(item)
     return msg, actions, {"triage_source": "mechanical",
                           "triage_skill": skill}
+
+
+# ============================================================
+# Issue triage (parallel to the PR functions above, with
+# issue-flavored signals and an issue-specific action set).
+# ============================================================
+
+DEFAULT_GENERIC_ISSUE_TRIAGE_SKILL = "triage-generic-issue"
+
+# Labels that, when present on an open issue, mean "the maintainers
+# already decided this isn't getting fixed" — close-as-stale becomes
+# the obvious primary even for relatively young issues.
+_DECIDED_OUT_LABELS = {
+    "wontfix", "won't fix", "wont-fix", "not-a-bug",
+    "duplicate", "invalid", "cant-reproduce", "cannot-reproduce",
+}
+
+# Labels that mean "we asked the reporter for something and never
+# heard back" — close-as-stale is appropriate after a timeout.
+_AWAITING_REPORTER_LABELS = {
+    "needs-info", "needs:info", "more-info-needed", "awaiting-response",
+}
+
+# Labels that mean "still open by design" — don't propose close.
+_KEEP_OPEN_LABELS = {
+    "good-first-issue", "good first issue", "help-wanted", "help wanted",
+    "discussion", "rfc", "epic", "tracking",
+}
+
+
+def _label_set(raw: dict) -> set[str]:
+    out: set[str] = set()
+    for l in raw.get("labels") or []:
+        name = (l.get("name") or "").strip().lower()
+        if name:
+            out.add(name)
+    return out
+
+
+def _mechanical_generic_issue_triage(item: dict) -> tuple[str, list[str]]:
+    """Signal-based issue triage. The action menu mirrors what a
+    human maintainer would reach for on a stale-issue sweep:
+
+    - `close-as-stale` — close the issue with a polite explanatory
+      comment.
+    - `label-as-stale` — add a `stale` label as a 30-day warning shot
+      before close. Useful when the issue might still be valid but
+      needs reporter engagement.
+    - `nudge-issue-author` — @-mention the reporter to revive the
+      thread. Use when there's been recent maintainer engagement
+      and the report itself is plausible.
+    - `convert-to-discussion` — for "how do I…" / feature-request-
+      shaped issues that fit better as discussions.
+    - `prompt` / `skip` — universal escape hatches.
+
+    Decision ladder (first match wins for primary):
+    1. Decided-out labels (wontfix, duplicate, etc.) → `close-as-stale`.
+    2. Awaiting-reporter labels + age > 30d → `close-as-stale`.
+    3. Keep-open labels (good-first-issue, help-wanted, rfc) →
+       `prompt` primary; offer label-as-stale only if very old.
+    4. Stale (>180d, no recent comment) → `label-as-stale` primary
+       on the first pass; `close-as-stale` if already labeled stale.
+    5. Has recent comments + reporter is the most recent commenter →
+       `prompt` primary (a maintainer should weigh in next).
+    6. Has recent maintainer comment, no reporter follow-up → `nudge-
+       issue-author` primary.
+    7. Default (active discussion) → `prompt` primary.
+    """
+    raw = item.get("raw") or {}
+    labels = _label_set(raw)
+    age = _age_days(raw)
+    last_comment_age = None
+    if raw.get("last_comment_at"):
+        try:
+            dt = _parse_iso(raw["last_comment_at"])
+            if dt:
+                from datetime import datetime, timezone
+                last_comment_age = (datetime.now(timezone.utc) - dt).total_seconds() / 86400
+        except Exception:
+            pass
+    last_commenter = (raw.get("last_commenter") or "").strip()
+    author_login = (raw.get("author") or {}).get("login") if isinstance(raw.get("author"), dict) else None
+    state_reason = (raw.get("stateReason") or "").upper()
+
+    has_decided_out = bool(labels & _DECIDED_OUT_LABELS)
+    has_awaiting = bool(labels & _AWAITING_REPORTER_LABELS)
+    has_keep_open = bool(labels & _KEEP_OPEN_LABELS)
+    already_stale_labeled = "stale" in labels
+
+    reasons: list[str] = []
+    actions: list[str] = []
+
+    if has_decided_out:
+        decided_label = next(iter(labels & _DECIDED_OUT_LABELS))
+        reasons.append(f"labeled `{decided_label}`")
+        actions.append("close-as-stale")
+    elif has_awaiting and age is not None and age > 30:
+        reasons.append(f"awaiting reporter info for ~{age:.0f}d")
+        actions.extend(["close-as-stale", "nudge-issue-author"])
+    elif already_stale_labeled and age is not None and age > 60:
+        reasons.append(f"labeled `stale`, ~{age:.0f}d old")
+        actions.append("close-as-stale")
+    elif has_keep_open:
+        # Don't auto-close `good-first-issue`, `help-wanted`, etc. —
+        # those are meant to stay open. Only suggest stale-labeling
+        # if very old AND no recent activity.
+        keep_label = next(iter(labels & _KEEP_OPEN_LABELS))
+        reasons.append(f"labeled `{keep_label}` (kept open by design)")
+        if last_comment_age is not None and last_comment_age > 180:
+            actions.append("label-as-stale")
+    elif age is not None and age > 180 and (
+            last_comment_age is None or last_comment_age > 90):
+        reasons.append(f"stale (~{age:.0f}d old, ~{last_comment_age:.0f}d since last comment)"
+                       if last_comment_age else f"stale (~{age:.0f}d old, no recent comments)")
+        actions.append("label-as-stale")
+    elif (last_commenter and author_login
+          and last_commenter == author_login
+          and last_comment_age is not None and last_comment_age > 30):
+        reasons.append(
+            f"reporter @{author_login} last spoke ~{last_comment_age:.0f}d ago, no maintainer follow-up")
+        # Maintainer should weigh in — keep menu light.
+    elif (last_commenter and author_login
+          and last_commenter != author_login
+          and last_comment_age is not None and last_comment_age > 30):
+        reasons.append(
+            f"maintainer @{last_commenter} last spoke ~{last_comment_age:.0f}d ago, no reporter follow-up")
+        actions.append("nudge-issue-author")
+
+    if not reasons:
+        msg = "Active issue — no stale signal."
+    else:
+        msg = "Triage: " + "; ".join(reasons) + "."
+
+    # Universal options always offered last. Convert-to-discussion
+    # is offered freely — it's a soft action and a maintainer can
+    # always undo. Skip / prompt as escape hatches.
+    actions.extend(["nudge-issue-author", "convert-to-discussion",
+                    "label-as-stale", "prompt", "skip"])
+    seen: set = set()
+    ordered = [a for a in actions if not (a in seen or seen.add(a))]
+    return msg, ordered
+
+
+def _resolve_issue_triage_skill(queue_id: str | None) -> str:
+    if not queue_id:
+        return DEFAULT_GENERIC_ISSUE_TRIAGE_SKILL
+    cfg = load_config()
+    for q in cfg.get("queues") or []:
+        if q.get("id") == queue_id:
+            skill = (q.get("triage_skill") or "").strip()
+            return skill or DEFAULT_GENERIC_ISSUE_TRIAGE_SKILL
+    return DEFAULT_GENERIC_ISSUE_TRIAGE_SKILL
+
+
+def triage_generic_issue(item: dict, queue_id: str | None = None
+                         ) -> tuple[str, list[str], dict]:
+    """Generic triager for issue queues. Tries the queue's configured
+    triage skill (or `triage-generic-issue` by default), falls back
+    to mechanical signal-based triage on skill error / unparseable
+    result. Same shape as `triage_generic_pr` for symmetry."""
+    raw = item.get("raw") or {}
+    labels = _label_set(raw)
+    extra_pr = {
+        "labels": sorted(labels),
+        "comments_count": raw.get("comments_count") or 0,
+        "last_commenter": raw.get("last_commenter"),
+        "last_comment_at": raw.get("last_comment_at"),
+        "state_reason": raw.get("stateReason"),
+        "author_login": (raw.get("author") or {}).get("login")
+                        if isinstance(raw.get("author"), dict) else None,
+        # Pass through trimmed comments + body so the skill can read
+        # the discussion without a second round-trip.
+        "comments": raw.get("comments") or [],
+        "body": raw.get("body") or "",
+    }
+    skill = _resolve_issue_triage_skill(queue_id)
+    try:
+        skill_result = _skill_triage(
+            skill, item, queue_id=queue_id, extra_pr_fields=extra_pr)
+        if skill_result is not None:
+            proposal, actions, notes = skill_result
+            extra = {"triage_source": "skill",
+                     "triage_skill": skill,
+                     "triage_notes": notes}
+            if notes.get("session_id"):
+                extra["triage_session_id"] = notes["session_id"]
+            return proposal, actions, extra
+    except Exception as exc:
+        msg, actions = _mechanical_generic_issue_triage(item)
+        return msg, actions, {"triage_source": "mechanical",
+                              "triage_skill": skill,
+                              "triage_error": str(exc)}
+    msg, actions = _mechanical_generic_issue_triage(item)
+    return msg, actions, {"triage_source": "mechanical",
+                          "triage_skill": skill}

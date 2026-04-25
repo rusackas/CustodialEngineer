@@ -305,6 +305,51 @@ ACTIONS: dict[str, dict[str, Any]] = {
         "terminal_state": None,
         "failure_state": None,
     },
+    # ---- issue-queue actions ----
+    "close-as-stale": {
+        # Close an issue with a polite explanatory comment. Skill
+        # composes the comment body, posts it, then closes the issue
+        # with `not_planned` reason. Body editable in the modal first
+        # (see comment-edit modal flow).
+        "label": "close-as-stale",
+        "skill": "close-stale-issue",
+        "worktree_required": False,
+        "in_progress_state": "in progress",
+        "terminal_state": "done",
+        "failure_state": "in triage",
+    },
+    "label-as-stale": {
+        # Add a `stale` label to the issue as a 30-day warning shot
+        # before close. Skill creates the label if the repo doesn't
+        # have one yet, then applies it. Parks the card.
+        "label": "label-as-stale",
+        "skill": "label-stale-issue",
+        "worktree_required": False,
+        "in_progress_state": None,
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
+    "nudge-issue-author": {
+        # Polite ping to the issue reporter to revive the thread.
+        # Skill drafts the comment; user edits in the modal; posts
+        # via gh issue comment. Parks the card pending response.
+        "label": "nudge-issue-author",
+        "skill": "nudge-issue-author",
+        "worktree_required": False,
+        "in_progress_state": None,
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
+    "convert-to-discussion": {
+        # Convert the issue to a Discussion (for "how do I..." /
+        # feature-request-shaped reports). Single GraphQL mutation.
+        "label": "convert-to-discussion",
+        "skill": "convert-issue-to-discussion",
+        "worktree_required": False,
+        "in_progress_state": "in progress",
+        "terminal_state": "done",
+        "failure_state": "in triage",
+    },
 }
 
 
@@ -570,19 +615,42 @@ def continue_action(queue_id: str, item_id) -> str | None:
     else:
         cwd = str(worktree.repo_path())
 
-    # Skills get the PR's actual owner/name — item-stamped or queue-
-    # scoped — so cross-repo queues don't smuggle the global default
-    # into skill prompts.
+    # Skills get the PR's (or issue's) actual owner/name — item-
+    # stamped or queue-scoped — so cross-repo queues don't smuggle
+    # the global default into skill prompts. Issue queues land
+    # under `issue.*` instead of `pr.*`; see the same branch in
+    # `dispatch()` for the rationale.
     _pr_owner, _pr_name = _item_repo_slug_for(queue_id, item).split("/", 1)
+    _raw = item.get("raw") or {}
+    _kind = (_raw.get("kind") or "pr").lower()
+    _common = {
+        "owner": _pr_owner,
+        "name": _pr_name,
+        "number": item.get("number"),
+        "url": item.get("url"),
+        "title": item.get("title"),
+    }
+    if _kind == "issue":
+        ctx_key, ctx_payload = "issue", {
+            **_common,
+            "body": _raw.get("body") or "",
+            "state": _raw.get("state"),
+            "state_reason": _raw.get("stateReason"),
+            "labels": [l.get("name") for l in (_raw.get("labels") or [])],
+            "comments": _raw.get("comments") or [],
+            "comments_count": _raw.get("comments_count") or 0,
+            "last_commenter": _raw.get("last_commenter"),
+            "last_comment_at": _raw.get("last_comment_at"),
+            "author_login": (_raw.get("author") or {}).get("login")
+                            if isinstance(_raw.get("author"), dict) else None,
+        }
+    else:
+        ctx_key, ctx_payload = "pr", {
+            **_common,
+            "head_ref": _raw.get("headRefName"),
+        }
     context = {
-        "pr": {
-            "owner": _pr_owner,
-            "name": _pr_name,
-            "number": item.get("number"),
-            "url": item.get("url"),
-            "title": item.get("title"),
-            "head_ref": (item.get("raw") or {}).get("headRefName"),
-        },
+        ctx_key: ctx_payload,
         "triage": {
             "proposal": item.get("proposal"),
             "source": item.get("triage_source"),
@@ -730,17 +798,46 @@ def dispatch(queue_id: str, item_id, action_id: str,
         # See the _resume_action comment above — same rationale for
         # using the item/queue slug instead of the global default.
         _pr_owner, _pr_name = _item_repo_slug_for(queue_id, item).split("/", 1)
-        context = {
-            "pr": {
-                "owner": _pr_owner,
-                "name": _pr_name,
-                "number": item.get("number"),
-                "url": item.get("url"),
-                "title": item.get("title"),
-                "head_ref": (item.get("raw") or {}).get("headRefName"),
+        # Issue queues stamp `kind: issue` on raw at fetch time. The
+        # runtime context exposes the data under `issue.*` for those
+        # queues (and keeps `pr.*` for PR queues) so skills can read
+        # the natural name. Both keys are populated for safety —
+        # generic skills that don't care about the distinction can
+        # read whichever is non-null.
+        _raw = item.get("raw") or {}
+        _kind = (_raw.get("kind") or "pr").lower()
+        _common = {
+            "owner": _pr_owner,
+            "name": _pr_name,
+            "number": item.get("number"),
+            "url": item.get("url"),
+            "title": item.get("title"),
+        }
+        if _kind == "issue":
+            ctx_key = "issue"
+            ctx_payload = {
+                **_common,
+                "body": _raw.get("body") or "",
+                "state": _raw.get("state"),
+                "state_reason": _raw.get("stateReason"),
+                "labels": [l.get("name") for l in (_raw.get("labels") or [])],
+                "comments": _raw.get("comments") or [],
+                "comments_count": _raw.get("comments_count") or 0,
+                "last_commenter": _raw.get("last_commenter"),
+                "last_comment_at": _raw.get("last_comment_at"),
+                "author_login": (_raw.get("author") or {}).get("login")
+                                if isinstance(_raw.get("author"), dict) else None,
+            }
+        else:
+            ctx_key = "pr"
+            ctx_payload = {
+                **_common,
+                "head_ref": _raw.get("headRefName"),
                 "push_remote": push_remote,
                 "push_ref": push_ref,
-            },
+            }
+        context = {
+            ctx_key: ctx_payload,
             "triage": {
                 "proposal": item.get("proposal"),
                 "source": item.get("triage_source"),

@@ -154,3 +154,22 @@ queues:
       merge_state: true
       review_threads: true
     repo: ce
+
+  - id: stale-issues
+    title: Stale Issues
+    repo: superset
+    kind: issue   # issue queues use fetch_issues_search + triage_generic_issue
+    max_in_flight: 10
+    initial_state: in triage
+    done_state: done
+    awaiting_state: awaiting update
+    states:
+      - in triage
+      - in progress
+      - awaiting update
+      - done
+    # Oldest-update-first sweep — the head of the queue is the issue
+    # that's been sitting longest without anyone touching it.
+    query:
+      state: open
+      search: is:issue is:open sort:updated-asc

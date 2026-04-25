@@ -79,11 +79,19 @@ TRIAGERS = {
 def _triager_for_queue(queue_id: str):
     """Resolve the triager for a queue. Built-in TRIAGERS win for the
     three queue ids that ship with bespoke skills; everything else
-    routes through `triage_generic_pr`, which itself reads the queue's
-    `triage_skill` config field (defaulting to `triage-generic-pr`).
-    Without this fallback, user-defined queues had `triage = None` and
-    items sat in their initial state forever."""
-    return TRIAGERS.get(queue_id) or triage_generic_pr
+    routes through the kind-appropriate generic triager
+    (`triage_generic_pr` or `triage_generic_issue`), which itself
+    reads the queue's `triage_skill` config field. Without this
+    fallback, user-defined queues had `triage = None` and items sat
+    in their initial state forever."""
+    if queue_id in TRIAGERS:
+        return TRIAGERS[queue_id]
+    q = get_queue_config(queue_id) or {}
+    kind = (q.get("kind") or "pr").lower()
+    if kind == "issue":
+        from .triage import triage_generic_issue
+        return triage_generic_issue
+    return triage_generic_pr
 
 
 # Optional pre-triage bucketer: turns a fetched PR dict into the target
@@ -407,18 +415,34 @@ def run_queue(queue_id: str, wait_for_triage: bool = False,
         if item.get("number") is not None
     }
 
+    # `kind` controls which fetcher (and triager) handles the queue:
+    # `pr` (default) → fetch_search + PR-shaped triagers.
+    # `issue` → fetch_issues_search + issue-shaped triager.
+    # Set explicitly in queue YAML so the runner doesn't have to
+    # sniff the search string. Easy to extend later for other
+    # GitHub primitives (discussions, projects, etc.).
+    kind = (q.get("kind") or "pr").lower()
+
     fetch = FETCHERS.get(queue_id)
     if fetch is None:
         query_block = q.get("query") or {}
         hydrate_block = q.get("hydrate") or {}
         filter_block = q.get("filter") or {}
 
-        def fetch():
-            return github.fetch_search(query_block,
-                                       limit=max(50, max_in_flight),
-                                       hydrate=hydrate_block,
-                                       post_filter=filter_block,
-                                       prior_by_number=prior_by_number)
+        if kind == "issue":
+            def fetch():
+                return github.fetch_issues_search(
+                    query_block,
+                    limit=max(50, max_in_flight),
+                    post_filter=filter_block,
+                )
+        else:
+            def fetch():
+                return github.fetch_search(query_block,
+                                           limit=max(50, max_in_flight),
+                                           hydrate=hydrate_block,
+                                           post_filter=filter_block,
+                                           prior_by_number=prior_by_number)
     else:
         # Wrap the registered fetcher so the prior-map flows into the
         # built-ins (dependabot/my-prs/review-requested) without

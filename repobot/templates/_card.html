@@ -1,11 +1,19 @@
-              <article class="card {% if is_queued %}card-queued{% endif %}{% if live and live.status == 'idle' %} card-idle{% endif %}" data-item-id="{{ item.id }}">
+              {% set _kind = (item.raw or {}).get('kind') or 'pr' %}
+              <article class="card card-{{ _kind }} {% if is_queued %}card-queued{% endif %}{% if live and live.status == 'idle' %} card-idle{% endif %}" data-item-id="{{ item.id }}">
                 <header class="card-head">
                   <div class="card-title">
                     <div class="card-title-text">
-                      {% set _is_draft = (item.raw or {}).get('isDraft') %}
-                      {% set _pr_icon = 'git-pull-request-draft' if _is_draft else 'git-pull-request' %}
-                      <span class="pr-state pr-state-{{ 'draft' if _is_draft else 'open' }}"
-                            title="{{ 'Draft PR' if _is_draft else 'Open PR' }}">{{ icon(_pr_icon, size=14) }}</span>
+                      {% if _kind == 'issue' %}
+                        {% set _state = ((item.raw or {}).get('state') or 'OPEN') | upper %}
+                        {% set _icon = 'issue-closed' if _state == 'CLOSED' else 'issue-opened' %}
+                        <span class="pr-state pr-state-{{ _state | lower }}"
+                              title="{{ 'Closed issue' if _state == 'CLOSED' else 'Open issue' }}">{{ icon(_icon, size=14) }}</span>
+                      {% else %}
+                        {% set _is_draft = (item.raw or {}).get('isDraft') %}
+                        {% set _pr_icon = 'git-pull-request-draft' if _is_draft else 'git-pull-request' %}
+                        <span class="pr-state pr-state-{{ 'draft' if _is_draft else 'open' }}"
+                              title="{{ 'Draft PR' if _is_draft else 'Open PR' }}">{{ icon(_pr_icon, size=14) }}</span>
+                      {% endif %}
                       <a href="{{ item.url }}" target="_blank" rel="noopener"
                          class="pr-link"
                          data-drawer-queue="{{ queue.id }}"

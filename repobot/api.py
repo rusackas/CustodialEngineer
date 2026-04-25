@@ -780,37 +780,40 @@ async def events_stream(request: Request):
 
 @app.get("/queues/{queue_id}/items/{item_id}/drawer", response_class=HTMLResponse)
 def drawer(request: Request, queue_id: str, item_id: int):
-    """Render a PR snapshot (title, body, CI, reviewers, comments,
-    linked issues) as an HTML fragment for the in-app drawer."""
+    """Render a snapshot (title, body, comments, history) as an HTML
+    fragment for the in-app modal. Branches on item.kind so issue
+    items get the simpler issue modal (no CI, no merge state, no
+    review threads); PR items keep the full PR modal."""
     item = find_item(load_state(), queue_id, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="item not found")
-    pr_number = item.get("number")
-    if not pr_number:
-        raise HTTPException(status_code=400, detail="item has no PR number")
+    number = item.get("number")
+    if not number:
+        raise HTTPException(status_code=400, detail="item has no number")
     # Resolve the repo for this item: stamped on `raw.repo` at fetch
     # time; fall back to the queue's configured repo.
     qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
     slug = github.item_repo_slug(item) or github.queue_repo_slug(qcfg)
+    kind = ((item.get("raw") or {}).get("kind") or "pr").lower()
     try:
         with github.repo_scope(slug):
-            pr = github.fetch_pr_for_drawer(int(pr_number))
+            if kind == "issue":
+                obj = github.fetch_issue_for_drawer(int(number))
+            else:
+                obj = github.fetch_pr_for_drawer(int(number))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     owner, name = slug.split("/", 1)
-    body_html = md.render(pr.get("body"), owner=owner, name=name)
+    body_html = md.render(obj.get("body"), owner=owner, name=name)
     comments = []
-    for c in pr.get("comments") or []:
+    for c in obj.get("comments") or []:
         author_login = (c.get("author") or {}).get("login") or "unknown"
         comments.append({
             "author": author_login,
             "createdAt": c.get("createdAt"),
             "html": md.render(c.get("body"), owner=owner, name=name),
         })
-    # Per-PR audit history — interleave action results and state
-    # transitions into one chronological timeline (newest first), so
-    # the drawer can show "what happened to this PR" without the
-    # caller doing the merge.
+    # Audit history — same pattern for both kinds.
     history: list[dict] = []
     try:
         from . import db as _db
@@ -821,9 +824,11 @@ def drawer(request: Request, queue_id: str, item_id: int):
     except Exception as exc:
         print(f"[drawer] history fetch failed: {exc}")
     history.sort(key=lambda r: r.get("ts") or "", reverse=True)
+    template = "issue_modal.html" if kind == "issue" else "pr_modal.html"
+    ctx_key = "issue" if kind == "issue" else "pr"
     return templates.TemplateResponse(
-        request, "pr_modal.html",
-        {"pr": pr, "body_html": body_html, "comments": comments,
+        request, template,
+        {ctx_key: obj, "body_html": body_html, "comments": comments,
          "queue_id": queue_id, "item_id": item_id,
          "history": history},
     )

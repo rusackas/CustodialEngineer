@@ -15,6 +15,15 @@ from .config import load_config
 LIST_FIELDS = "number,title,url,mergeable,createdAt,updatedAt,headRefName,isDraft,author,reviewDecision"
 CHECK_FIELDS = "statusCheckRollup"
 
+# Fields we ask `gh issue list --json` for. `comments` is the heavy
+# one — we trim it server-side to keep `raw` reasonable for storage
+# and SSE serialization, but we want the actual comment bodies for
+# the triage skill to read without a second round-trip.
+LIST_FIELDS_ISSUE = (
+    "number,title,url,author,state,stateReason,labels,createdAt,updatedAt,"
+    "body,comments,assignees,milestone"
+)
+
 
 # `_current_repo_slug` is set by `repo_scope()` at the entry point of
 # queue-scoped work (run_queue, action dispatch, API endpoints that
@@ -535,6 +544,79 @@ def fetch_search(query_block: dict, limit: int = 50,
                if p.get("has_conflicts")
                or p.get("ci_status") == "failing"
                or p.get("unresolved_threads")]
+    return out
+
+
+def fetch_issues_search(query_block: dict, limit: int = 50,
+                        post_filter: dict | None = None) -> list[dict]:
+    """Issue counterpart to `fetch_search`. Runs `gh issue list
+    --search` against the current repo scope and returns one dict per
+    issue with the issue-flavored signal fields:
+
+      - `comments_count`, `last_comment_at`, `last_commenter` (derived
+        from the trimmed `comments` array).
+      - `labels` already on the raw output (list of `{name, color}`).
+      - `state`, `stateReason` for closed-vs-open + close reason.
+
+    Refuses to run on an underspecified query — same guardrail as
+    `fetch_search`. Coerces `is:issue` into the search string if the
+    caller forgot it (so a queue with just `state: open` doesn't
+    accidentally fetch PRs too).
+
+    `post_filter`:
+      - `non_draft: true` is a no-op for issues (no draft state on
+        issues — kept silently for queue-config symmetry).
+    """
+    if not query_has_discriminator(query_block):
+        print(f"[fetch_issues_search] refusing underspecified query "
+              f"(no filter beyond state): {query_block!r}")
+        return []
+    post_filter = post_filter or {}
+    search = _build_search_query(query_block)
+    # GitHub's `gh issue list --search` is implicitly issue-scoped,
+    # but `_build_search_query` may have produced a generic `is:open`
+    # string. Add `is:issue` defensively so a search like
+    # `state:open sort:updated-asc` doesn't get any PR contamination
+    # if someone reuses this on `gh search issues` in the future.
+    if "is:issue" not in search:
+        search = ("is:issue " + search).strip()
+    issues = _gh_json([
+        "gh", "issue", "list",
+        "--repo", _repo_slug(),
+        "--state", "all",
+        "--search", search,
+        "--json", LIST_FIELDS_ISSUE,
+        "--limit", str(limit),
+    ])
+    if not isinstance(issues, list):
+        return []
+    out: list[dict] = []
+    for i in issues:
+        comments = i.get("comments") or []
+        i["comments_count"] = len(comments)
+        if comments:
+            last = comments[-1]
+            i["last_comment_at"] = last.get("createdAt")
+            i["last_commenter"] = (last.get("author") or {}).get("login")
+        else:
+            i["last_comment_at"] = None
+            i["last_commenter"] = None
+        # Slim comments to the last 10, with body bodies truncated —
+        # the triage skill only really needs recent thread context,
+        # and storing every comment in the state file is wasteful.
+        i["comments"] = [
+            {
+                "author": (c.get("author") or {}).get("login"),
+                "authorAssociation": c.get("authorAssociation"),
+                "createdAt": c.get("createdAt"),
+                "body": (c.get("body") or "")[:1500],
+            }
+            for c in comments[-10:]
+        ]
+        # Marker that downstream triage / runner / templates branch on.
+        i["kind"] = "issue"
+        _stamp_repo(i)
+        out.append(i)
     return out
 
 
@@ -1200,6 +1282,23 @@ def fetch_pr_for_drawer(pr_number: int) -> dict:
         "gh", "pr", "view", str(pr_number),
         "--repo", _repo_slug(),
         "--json", _DRAWER_FIELDS,
+    ])
+
+
+_ISSUE_DRAWER_FIELDS = (
+    "number,title,url,state,stateReason,author,createdAt,updatedAt,"
+    "body,labels,assignees,milestone,comments"
+)
+
+
+def fetch_issue_for_drawer(issue_number: int) -> dict:
+    """Issue counterpart to `fetch_pr_for_drawer`. Returns body,
+    labels, comments, etc. — everything the issue modal needs in one
+    `gh issue view --json` call."""
+    return _gh_json([
+        "gh", "issue", "view", str(issue_number),
+        "--repo", _repo_slug(),
+        "--json", _ISSUE_DRAWER_FIELDS,
     ])
 
 
