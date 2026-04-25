@@ -127,14 +127,26 @@ Use this priority ladder. First match wins.
 
 2. **Failing CI**:
    - Bot author → `prompt` primary.
-   - Human author, **push-allowed**:
+   - Human author, **push-allowed**: pick the primary by failure
+     shape, but **always include `attempt-fix`, `plan-fix`, and
+     `fix-precommit` in the actions list** so the user can choose
+     between an immediate-fix attempt vs. a planning pass vs. a
+     formatter sweep without having to retriage. Only the primary
+     order changes; all three stay on the menu.
      - If the failure looks like pre-commit / formatter drift
        (`pre-commit`, `lint`, `format` in the failing-check name) →
-       `fix-precommit` primary.
+       `fix-precommit` primary, then `attempt-fix`, then `plan-fix`.
      - Lockfile-shaped failure (`YN0028`, `EBADDEP`,
-       `lockfile not consistent`) → `update-lockfile` primary.
-     - Otherwise → `attempt-fix` primary; `plan-fix` as a secondary
-       when the failure surface is broad.
+       `lockfile not consistent`) → `update-lockfile` primary, then
+       `attempt-fix`, then `plan-fix` (skip `fix-precommit` here —
+       not the right tool).
+     - Broad / structural failure (multi-leg matrix red, missing
+       deps, import errors, refactor breakage) → `plan-fix` primary,
+       then `attempt-fix`, then `fix-precommit`. Plan first when the
+       blast radius warrants a strategy before patching.
+     - Single-test or single-file failure → `attempt-fix` primary,
+       then `plan-fix`, then `fix-precommit`. Direct patching is
+       usually right when the surface is small.
    - Human author, **push not allowed**: `nudge-author` primary;
      mention the failing check by name in `nudge_comment` when you
      can tell from `gh pr view --json statusCheckRollup` (only

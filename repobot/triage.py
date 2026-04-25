@@ -365,10 +365,12 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
     if ci == "failing":
         reasons.append("failing CI")
         if push_allowed:
-            # We don't know yet whether pre-commit is the only red
-            # check; offer both — the skills inspect the rollup
-            # themselves and bail cleanly when the assumption breaks.
-            actions.extend(["fix-precommit", "attempt-fix"])
+            # Offer all three CI-fix paths so the user picks based on
+            # failure shape: attempt-fix patches in place, plan-fix
+            # plans first then patches, fix-precommit handles
+            # formatter drift. Skills inspect the rollup themselves
+            # and bail cleanly when their assumption doesn't fit.
+            actions.extend(["attempt-fix", "plan-fix", "fix-precommit"])
         if not is_bot:
             actions.append("nudge-author")
         actions.append("await-update")
