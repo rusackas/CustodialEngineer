@@ -1250,7 +1250,8 @@
           <h3 id="plan-modal-title">Review plan before running</h3>
           <div class="modal-pr" id="plan-modal-pr"></div>
         </div>
-        <button type="button" class="modal-close" data-close-plan>×</button>
+        <button type="button" class="modal-close" data-close-plan
+                aria-label="Close">{{ icon('x', size=16) }}</button>
       </div>
       <div class="plan-modal-hint">
         Edit the plan JSON below — this is exactly what gets sent back to the
@@ -1274,7 +1275,8 @@
           <h3 id="drafts-modal-title">Review replies before posting</h3>
           <div class="modal-pr" id="drafts-modal-pr"></div>
         </div>
-        <button type="button" class="modal-close" data-close-drafts>×</button>
+        <button type="button" class="modal-close" data-close-drafts
+                aria-label="Close">{{ icon('x', size=16) }}</button>
       </div>
       <div class="plan-modal-hint">
         Edit any reply body below — empty replies are skipped. Approving
@@ -1297,7 +1299,8 @@
           <h3 id="comment-modal-title">Review comment before posting</h3>
           <div class="modal-pr" id="comment-modal-pr"></div>
         </div>
-        <button type="button" class="modal-close" data-close-comment>×</button>
+        <button type="button" class="modal-close" data-close-comment
+                aria-label="Close">{{ icon('x', size=16) }}</button>
       </div>
       <div class="comment-modal-help">
         This is what repobot will post on the PR. Edit freely — the text below is what gets sent.
@@ -1333,7 +1336,8 @@
           <h3>Request reviewers / nudge</h3>
           <div class="modal-pr" id="reviewers-modal-pr"></div>
         </div>
-        <button type="button" class="modal-close" data-close-reviewers>×</button>
+        <button type="button" class="modal-close" data-close-reviewers
+                aria-label="Close">{{ icon('x', size=16) }}</button>
       </div>
       <div class="comment-modal-help">
         <strong>Suggested</strong> candidates are ranked by recent commits on the touched files. <strong>Other collaborators</strong> lists everyone else with write access. Tick <strong>request</strong> to formally request review, <strong>nudge</strong> to @-mention them in a comment you'll edit next.
@@ -1371,7 +1375,8 @@
             <span id="modal-usage" class="modal-usage"></span>
           </div>
         </div>
-        <button type="button" class="modal-close" data-close-modal>×</button>
+        <button type="button" class="modal-close" data-close-modal
+                aria-label="Close">{{ icon('x', size=16) }}</button>
       </div>
       <div id="modal-transcript" class="modal-transcript"></div>
       <form id="modal-send" class="modal-send">

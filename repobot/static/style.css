@@ -3043,16 +3043,19 @@ button.action-primary:disabled {
 .state-bucket-done      > summary .state-bucket-label { color: var(--ok); }
 .clear-done-form { margin: 0 0 0 auto; }
 button.clear-done {
-  font-size: 10px;
-  padding: 2px 7px;
-  background: var(--danger-soft);
-  color: var(--danger);
-  border-color: var(--danger-soft);
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: 500;
+  padding: 3px 6px;
+  background: transparent;
+  color: var(--ink-mute);
+  border-color: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-button.clear-done:hover { background: var(--alert-caution-soft); }
+button.clear-done:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
 
 /* ============================== card ==============================
    Four visual zones: head / proposal+findings / actions / session.
@@ -4933,6 +4936,23 @@ button.card-retriage {
 }
 button.card-retriage:hover { background: var(--alert-warning); color: var(--bg-card); }
 
+/* Icon-only variant for card header actions — drops label text so
+   the meta row stays quiet. `aria-label` + `title` on the button
+   carry the meaning. */
+button.card-icon-only {
+  padding: 3px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* When icon-only lives on .card-refresh, keep its muted look but
+   turn hover red to match the destructive (delete) intent. */
+button.card-refresh.card-icon-only:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .live-badge {
   font-size: 9px;
   text-transform: uppercase;
@@ -5028,9 +5048,11 @@ button.resume:hover { background: var(--warn); opacity: 0.85; }
 .modal-pr-title { color: var(--ink-soft); }
 .modal-skill { font-family: monospace; }
 .modal-close {
-  font-size: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
-  padding: 2px 8px;
+  padding: 4px 6px;
   background: transparent;
   border: none;
   cursor: pointer;

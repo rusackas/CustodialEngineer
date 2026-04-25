@@ -18,9 +18,12 @@
       <span class="count">{{ cards | length }}</span>
       {% if status == 'done' and cards %}
         <form method="post" action="/tasks/clear-done"
-              class="clear-done-form"
-              title="Delete every task in the Done column. Aborts sessions and prunes worktrees.">
-          <button type="submit" class="clear-done">clear all</button>
+              class="clear-done-form">
+          <button type="submit" class="clear-done"
+                  aria-label="Clear all done tasks"
+                  title="Delete every task in the Done column. Aborts sessions and prunes worktrees.">
+            {{ icon('trash', size=12) }}
+          </button>
         </form>
       {% endif %}
     </h3>
