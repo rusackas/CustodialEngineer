@@ -33,6 +33,7 @@ from .queues import (
 )
 from .triage import (
     triage_dependabot_pr,
+    triage_generic_pr,
     triage_my_pr,
     triage_review_requested_pr,
 )
@@ -56,10 +57,16 @@ def _items_with_live_triage(queue_id: str) -> set:
     return live
 
 
+# Each registered fetcher takes `prior_by_number` so the runner's
+# updatedAt fast-path can flow through; quiet PRs skip the per-PR
+# hydrate fanout regardless of which built-in fetcher is in play.
 FETCHERS = {
-    "failing-dependabot-prs": lambda: github.fetch_dependabot_prs(limit=50),
-    "my-prs": lambda: github.fetch_my_prs(limit=50),
-    "review-requested": lambda: github.fetch_review_requested_prs(limit=50),
+    "failing-dependabot-prs": lambda prior_by_number=None:
+        github.fetch_dependabot_prs(limit=50, prior_by_number=prior_by_number),
+    "my-prs": lambda prior_by_number=None:
+        github.fetch_my_prs(limit=50, prior_by_number=prior_by_number),
+    "review-requested": lambda prior_by_number=None:
+        github.fetch_review_requested_prs(limit=50, prior_by_number=prior_by_number),
 }
 
 TRIAGERS = {
@@ -67,6 +74,16 @@ TRIAGERS = {
     "my-prs": triage_my_pr,
     "review-requested": triage_review_requested_pr,
 }
+
+
+def _triager_for_queue(queue_id: str):
+    """Resolve the triager for a queue. Built-in TRIAGERS win for the
+    three queue ids that ship with bespoke skills; everything else
+    routes through `triage_generic_pr`, which itself reads the queue's
+    `triage_skill` config field (defaulting to `triage-generic-pr`).
+    Without this fallback, user-defined queues had `triage = None` and
+    items sat in their initial state forever."""
+    return TRIAGERS.get(queue_id) or triage_generic_pr
 
 
 # Optional pre-triage bucketer: turns a fetched PR dict into the target
@@ -233,7 +250,7 @@ def refresh_one_item(queue_id: str, item_id) -> dict:
     slug = github.item_repo_slug(item) or github.queue_repo_slug(q)
     with github.repo_scope(slug):
         fresh = github.fetch_one_pr(number)
-    triager = TRIAGERS.get(queue_id)
+    triager = _triager_for_queue(queue_id)
     now = _now()
     result = {"stale": False, "state": item.get("state")}
 
@@ -318,7 +335,7 @@ def retriage_item(queue_id: str, item_id, wait: bool = False) -> None:
     triage, or it got stuck). The item stays in `initial_state` — no
     state transition is implied by retriage itself."""
     q = get_queue_config(queue_id)
-    triage = TRIAGERS.get(queue_id)
+    triage = _triager_for_queue(queue_id)
     if triage is None:
         raise ValueError(f"No triager registered for queue: {queue_id}")
 
@@ -378,11 +395,18 @@ def run_queue(queue_id: str, wait_for_triage: bool = False,
     # to the generic search-driven fetcher, which translates the
     # queue's `query:` block to a `gh pr list --search` invocation
     # — the same syntax you'd type into GitHub's search bar.
-    # Per-queue fetcher first (for queues that need bespoke hydration
-    # like merge state or unresolved threads). Otherwise fall through
-    # to the generic search-driven fetcher, which translates the
-    # queue's `query:` block to a `gh pr list --search` invocation
-    # — the same syntax you'd type into GitHub's search bar.
+    state = load_state()
+
+    # Build the updatedAt fast-path map: for any PR we already have on
+    # the board, hand its prior `raw` to the fetcher so unchanged PRs
+    # skip per-PR hydrate API calls. This is the rate-limit lifeline
+    # — a quiet tick costs only the list call.
+    prior_by_number = {
+        item.get("number"): item.get("raw") or {}
+        for item in queue_items(state, queue_id)
+        if item.get("number") is not None
+    }
+
     fetch = FETCHERS.get(queue_id)
     if fetch is None:
         query_block = q.get("query") or {}
@@ -393,10 +417,23 @@ def run_queue(queue_id: str, wait_for_triage: bool = False,
             return github.fetch_search(query_block,
                                        limit=max(50, max_in_flight),
                                        hydrate=hydrate_block,
-                                       post_filter=filter_block)
-    triage = TRIAGERS.get(queue_id)
+                                       post_filter=filter_block,
+                                       prior_by_number=prior_by_number)
+    else:
+        # Wrap the registered fetcher so the prior-map flows into the
+        # built-ins (dependabot/my-prs/review-requested) without
+        # mutating the FETCHERS registry signature for other call sites.
+        _orig = fetch
+        def fetch():  # noqa: F811
+            try:
+                return _orig(prior_by_number=prior_by_number)
+            except TypeError:
+                # Older fetcher with no prior_by_number kwarg — fall
+                # back to a no-cache call rather than blowing up.
+                return _orig()
 
-    state = load_state()
+    triage = _triager_for_queue(queue_id)
+
     non_done = count_non_done(state, queue_id, done_state=done_state,
                               awaiting_state=awaiting_state)
     slots = 0 if intake_paused else max(0, max_in_flight - non_done)

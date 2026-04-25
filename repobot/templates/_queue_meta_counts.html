@@ -1,0 +1,7 @@
+{# Header counts for one queue: occupancy ratio + a small "triaging"
+   pill while cards are still in their initial state without a
+   proposal. Lives in its own template so the SSE handler can swap
+   just this span on queue-changed without touching the rest of the
+   header (Update button, settings gear, etc.). #}
+<span>{{ non_done }} / {{ eff_max }}</span>
+{% if triaging %}<span class="triaging-count"><span class="spinner"></span>{{ triaging }} triaging</span>{% endif %}

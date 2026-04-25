@@ -374,9 +374,28 @@ def query_has_discriminator(query_block: dict | None) -> bool:
     return False
 
 
+_HYDRATE_CARRY_FIELDS = (
+    "statusCheckRollup", "ci_status", "mergeStateStatus",
+    "has_conflicts", "unresolved_threads",
+    "maintainer_can_modify", "is_cross_repository",
+    "needs_ci_approval",
+)
+
+
+def _carry_prior_hydrate(pr: dict, prior_raw: dict) -> None:
+    """Copy hydrated fields from a prior fetch onto a fresh list-only PR
+    dict. Used in the updatedAt-unchanged fast-path so we can skip the
+    per-PR hydrate API calls without losing the hydration data the
+    triager needs."""
+    for k in _HYDRATE_CARRY_FIELDS:
+        if k in prior_raw and k not in pr:
+            pr[k] = prior_raw[k]
+
+
 def fetch_search(query_block: dict, limit: int = 50,
                  hydrate: dict | None = None,
-                 post_filter: dict | None = None) -> list[dict]:
+                 post_filter: dict | None = None,
+                 prior_by_number: dict | None = None) -> list[dict]:
     """Generic PR fetcher — runs `gh pr list --search` against the
     current repo scope using a search string built from the queue's
     `query:` block.
@@ -389,6 +408,18 @@ def fetch_search(query_block: dict, limit: int = 50,
         + `has_conflicts`.
       - `review_threads: true` — same GraphQL call as merge_state
         (free if merge_state is on); sets `unresolved_threads`.
+
+    `prior_by_number` is an optional `{number: prior_raw_dict}` map of
+    what we already have on disk. For any PR whose `updatedAt` matches
+    its prior — no commits, no comments, no review activity since the
+    last fetch — we skip the per-PR hydrate calls entirely and carry
+    the hydrated fields forward. This is the rate-limit lifeline: a
+    quiet tick costs one search call, not 1 + 2N.
+
+    When CI hydration is requested alongside merge_state or threads,
+    a single combined GraphQL call replaces the prior `pr_checks` REST
+    hit + `_review_threads` GraphQL pair (the rollup state lives on the
+    head commit, free to ride along with the merge/threads query).
 
     `post_filter` drops PRs after the fetch:
       - `attention_only: true` — keeps only PRs with conflicts /
@@ -424,27 +455,61 @@ def fetch_search(query_block: dict, limit: int = 50,
     wants_threads = bool(hydrate.get("review_threads"))
     wants_merge = bool(hydrate.get("merge_state"))
     wants_ci = bool(hydrate.get("ci_status"))
+    # Combined GraphQL covers CI + merge_state + threads in one call
+    # whenever any of the GraphQL signals are wanted. Falls back to
+    # the REST `pr_checks` path only if CI is the lone hydrate request.
+    use_combined_graphql = (wants_merge or wants_threads)
     out: list[dict] = []
     for pr in prs:
         number = pr.get("number")
-        if wants_ci and number is not None:
+        prior_raw = (prior_by_number or {}).get(number) or {}
+        prior_updated = prior_raw.get("updatedAt")
+        unchanged = (prior_updated
+                     and pr.get("updatedAt")
+                     and pr["updatedAt"] == prior_updated)
+        if unchanged:
+            # Quiet PR — no signal could have changed since last tick.
+            # Skip every per-PR API call and carry the hydrated fields
+            # forward intact.
+            _carry_prior_hydrate(pr, prior_raw)
+            _stamp_repo(pr)
+            out.append(pr)
+            continue
+
+        if use_combined_graphql and number is not None:
+            try:
+                h = _hydrate_pr_via_graphql(number)
+            except Exception:
+                h = {"mergeStateStatus": "", "threads": [], "ci_status": "",
+                     "maintainer_can_modify": False,
+                     "is_cross_repository": False,
+                     "needs_ci_approval": False}
+            if wants_merge:
+                pr["mergeStateStatus"] = h["mergeStateStatus"]
+                pr["has_conflicts"] = (
+                    pr.get("mergeable") == "CONFLICTING"
+                    or h["mergeStateStatus"] == "DIRTY")
+            if wants_threads:
+                pr["unresolved_threads"] = h["threads"]
+            if wants_ci:
+                # Rollup-state-derived verdict; statusCheckRollup stays
+                # empty here since the modal endpoint does its own
+                # per-card fetch when individual check rows are needed.
+                pr["statusCheckRollup"] = []
+                pr["ci_status"] = h["ci_status"] or "passing"
+            # Push-feasibility + CI-approval gate are always cheap
+            # additions to the same call — stamp regardless of which
+            # hydrate toggles fired the GraphQL.
+            pr["maintainer_can_modify"] = h["maintainer_can_modify"]
+            pr["is_cross_repository"] = h["is_cross_repository"]
+            pr["needs_ci_approval"] = h["needs_ci_approval"]
+        elif wants_ci and number is not None:
             try:
                 checks = pr_checks(number)
             except Exception:
                 checks = []
             pr["statusCheckRollup"] = checks
             pr["ci_status"] = ci_status(checks)
-        if (wants_merge or wants_threads) and number is not None:
-            try:
-                mss, threads = _review_threads(number)
-            except Exception:
-                mss, threads = "", []
-            if wants_merge:
-                pr["mergeStateStatus"] = mss
-                pr["has_conflicts"] = (
-                    pr.get("mergeable") == "CONFLICTING" or mss == "DIRTY")
-            if wants_threads:
-                pr["unresolved_threads"] = threads
         _stamp_repo(pr)
         out.append(pr)
 
@@ -458,13 +523,26 @@ def fetch_search(query_block: dict, limit: int = 50,
     return out
 
 
-def fetch_dependabot_prs(limit: int = 50) -> list[dict]:
+def fetch_dependabot_prs(limit: int = 50,
+                         prior_by_number: dict | None = None) -> list[dict]:
     """All open Dependabot PRs with hydrated check rollups, sorted oldest-
-    update-first so long-languishing PRs get triage attention first."""
+    update-first so long-languishing PRs get triage attention first.
+
+    `prior_by_number` lets us skip the per-PR `pr_checks` call when a
+    PR's `updatedAt` is unchanged — Dependabot's churn is bursty (a
+    rebase storm can touch many PRs) but most ticks the set is quiet.
+    """
     prs = list_prs(author="app/dependabot", state="open", limit=limit)
     prs.sort(key=lambda p: p.get("updatedAt") or "")
     out = []
     for pr in prs:
+        prior_raw = (prior_by_number or {}).get(pr["number"]) or {}
+        prior_updated = prior_raw.get("updatedAt")
+        if prior_updated and pr.get("updatedAt") == prior_updated:
+            _carry_prior_hydrate(pr, prior_raw)
+            _stamp_repo(pr)
+            out.append(pr)
+            continue
         checks = pr_checks(pr["number"])
         pr["statusCheckRollup"] = checks
         pr["ci_status"] = ci_status(checks)
@@ -635,6 +713,16 @@ query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){
     pullRequest(number:$number){
       mergeStateStatus
+      maintainerCanModify
+      isCrossRepository
+      commits(last:1){nodes{commit{statusCheckRollup{
+        state
+        contexts(first:50){nodes{
+          __typename
+          ... on CheckRun{ name status conclusion }
+          ... on StatusContext{ context state }
+        }}
+      }}}}
       reviewThreads(first:50){
         nodes{
           id
@@ -651,10 +739,43 @@ query($owner:String!,$name:String!,$number:Int!){
 """
 
 
-def _review_threads(number: int) -> tuple[str, list[dict]]:
-    """Returns (mergeStateStatus, list of thread dicts). Threads are
-    pruned to the fields we actually consume downstream — the skill
-    gets file, line, author, and body excerpt."""
+# Map GraphQL StatusState to our compact ci_status verdict. ci_status()
+# (the per-context REST path) considers CANCELLED non-fatal; the GraphQL
+# rollup state already reflects GitHub's own banner logic, which also
+# treats CANCELLED as non-failure, so the verdicts agree.
+def _rollup_state_to_ci_status(state: str | None) -> str:
+    s = (state or "").upper()
+    if s in ("PENDING", "EXPECTED"):
+        return "pending"
+    if s in ("FAILURE", "ERROR"):
+        return "failing"
+    # SUCCESS or empty (no checks configured) — treat as passing.
+    return "passing"
+
+
+def _hydrate_pr_via_graphql(number: int) -> dict:
+    """Single combined hydrate call. Returns:
+
+      {
+        "mergeStateStatus": "CLEAN" | "DIRTY" | "BLOCKED" | …,
+        "threads": [...],                # unresolved review threads
+        "ci_status": "passing" | "failing" | "pending",
+        "maintainer_can_modify": bool,
+        "is_cross_repository": bool,
+        "needs_ci_approval": bool,       # any CheckRun WAITING / ACTION_REQUIRED
+      }
+
+    One GraphQL call covers every signal — merge state, review threads,
+    CI verdict, push-feasibility, and the first-time-contributor "Approve
+    and run workflow" gate. Pulling all of these together is what made
+    the rate-limit-friendly path possible.
+
+    `needs_ci_approval` is best-effort: GitHub flags the gate via
+    `CheckRun.status == WAITING` (suite registered but waiting for a
+    maintainer click) and via `conclusion == ACTION_REQUIRED` (post-
+    approval state for some flows). Either firing means the user can
+    likely click "Approve and run workflow" on the PR.
+    """
     # Honor the ContextVar scope first — cross-repo queues pin the
     # slug there. Only fall through to the config default when
     # unscoped.
@@ -669,6 +790,21 @@ def _review_threads(number: int) -> tuple[str, list[dict]]:
     pr = (data.get("data") or {}).get("repository", {}).get("pullRequest") or {}
     mss = pr.get("mergeStateStatus") or ""
     threads = (pr.get("reviewThreads") or {}).get("nodes") or []
+    commit_nodes = ((pr.get("commits") or {}).get("nodes") or [])
+    rollup = (((commit_nodes[0] or {}).get("commit") or {}).get("statusCheckRollup")
+              if commit_nodes else None) or {}
+    ci = _rollup_state_to_ci_status(rollup.get("state"))
+    contexts = ((rollup.get("contexts") or {}).get("nodes") or [])
+    needs_approval = False
+    for c in contexts:
+        if c.get("__typename") != "CheckRun":
+            continue
+        status = (c.get("status") or "").upper()
+        conclusion = (c.get("conclusion") or "").upper()
+        if status == "WAITING" or conclusion == "ACTION_REQUIRED":
+            needs_approval = True
+            break
+
     slim = []
     for t in threads:
         if t.get("isResolved"):
@@ -684,7 +820,22 @@ def _review_threads(number: int) -> tuple[str, list[dict]]:
             "first_body": (first.get("body") or "")[:2000],
             "comments_count": len(comments),
         })
-    return mss, slim
+    return {
+        "mergeStateStatus": mss,
+        "threads": slim,
+        "ci_status": ci,
+        "maintainer_can_modify": bool(pr.get("maintainerCanModify")),
+        "is_cross_repository": bool(pr.get("isCrossRepository")),
+        "needs_ci_approval": needs_approval,
+    }
+
+
+# Legacy tuple-shape wrapper kept so callers that haven't migrated
+# yet keep working. New code should call `_hydrate_pr_via_graphql`
+# and read the additional fields off the returned dict.
+def _review_threads(number: int) -> tuple[str, list[dict], str]:
+    h = _hydrate_pr_via_graphql(number)
+    return h["mergeStateStatus"], h["threads"], h["ci_status"]
 
 
 def _self_handle() -> str:
@@ -719,7 +870,8 @@ def list_review_requested_prs(limit: int = 50) -> list[dict]:
     ])
 
 
-def fetch_review_requested_prs(limit: int = 50) -> list[dict]:
+def fetch_review_requested_prs(limit: int = 50,
+                               prior_by_number: dict | None = None) -> list[dict]:
     """Open PRs requesting review from the configured user, hydrated
     with CI status, mergeStateStatus, and the list of unresolved review
     threads (from any author) — the triage skill uses those to tell
@@ -727,6 +879,10 @@ def fetch_review_requested_prs(limit: int = 50) -> list[dict]:
 
     Returns PRs sorted oldest-update-first (longest-waiting gets
     triaged first). Draft PRs are excluded.
+
+    `prior_by_number`: same updatedAt-fast-path as `fetch_search`. CI,
+    merge_state, and review threads all come from one combined GraphQL
+    call — so a quiet PR avoids one REST hit and one GraphQL hit.
     """
     prs = list_review_requested_prs(limit=limit)
     prs = [p for p in prs if not p.get("isDraft")]
@@ -735,26 +891,36 @@ def fetch_review_requested_prs(limit: int = 50) -> list[dict]:
     out: list[dict] = []
     for pr in prs:
         number = pr["number"]
+        prior_raw = (prior_by_number or {}).get(number) or {}
+        prior_updated = prior_raw.get("updatedAt")
+        if prior_updated and pr.get("updatedAt") == prior_updated:
+            _carry_prior_hydrate(pr, prior_raw)
+            _stamp_repo(pr)
+            out.append(pr)
+            continue
         try:
-            checks = pr_checks(number)
+            h = _hydrate_pr_via_graphql(number)
         except Exception:
-            checks = []
-        pr["statusCheckRollup"] = checks
-        pr["ci_status"] = ci_status(checks)
-        try:
-            mss, threads = _review_threads(number)
-        except Exception:
-            mss, threads = "", []
-        pr["mergeStateStatus"] = mss
-        pr["unresolved_threads"] = threads
+            h = {"mergeStateStatus": "", "threads": [], "ci_status": "",
+                 "maintainer_can_modify": False,
+                 "is_cross_repository": False,
+                 "needs_ci_approval": False}
+        pr["statusCheckRollup"] = []
+        pr["ci_status"] = h["ci_status"] or "passing"
+        pr["mergeStateStatus"] = h["mergeStateStatus"]
+        pr["unresolved_threads"] = h["threads"]
         pr["has_conflicts"] = (pr.get("mergeable") == "CONFLICTING"
-                               or mss == "DIRTY")
+                               or h["mergeStateStatus"] == "DIRTY")
+        pr["maintainer_can_modify"] = h["maintainer_can_modify"]
+        pr["is_cross_repository"] = h["is_cross_repository"]
+        pr["needs_ci_approval"] = h["needs_ci_approval"]
         _stamp_repo(pr)
         out.append(pr)
     return out
 
 
-def fetch_my_prs(limit: int = 50) -> list[dict]:
+def fetch_my_prs(limit: int = 50,
+                 prior_by_number: dict | None = None) -> list[dict]:
     """Open, non-draft PRs authored by the configured user that need
     attention — any of: merge conflicts, failing CI, unresolved review
     threads. Each returned PR has:
@@ -763,6 +929,9 @@ def fetch_my_prs(limit: int = 50) -> list[dict]:
       - has_conflicts: bool
       - mergeStateStatus: from graphql
     PRs with none of the three signals are excluded.
+
+    `prior_by_number` enables the updatedAt-unchanged fast-path; quiet
+    PRs are carried forward without per-PR API calls.
     """
     prs = list_prs(author=_self_handle(), state="open", limit=limit)
     prs = [p for p in prs if not p.get("isDraft")]
@@ -771,22 +940,34 @@ def fetch_my_prs(limit: int = 50) -> list[dict]:
     out: list[dict] = []
     for pr in prs:
         number = pr["number"]
+        prior_raw = (prior_by_number or {}).get(number) or {}
+        prior_updated = prior_raw.get("updatedAt")
+        if prior_updated and pr.get("updatedAt") == prior_updated:
+            _carry_prior_hydrate(pr, prior_raw)
+            # Apply the same attention filter to carried-forward PRs.
+            if (pr.get("has_conflicts") or pr.get("ci_status") == "failing"
+                    or pr.get("unresolved_threads")):
+                _stamp_repo(pr)
+                out.append(pr)
+            continue
         try:
-            checks = pr_checks(number)
+            h = _hydrate_pr_via_graphql(number)
         except Exception:
-            checks = []
-        pr["statusCheckRollup"] = checks
-        pr["ci_status"] = ci_status(checks)
-        try:
-            mss, threads = _review_threads(number)
-        except Exception:
-            mss, threads = "", []
-        pr["mergeStateStatus"] = mss
-        pr["unresolved_threads"] = threads
+            h = {"mergeStateStatus": "", "threads": [], "ci_status": "",
+                 "maintainer_can_modify": False,
+                 "is_cross_repository": False,
+                 "needs_ci_approval": False}
+        pr["statusCheckRollup"] = []
+        pr["ci_status"] = h["ci_status"] or "passing"
+        pr["mergeStateStatus"] = h["mergeStateStatus"]
+        pr["unresolved_threads"] = h["threads"]
         pr["has_conflicts"] = (pr.get("mergeable") == "CONFLICTING"
-                               or mss == "DIRTY")
+                               or h["mergeStateStatus"] == "DIRTY")
+        pr["maintainer_can_modify"] = h["maintainer_can_modify"]
+        pr["is_cross_repository"] = h["is_cross_repository"]
+        pr["needs_ci_approval"] = h["needs_ci_approval"]
         if (pr["has_conflicts"] or pr["ci_status"] == "failing"
-                or threads):
+                or h["threads"]):
             _stamp_repo(pr)
             out.append(pr)
     return out

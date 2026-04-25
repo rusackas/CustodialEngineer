@@ -62,6 +62,24 @@ DEFAULT_AUTO_REFRESH_SECONDS = 180
 
 TEMPLATES_DIR = PROJECT_ROOT / "repobot" / "templates"
 STATIC_DIR = PROJECT_ROOT / "repobot" / "static"
+SKILLS_DIR = PROJECT_ROOT / ".claude" / "skills"
+
+
+def _list_triage_skills() -> list[str]:
+    """Return the names of every `triage-*` skill bundled in
+    `.claude/skills/` (sorted). Used to populate the queue-settings
+    triage-skill dropdown so the user can pick a non-default triager
+    without typing a skill name by hand."""
+    if not SKILLS_DIR.is_dir():
+        return []
+    out: list[str] = []
+    for child in SKILLS_DIR.iterdir():
+        if not child.is_dir() or not child.name.startswith("triage-"):
+            continue
+        if not (child / "SKILL.md").is_file():
+            continue
+        out.append(child.name)
+    return sorted(out)
 
 app = FastAPI(title="repobot")
 
@@ -277,6 +295,36 @@ def _auto_refresh_interval() -> int:
     return max(30, setting) if setting > 0 else setting  # 0 still means off
 
 
+# Auto-refresh tick is gated by these. Below the headroom we skip the
+# tick rather than spend the last few hundred calls on background polling
+# — the user's foreground actions (open drawer, request reviewers, run a
+# triage skill) need somewhere to land. GraphQL gets a wider buffer
+# because a single triage session can spend ~50 GraphQL calls.
+_RATE_LIMIT_REST_HEADROOM = 200
+_RATE_LIMIT_GQL_HEADROOM = 500
+
+
+def _rate_limit_pause_reason() -> str | None:
+    """Return a human reason if the auto-refresh tick should skip this
+    cycle to preserve API budget. Returns None when there's headroom."""
+    snap = github.rate_limit_snapshot() or {}
+    core = snap.get("core") or {}
+    gql = snap.get("graphql") or {}
+    # Default to "lots of room" when the snapshot fails — we don't want
+    # an offline rate_limit endpoint to wedge the whole tick.
+    rest_remaining = core.get("remaining")
+    gql_remaining = gql.get("remaining")
+    if (isinstance(rest_remaining, int)
+            and rest_remaining < _RATE_LIMIT_REST_HEADROOM):
+        return (f"REST budget low: {rest_remaining} remaining "
+                f"(< {_RATE_LIMIT_REST_HEADROOM} headroom)")
+    if (isinstance(gql_remaining, int)
+            and gql_remaining < _RATE_LIMIT_GQL_HEADROOM):
+        return (f"GraphQL budget low: {gql_remaining} remaining "
+                f"(< {_RATE_LIMIT_GQL_HEADROOM} headroom)")
+    return None
+
+
 def _start_auto_refresh() -> None:
     """One daemon thread per queue. Each wakes every N seconds and calls
     `run_queue` (non-blocking triage fan-out) to keep the hopper full
@@ -284,18 +332,47 @@ def _start_auto_refresh() -> None:
     — the GH API call already happened, this just merges its results).
     Without that merge, items frozen on the board with stale `raw`
     (e.g. from before LIST_FIELDS expanded) never pick up newer fields
-    like `author` / `createdAt` until the user manually clicks Update."""
+    like `author` / `createdAt` until the user manually clicks Update.
+
+    Each tick checks `rate_limit_snapshot()` first — if the REST or
+    GraphQL budget is below headroom, the tick is skipped and the
+    UI is notified via SSE so the rate-limit pill can show a paused
+    state. The next tick retries (rate_limit_snapshot itself is exempt
+    from the rate limit, so the gate stays cheap)."""
     interval = _auto_refresh_interval()
     if interval <= 0:
         return
+    last_paused: dict[str, bool] = {}
     for q in get_queues_config():
         def loop(qid=q["id"]):
             while True:
-                try:
-                    run_queue(qid, wait_for_triage=False,
-                              refresh_existing=True)
-                except Exception as exc:
-                    print(f"[auto-refresh {qid}] {exc}")
+                pause_reason = _rate_limit_pause_reason()
+                if pause_reason:
+                    if not last_paused.get(qid):
+                        print(f"[auto-refresh {qid}] paused: {pause_reason}")
+                        try:
+                            from . import events as _events
+                            _events.broadcast("rate-limit-paused",
+                                              {"queue_id": qid,
+                                               "reason": pause_reason})
+                        except Exception:
+                            pass
+                    last_paused[qid] = True
+                else:
+                    if last_paused.get(qid):
+                        print(f"[auto-refresh {qid}] resumed")
+                        try:
+                            from . import events as _events
+                            _events.broadcast("rate-limit-resumed",
+                                              {"queue_id": qid})
+                        except Exception:
+                            pass
+                    last_paused[qid] = False
+                    try:
+                        run_queue(qid, wait_for_triage=False,
+                                  refresh_existing=True)
+                    except Exception as exc:
+                        print(f"[auto-refresh {qid}] {exc}")
                 time.sleep(interval)
         threading.Thread(target=loop, daemon=True, name=f"auto-refresh-{q['id']}").start()
 
@@ -379,6 +456,7 @@ def index(request: Request):
             "repos": github.list_repos(),
             "default_repo_id": (cfg.get("default_repo_id")
                                 or github.list_repos()[0]["id"]),
+            "triage_skills": _list_triage_skills(),
         },
     )
 
@@ -599,6 +677,33 @@ def queue_body(request: Request, queue_id: str):
     <details>, focused inputs, and scroll position survive."""
     ctx = _ctx_for_queue(request, queue_id)
     return templates.TemplateResponse(request, "_queue_body.html", ctx)
+
+
+@app.get("/queues/{queue_id}/meta", response_class=HTMLResponse)
+def queue_meta(request: Request, queue_id: str):
+    """Header counts for one queue (occupancy + triaging spinner).
+    Lives in its own fragment so the SSE handler can refresh it on
+    `queue-changed` without touching the body — the queue-meta sits
+    in the header chrome above the SSE-targeted body div, so a body-
+    only swap leaves these counts stale."""
+    ctx = _ctx_for_queue(request, queue_id)
+    queue = ctx["queue"]
+    q_items = ctx["q_items"]
+    done_state = ctx["done_state"]
+    awaiting_state = ctx["awaiting_state"]
+    initial_state = queue.get("initial_state")
+    eff_max = queue.get("effective_max_in_flight") or queue.get("max_in_flight") or 0
+    non_done = sum(1 for i in q_items
+                   if i.get("state") != done_state
+                   and i.get("state") != awaiting_state)
+    triaging = sum(1 for i in q_items
+                   if i.get("state") == initial_state
+                   and not i.get("proposal"))
+    return templates.TemplateResponse(
+        request, "_queue_meta_counts.html",
+        {"request": request, "non_done": non_done,
+         "eff_max": eff_max, "triaging": triaging},
+    )
 
 
 @app.get("/fragments/header-readout", response_class=HTMLResponse)
@@ -969,6 +1074,7 @@ def update_queue_definition_endpoint(
     h_review_threads: str = Form(""),
     f_attention_only: str = Form(""),
     f_non_draft: str = Form(""),
+    triage_skill: str = Form(""),
     states_json: str = Form(""),
     multi_bucket: str = Form(""),
 ):
@@ -1036,6 +1142,10 @@ def update_queue_definition_endpoint(
     # leaving every checkbox in the form unchecked.
     updates["hydrate"] = hydrate_updates or None
     updates["filter"] = filter_updates or None
+    # Triage skill override. Empty string falls back to the bundled
+    # `triage-generic-pr` (or whatever the queue's built-in triager
+    # picks) — passing None to update_queue_definition deletes the key.
+    updates["triage_skill"] = triage_skill.strip() or None
     # Per-queue repo override (registry id reference). Empty value =
     # use the global default; non-empty = override with the named repo.
     rid = (repo_id or "").strip()
@@ -1256,6 +1366,7 @@ def _yaml_to_form_fields(parsed: dict) -> dict:
             "attention_only": bool(pfilter.get("attention_only")),
             "non_draft": bool(pfilter.get("non_draft")),
         },
+        "triage_skill": parsed.get("triage_skill") or "",
         "states": state_rows,
         "multi_bucket": len(initial_states) > 1,
     }
@@ -1311,6 +1422,7 @@ def queue_new_form(
     h_review_threads: str = Form(""),
     f_attention_only: str = Form(""),
     f_non_draft: str = Form(""),
+    triage_skill: str = Form(""),
     states_json: str = Form(""),
     multi_bucket: str = Form(""),
 ):
@@ -1363,6 +1475,8 @@ def queue_new_form(
     parsed.update(state_machine)
     if hydrate: parsed["hydrate"] = hydrate
     if post_filter: parsed["filter"] = post_filter
+    if triage_skill.strip():
+        parsed["triage_skill"] = triage_skill.strip()
     rid = (repo_id or "").strip()
     if rid:
         if not github.repo_by_id(rid):

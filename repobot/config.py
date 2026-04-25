@@ -22,7 +22,7 @@ def load_config() -> dict:
 # and requires a config-file edit by hand. Keeps the editor tight and
 # means accidental form submissions can't corrupt the core shape.
 EDITABLE_QUEUE_FIELDS = {"title", "max_in_flight", "query", "repo",
-                         "hydrate", "filter",
+                         "hydrate", "filter", "triage_skill",
                          "states", "initial_state", "initial_states",
                          "done_state", "awaiting_state",
                          # Internal-use only — see _state_machine_renames
@@ -112,6 +112,12 @@ def update_queue_definition(queue_id: str, updates: dict) -> dict:
                 raise ValueError(
                     f"not editable filter keys: {', '.join(sorted(bad_f))}")
             target["filter"] = {k: bool(v) for k, v in f.items() if v}
+    if "triage_skill" in updates:
+        skill = (updates.get("triage_skill") or "").strip()
+        if not skill:
+            target.pop("triage_skill", None)
+        else:
+            target["triage_skill"] = skill
 
     # State machine edits. The form sends `states` (the ordered list)
     # plus the role assignments (initial / done / awaiting). For

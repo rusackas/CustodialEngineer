@@ -75,11 +75,18 @@
           try { data = JSON.parse(e.data); } catch (_) {}
           const qid = data.queue_id;
           if (!qid) return;
-          const el = document.querySelector(
+          if (!window.htmx) return;
+          // Refresh both the body (cards) and the meta (occupancy +
+          // triaging count) — the meta lives in the header chrome
+          // outside the body div, so a body-only swap would leave it
+          // stale and the spinner would keep counting cards that
+          // already finished triage.
+          const body = document.querySelector(
             `[data-sse-queue="${qid}"]`);
-          if (el && window.htmx) {
-            window.htmx.trigger(el, 'sse-refresh');
-          }
+          if (body) window.htmx.trigger(body, 'sse-refresh');
+          const meta = document.querySelector(
+            `[data-sse-queue-meta="${qid}"]`);
+          if (meta) window.htmx.trigger(meta, 'sse-refresh');
         });
         es.addEventListener('tasks-changed', function () {
           document.querySelectorAll('[data-sse-tasks]').forEach(
@@ -380,8 +387,13 @@
             {% if queue.intake_paused %}<span class="paused-pill" title="Intake paused — no new cards will be pulled. Existing cards continue to refresh and triage.">paused</span>{% endif %}
           </h2>
           <div class="queue-meta">
-            <span>{{ non_done }} / {{ eff_max }}</span>
-            {% if triaging %}<span class="triaging-count"><span class="spinner"></span>{{ triaging }} triaging</span>{% endif %}
+            <span class="queue-meta-counts"
+                  data-sse-queue-meta="{{ queue.id }}"
+                  hx-get="/queues/{{ queue.id }}/meta"
+                  hx-trigger="sse-refresh"
+                  hx-swap="morph:innerHTML">
+              {% include "_queue_meta_counts.html" %}
+            </span>
             <form method="post" action="/queues/{{ queue.id }}/fetch">
               <button type="submit" class="refresh" title="Re-fetch every item from GitHub. Non-done items whose PR was updated since last triage get re-triaged. Done items with new activity are reopened.">Update</button>
             </form>
@@ -740,6 +752,36 @@
                   </div>
                 </section>
 
+                <section class="queue-toggles-section">
+                  <h4 class="queue-toggles-header">
+                    <span>Triage skill</span>
+                    <span class="queue-toggles-rule" aria-hidden="true"></span>
+                  </h4>
+                  <div class="settings-section-help">
+                    Which Claude skill triages each new card. Built-in
+                    queues (My PRs, Review requested, Dependabot) ignore
+                    this field — they're hardwired to their bespoke
+                    skills. Leave empty to use <code>triage-generic-pr</code>.
+                  </div>
+                  <label class="form-row">
+                    <span class="form-row-label">Skill</span>
+                    <select name="triage_skill" class="form-select">
+                      <option value=""
+                              {% if not (queue.triage_skill or '') %}selected{% endif %}>
+                        triage-generic-pr (default)
+                      </option>
+                      {% for sk in triage_skills %}
+                        {% if sk != 'triage-generic-pr' %}
+                          <option value="{{ sk }}"
+                                  {% if queue.triage_skill == sk %}selected{% endif %}>
+                            {{ sk }}
+                          </option>
+                        {% endif %}
+                      {% endfor %}
+                    </select>
+                  </label>
+                </section>
+
               </div>
 
               {# State machine section. Each row is one column. Roles
@@ -1045,6 +1087,30 @@
                   </label>
                 </div>
               </section>
+
+              <section class="queue-toggles-section">
+                <h4 class="queue-toggles-header">
+                  <span>Triage skill</span>
+                  <span class="queue-toggles-rule" aria-hidden="true"></span>
+                </h4>
+                <div class="settings-section-help">
+                  Which Claude skill triages each new card. Leave empty
+                  to use the bundled <code>triage-generic-pr</code>.
+                </div>
+                <label class="form-row">
+                  <span class="form-row-label">Skill</span>
+                  <select name="triage_skill" class="form-select">
+                    <option value="" selected>
+                      triage-generic-pr (default)
+                    </option>
+                    {% for sk in triage_skills %}
+                      {% if sk != 'triage-generic-pr' %}
+                        <option value="{{ sk }}">{{ sk }}</option>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </label>
+              </section>
             </div>
 
             {# State machine. Seeds with the standard 4-column setup;
@@ -1279,6 +1345,16 @@
   </div>
 
   <script>
+    // Wrapped in an IIFE so a full-body morph (e.g. an hx-boost form
+    // submit that returns the index page, or any swap that reinserts
+    // this script tag) doesn't blow up on re-declared `const`/`let`
+    // identifiers. Function scope = each re-evaluation gets a fresh
+    // lexical environment instead of colliding with the prior one.
+    // The guard avoids double-binding `document.body.addEventListener`
+    // handlers, which would otherwise stack up on every swap.
+    (function () {
+      if (window.__indexInteractionsInited) return;
+      window.__indexInteractionsInited = true;
     // Editable-comment modal: any form carrying `data-editable-body`
     // (close / approve-merge / dependabot-rebase / dependabot-recreate) is
     // intercepted on submit, the default body is shown in a modal for
@@ -2451,6 +2527,14 @@
       const fl = f.filter || {};
       setCheck('input[name="f_attention_only"]', fl.attention_only);
       setCheck('input[name="f_non_draft"]', fl.non_draft);
+      const tsSel = formPane.querySelector('select[name="triage_skill"]');
+      if (tsSel) {
+        const target = (f.triage_skill || '').trim();
+        tsSel.value = '';
+        for (const opt of tsSel.options) {
+          if (opt.value === target) { tsSel.value = target; break; }
+        }
+      }
       // State machine: rebuild the row list from scratch.
       const list = formPane.querySelector('[data-state-list]');
       const multiToggle = formPane.querySelector(
@@ -3139,6 +3223,7 @@
         evt.preventDefault();
       }
     });
+    })();
   </script>
 </body>
 </html>

@@ -271,3 +271,151 @@ def triage_my_pr(item: dict, queue_id: str | None = None
                               "triage_error": str(exc)}
     msg, actions = _mechanical_my_pr_triage(item)
     return msg, actions, {"triage_source": "mechanical"}
+
+
+# Default skill name used by `triage_generic_pr` when a queue doesn't
+# pin one via its `triage_skill` config field. Resolves to
+# `.claude/skills/triage-generic-pr/SKILL.md`.
+DEFAULT_GENERIC_TRIAGE_SKILL = "triage-generic-pr"
+
+
+def _resolve_triage_skill(queue_id: str | None) -> str:
+    """Return the skill name to invoke for a queue's generic triage.
+    Queue YAML may pin one via `triage_skill: …`; otherwise we fall
+    back to the bundled `triage-generic-pr` skill."""
+    if not queue_id:
+        return DEFAULT_GENERIC_TRIAGE_SKILL
+    cfg = load_config()
+    for q in cfg.get("queues") or []:
+        if q.get("id") == queue_id:
+            skill = (q.get("triage_skill") or "").strip()
+            return skill or DEFAULT_GENERIC_TRIAGE_SKILL
+    return DEFAULT_GENERIC_TRIAGE_SKILL
+
+
+def _can_push_back(raw: dict) -> bool:
+    """True when we can push commits back to the PR's head branch —
+    either an in-repo PR (we already have origin push) or a fork PR
+    where the author opted into maintainer edits. Skills like
+    `rebase`, `fix-precommit`, and `attempt-fix` need this to actually
+    do anything; without it they bail to `needs_human` and the user
+    wastes a click."""
+    if not raw.get("is_cross_repository"):
+        return True
+    return bool(raw.get("maintainer_can_modify"))
+
+
+def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
+    """Signal-based fallback for arbitrary user-defined queues. We don't
+    know whether the user is the author, reviewer, or just watching —
+    so we propose safe, low-commitment actions and always include
+    `prompt` as the human-escape hatch.
+
+    Action priority:
+    - Needs CI approval → `approve-ci` primary. One-click unblock.
+    - Conflicts → `rebase` if push-allowed, else `nudge-author` /
+      `await-update`.
+    - Failing CI → `fix-precommit` / `attempt-fix` if push-allowed,
+      else `nudge-author` / `await-update`.
+    - Unresolved threads → `await-update`.
+    - Stale + nothing actionable → `nudge-author`, then `close`.
+    - Otherwise → `prompt` as primary; user decides.
+    """
+    raw = item.get("raw") or {}
+    has_conflicts = bool(raw.get("has_conflicts"))
+    ci = (raw.get("ci_status") or "").lower()
+    threads = raw.get("unresolved_threads") or []
+    age = _age_days(raw)
+    is_bot = (raw.get("author") or {}).get("is_bot") if isinstance(raw.get("author"), dict) else False
+    needs_ci_approval = bool(raw.get("needs_ci_approval"))
+    push_allowed = _can_push_back(raw)
+
+    reasons: list[str] = []
+    actions: list[str] = []
+
+    # Highest priority: CI is gated waiting for our click. One button
+    # unblocks everything downstream.
+    if needs_ci_approval:
+        reasons.append("CI awaiting approval")
+        actions.append("approve-ci")
+
+    if has_conflicts:
+        reasons.append("merge conflicts")
+        if push_allowed:
+            actions.append("rebase")
+        if not is_bot:
+            actions.append("nudge-author")
+        actions.append("await-update")
+    if ci == "failing":
+        reasons.append("failing CI")
+        if push_allowed:
+            # We don't know yet whether pre-commit is the only red
+            # check; offer both — the skills inspect the rollup
+            # themselves and bail cleanly when the assumption breaks.
+            actions.extend(["fix-precommit", "attempt-fix"])
+        if not is_bot:
+            actions.append("nudge-author")
+        actions.append("await-update")
+    if threads:
+        reasons.append(
+            f"{len(threads)} unresolved review thread"
+            + ("s" if len(threads) != 1 else ""))
+        actions.append("await-update")
+    if not reasons and age is not None and age > 30:
+        reasons.append(f"stale (~{age:.0f}d since update)")
+        if not is_bot:
+            actions.append("nudge-author")
+        actions.append("close")
+
+    if not reasons:
+        msg = "No blocking signal detected — manual triage."
+    else:
+        msg = "Needs attention: " + ", ".join(reasons) + "."
+
+    # Universal options always offered. `prompt` is the human escape
+    # hatch; `summarize-diff` / `assess-on-worktree` give the user a
+    # cheap way to ask for more context before deciding.
+    actions.extend(["summarize-diff", "assess-on-worktree",
+                    "prompt", "skip"])
+    seen: set = set()
+    ordered = [a for a in actions if not (a in seen or seen.add(a))]
+    return msg, ordered
+
+
+def triage_generic_pr(item: dict, queue_id: str | None = None
+                      ) -> tuple[str, list[str], dict]:
+    """Generic triager for user-defined queues. Tries the queue's
+    configured triage skill (or `triage-generic-pr` by default), falls
+    back to mechanical signal-based triage when the skill errors or
+    returns an unparseable result.
+
+    This is the registry fallback wired in `runner._triager_for_queue`
+    — without it, queues outside the built-in TRIAGERS registry would
+    have items stuck in their initial state forever.
+    """
+    raw = item.get("raw") or {}
+    extra_pr = {
+        "has_conflicts": bool(raw.get("has_conflicts")),
+        "merge_state_status": raw.get("mergeStateStatus"),
+        "unresolved_threads": raw.get("unresolved_threads") or [],
+    }
+    skill = _resolve_triage_skill(queue_id)
+    try:
+        skill_result = _skill_triage(
+            skill, item, queue_id=queue_id, extra_pr_fields=extra_pr)
+        if skill_result is not None:
+            proposal, actions, notes = skill_result
+            extra = {"triage_source": "skill",
+                     "triage_skill": skill,
+                     "triage_notes": notes}
+            if notes.get("session_id"):
+                extra["triage_session_id"] = notes["session_id"]
+            return proposal, actions, extra
+    except Exception as exc:
+        msg, actions = _mechanical_generic_triage(item)
+        return msg, actions, {"triage_source": "mechanical",
+                              "triage_skill": skill,
+                              "triage_error": str(exc)}
+    msg, actions = _mechanical_generic_triage(item)
+    return msg, actions, {"triage_source": "mechanical",
+                          "triage_skill": skill}

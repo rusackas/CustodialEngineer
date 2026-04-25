@@ -151,6 +151,17 @@ ACTIONS: dict[str, dict[str, Any]] = {
         "terminal_state": "done",
         "failure_state": "in triage",
     },
+    "approve-ci": {
+        # Click "Approve and run workflow" on a first-contributor or
+        # environment-gated PR. Triage proposes this when the GraphQL
+        # hydrate spotted a CheckRun in WAITING / ACTION_REQUIRED.
+        "label": "approve-ci",
+        "skill": "approve-pr-ci",
+        "worktree_required": False,
+        "in_progress_state": "in progress",
+        "terminal_state": "done",
+        "failure_state": "in triage",
+    },
     "approve-merge": {
         "label": "approve-merge",
         "skill": "approve-and-merge-pr",
