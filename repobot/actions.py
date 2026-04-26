@@ -664,26 +664,38 @@ def continue_action(queue_id: str, item_id) -> str | None:
         "title": item.get("title"),
     }
     if _kind == "issue":
-        ctx_key, ctx_payload = "issue", {
-            **_common,
-            "body": _raw.get("body") or "",
-            "state": _raw.get("state"),
-            "state_reason": _raw.get("stateReason"),
-            "labels": [l.get("name") for l in (_raw.get("labels") or [])],
-            "comments": _raw.get("comments") or [],
-            "comments_count": _raw.get("comments_count") or 0,
-            "last_commenter": _raw.get("last_commenter"),
-            "last_comment_at": _raw.get("last_comment_at"),
-            "author_login": (_raw.get("author") or {}).get("login")
-                            if isinstance(_raw.get("author"), dict) else None,
+        kind_payload = {
+            "issue": {
+                **_common,
+                "body": _raw.get("body") or "",
+                "state": _raw.get("state"),
+                "state_reason": _raw.get("stateReason"),
+                "labels": [l.get("name") for l in (_raw.get("labels") or [])],
+                "comments": _raw.get("comments") or [],
+                "comments_count": _raw.get("comments_count") or 0,
+                "last_commenter": _raw.get("last_commenter"),
+                "last_comment_at": _raw.get("last_comment_at"),
+                "author_login": (_raw.get("author") or {}).get("login")
+                                if isinstance(_raw.get("author"), dict) else None,
+                "linked_prs": _raw.get("linked_prs") or [],
+            },
+            # Mirror universal fields under `pr.*` so kind-agnostic
+            # skills (prompt-on-pr, etc.) that expect `pr.{owner,
+            # name, number, url, title}` work without modification
+            # when dispatched against an issue. head_ref is null
+            # for issues — skills that actually need it bail with
+            # their own check.
+            "pr": {**_common, "head_ref": None},
         }
     else:
-        ctx_key, ctx_payload = "pr", {
-            **_common,
-            "head_ref": _raw.get("headRefName"),
+        kind_payload = {
+            "pr": {
+                **_common,
+                "head_ref": _raw.get("headRefName"),
+            },
         }
     context = {
-        ctx_key: ctx_payload,
+        **kind_payload,
         "triage": {
             "proposal": item.get("proposal"),
             "source": item.get("triage_source"),
@@ -854,30 +866,37 @@ def dispatch(queue_id: str, item_id, action_id: str,
             "title": item.get("title"),
         }
         if _kind == "issue":
-            ctx_key = "issue"
-            ctx_payload = {
-                **_common,
-                "body": _raw.get("body") or "",
-                "state": _raw.get("state"),
-                "state_reason": _raw.get("stateReason"),
-                "labels": [l.get("name") for l in (_raw.get("labels") or [])],
-                "comments": _raw.get("comments") or [],
-                "comments_count": _raw.get("comments_count") or 0,
-                "last_commenter": _raw.get("last_commenter"),
-                "last_comment_at": _raw.get("last_comment_at"),
-                "author_login": (_raw.get("author") or {}).get("login")
-                                if isinstance(_raw.get("author"), dict) else None,
+            kind_payload = {
+                "issue": {
+                    **_common,
+                    "body": _raw.get("body") or "",
+                    "state": _raw.get("state"),
+                    "state_reason": _raw.get("stateReason"),
+                    "labels": [l.get("name") for l in (_raw.get("labels") or [])],
+                    "comments": _raw.get("comments") or [],
+                    "comments_count": _raw.get("comments_count") or 0,
+                    "last_commenter": _raw.get("last_commenter"),
+                    "last_comment_at": _raw.get("last_comment_at"),
+                    "author_login": (_raw.get("author") or {}).get("login")
+                                    if isinstance(_raw.get("author"), dict) else None,
+                    "linked_prs": _raw.get("linked_prs") or [],
+                },
+                # See the resume-path comment for rationale on
+                # populating pr.* alongside issue.*.
+                "pr": {**_common, "head_ref": None,
+                       "push_remote": None, "push_ref": None},
             }
         else:
-            ctx_key = "pr"
-            ctx_payload = {
-                **_common,
-                "head_ref": _raw.get("headRefName"),
-                "push_remote": push_remote,
-                "push_ref": push_ref,
+            kind_payload = {
+                "pr": {
+                    **_common,
+                    "head_ref": _raw.get("headRefName"),
+                    "push_remote": push_remote,
+                    "push_ref": push_ref,
+                },
             }
         context = {
-            ctx_key: ctx_payload,
+            **kind_payload,
             "triage": {
                 "proposal": item.get("proposal"),
                 "source": item.get("triage_source"),
