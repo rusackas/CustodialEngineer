@@ -89,8 +89,76 @@ def ensure_worktree(pr_number: int, head_ref: str,
     return target
 
 
+def issue_worktree_path_for(issue_number: int) -> Path:
+    """Issues live under a separate `issues/` subtree to keep them
+    visually distinct from PR worktrees in the workspace dir, and
+    because the branch namespace differs (`ce/issue-{N}` vs.
+    `ce/pr-{N}` — bot-owned, never collides with user branches)."""
+    return WORKSPACE_DIR / "issues" / f"issue-{issue_number}"
+
+
+def ensure_issue_worktree(issue_number: int, repo_slug: str | None = None
+                          ) -> Path:
+    """Create (or refresh) a worktree for an issue-driven fix.
+
+    Branched off the repo's default branch via `ce/issue-{N}`. Unlike
+    PR worktrees (which checkout `refs/pull/{N}/head`), issue
+    worktrees start from a clean default-branch tip — the skill is
+    going to make the fix from scratch and push to a new head.
+
+    `repo_slug` pins which clone to operate in. Required for cross-
+    repo issue queues; falls back to the global default when not
+    provided. Lazy-clones via `workspace.ensure_repo`.
+    """
+    if repo_slug and "/" in repo_slug:
+        from .workspace import WORKSPACE_DIR as _WS, ensure_repo
+        owner, name = repo_slug.split("/", 1)
+        ensure_repo(owner, name)
+        clone_path = _WS / name
+    else:
+        clone_path = repo_path()
+
+    # Resolve the default branch from the clone's HEAD ref. Done
+    # once, lightweight.
+    head_result = subprocess.run(
+        ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        cwd=str(clone_path), capture_output=True, text=True,
+    )
+    if head_result.returncode == 0 and head_result.stdout.strip():
+        default_branch = head_result.stdout.strip().split("/", 1)[1]
+    else:
+        # Fallback — most bundled repos are master- or main-rooted.
+        default_branch = "main"
+
+    target = issue_worktree_path_for(issue_number)
+    branch = f"ce/issue-{issue_number}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    _git("fetch", "origin", default_branch, cwd=clone_path)
+    base_ref = f"origin/{default_branch}"
+
+    if (target / ".git").exists():
+        _git("reset", "--hard", base_ref, cwd=target)
+        _git("checkout", "-B", branch, base_ref, cwd=target)
+        return target
+
+    _git("worktree", "add", "--force", "-B", branch,
+         str(target), base_ref, cwd=clone_path)
+    return target
+
+
 def remove_worktree(pr_number: int) -> None:
     target = worktree_path_for(pr_number)
+    if not target.exists():
+        return
+    try:
+        _git("worktree", "remove", "--force", str(target))
+    except subprocess.CalledProcessError:
+        pass
+
+
+def remove_issue_worktree(issue_number: int) -> None:
+    target = issue_worktree_path_for(issue_number)
     if not target.exists():
         return
     try:

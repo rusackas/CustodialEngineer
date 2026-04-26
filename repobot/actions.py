@@ -362,6 +362,20 @@ ACTIONS: dict[str, dict[str, Any]] = {
         "terminal_state": "done",
         "failure_state": "in triage",
     },
+    "attempt-fix-issue": {
+        # Spin up a worktree off the default branch and try to
+        # implement a fix for the issue. On success, push and open
+        # a PR with `Closes #N` so it auto-links. The card stays in
+        # `in progress` until the PR is created (terminal_state =
+        # `awaiting update` so the next signal that closes the issue
+        # is the PR landing — not us).
+        "label": "attempt-fix-issue",
+        "skill": "attempt-fix-issue",
+        "worktree_required": True,
+        "in_progress_state": "in progress",
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
 }
 
 
@@ -614,15 +628,22 @@ def continue_action(queue_id: str, item_id) -> str | None:
     dry_run = current_dry_run()
     wt_path = None
     if spec["worktree_required"]:
-        head_ref = (item.get("raw") or {}).get("headRefName")
-        if not head_ref:
-            raise RuntimeError("PR has no headRefName; cannot create worktree.")
-        # Pass the PR's actual repo slug so cross-repo queues fetch
-        # against the right origin (otherwise ensure_worktree falls
-        # back to the global default and refs/pull/{N}/head misses).
+        # Branch on item kind: PR items use the PR-specific worktree
+        # (refs/pull/{N}/head), issue items get a fresh-default-branch
+        # worktree to start a fix from scratch. Both pin the right
+        # clone via repo_slug so cross-repo queues don't leak into
+        # the global default.
         _slug = _item_repo_slug_for(queue_id, item)
-        wt_path = worktree.ensure_worktree(item_id, head_ref,
-                                           repo_slug=_slug)
+        _kind = ((item.get("raw") or {}).get("kind") or "pr").lower()
+        if _kind == "issue":
+            wt_path = worktree.ensure_issue_worktree(
+                int(item.get("number")), repo_slug=_slug)
+        else:
+            head_ref = (item.get("raw") or {}).get("headRefName")
+            if not head_ref:
+                raise RuntimeError("PR has no headRefName; cannot create worktree.")
+            wt_path = worktree.ensure_worktree(item_id, head_ref,
+                                               repo_slug=_slug)
         cwd = str(wt_path)
     else:
         cwd = str(worktree.repo_path())
@@ -761,14 +782,21 @@ def dispatch(queue_id: str, item_id, action_id: str,
     try:
         wt_path = None
         if spec["worktree_required"]:
-            head_ref = (item.get("raw") or {}).get("headRefName")
-            if not head_ref:
-                raise RuntimeError("PR has no headRefName; cannot create worktree.")
-            # Same cross-repo fix as in the dispatch path — without
-            # repo_slug the fetch hits the global default clone.
+            # Same kind branch as in dispatch — issue items get a
+            # fresh-default-branch worktree, PR items get the
+            # refs/pull/{N}/head one. Both via repo_slug so cross-
+            # repo queues hit the right origin.
             _slug = _item_repo_slug_for(queue_id, item)
-            wt_path = worktree.ensure_worktree(item_id, head_ref,
-                                               repo_slug=_slug)
+            _kind = ((item.get("raw") or {}).get("kind") or "pr").lower()
+            if _kind == "issue":
+                wt_path = worktree.ensure_issue_worktree(
+                    int(item.get("number")), repo_slug=_slug)
+            else:
+                head_ref = (item.get("raw") or {}).get("headRefName")
+                if not head_ref:
+                    raise RuntimeError("PR has no headRefName; cannot create worktree.")
+                wt_path = worktree.ensure_worktree(item_id, head_ref,
+                                                   repo_slug=_slug)
             cwd = str(wt_path)
         else:
             cwd = str(worktree.repo_path())

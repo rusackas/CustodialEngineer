@@ -547,8 +547,78 @@ def fetch_search(query_block: dict, limit: int = 50,
     return out
 
 
+_ISSUE_LINKED_PRS_QUERY = """
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    issue(number:$number){
+      timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:30){
+        nodes{
+          ... on CrossReferencedEvent{
+            isCrossRepository
+            source{
+              __typename
+              ... on PullRequest{
+                number url state isDraft title
+                repository{ nameWithOwner }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _fetch_linked_prs(issue_number: int) -> list[dict]:
+    """Find PRs that reference this issue via timeline cross-
+    references. Filters to same-repo PRs (cross-repo references are
+    surfaced too but we don't act on them — the maintainer's repo
+    is the actionable surface). Returns slim dicts with what the
+    card chip needs."""
+    owner, name = _repo_slug().split("/", 1)
+    try:
+        data = _gh_json([
+            "gh", "api", "graphql",
+            "-f", f"query={_ISSUE_LINKED_PRS_QUERY}",
+            "-F", f"owner={owner}",
+            "-F", f"name={name}",
+            "-F", f"number={issue_number}",
+        ])
+    except Exception:
+        return []
+    issue = (((data.get("data") or {}).get("repository") or {})
+             .get("issue") or {})
+    nodes = ((issue.get("timelineItems") or {}).get("nodes") or [])
+    seen: set = set()
+    out: list[dict] = []
+    for n in nodes:
+        if n.get("isCrossRepository"):
+            # Cross-repo references are typically less actionable.
+            # Skip them on the basic chip render; the maintainer can
+            # always click through via the issue itself.
+            continue
+        src = n.get("source") or {}
+        if src.get("__typename") != "PullRequest":
+            continue
+        pr_num = src.get("number")
+        if not pr_num or pr_num in seen:
+            continue
+        seen.add(pr_num)
+        out.append({
+            "number": pr_num,
+            "url": src.get("url"),
+            "state": src.get("state") or "",
+            "is_draft": bool(src.get("isDraft")),
+            "title": src.get("title") or "",
+        })
+    return out
+
+
 def fetch_issues_search(query_block: dict, limit: int = 50,
-                        post_filter: dict | None = None) -> list[dict]:
+                        post_filter: dict | None = None,
+                        hydrate_linked_prs: bool = True) -> list[dict]:
     """Issue counterpart to `fetch_search`. Runs `gh issue list
     --search` against the current repo scope and returns one dict per
     issue with the issue-flavored signal fields:
@@ -615,6 +685,18 @@ def fetch_issues_search(query_block: dict, limit: int = 50,
         ]
         # Marker that downstream triage / runner / templates branch on.
         i["kind"] = "issue"
+        # Linked-PR detection: one GraphQL call per issue, ~free
+        # at the queue scale we run at. Stamped on raw so the card
+        # template can render link chips and the triage skill /
+        # mechanical can branch on "already has a linked PR" → skip
+        # attempt-fix-issue (don't open a duplicate).
+        if hydrate_linked_prs and i.get("number"):
+            try:
+                i["linked_prs"] = _fetch_linked_prs(int(i["number"]))
+            except Exception:
+                i["linked_prs"] = []
+        else:
+            i["linked_prs"] = []
         _stamp_repo(i)
         out.append(i)
     return out

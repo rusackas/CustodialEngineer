@@ -61,6 +61,31 @@
                     </div>
                   </div>
                 </header>
+                {# Linked-PR chips for issue cards. Surfaces PRs that
+                   cross-reference this issue (open + closed,
+                   visually distinguished). Click goes to the PR on
+                   GitHub for now; future patch will open the PR's
+                   modal in our app for cross-context review. #}
+                {% if _kind == 'issue' %}
+                  {% set _linked = (item.raw or {}).get('linked_prs') or [] %}
+                  {% if _linked %}
+                    <div class="issue-linked-prs">
+                      <span class="issue-linked-prs-label">linked</span>
+                      {% for lp in _linked[:5] %}
+                        {% set _ls = (lp.state or '') | upper %}
+                        <a href="{{ lp.url }}" target="_blank" rel="noopener"
+                           class="issue-linked-pr issue-linked-pr-{{ _ls | lower }}{% if lp.is_draft %} issue-linked-pr-draft{% endif %}"
+                           title="{{ lp.title }} ({{ _ls | lower }}{% if lp.is_draft %}, draft{% endif %})">
+                          {{ icon('git-pull-request' if _ls == 'OPEN' else 'git-merge' if _ls == 'MERGED' else 'git-pull-request-closed', size=11) }}
+                          PR #{{ lp.number }}
+                        </a>
+                      {% endfor %}
+                      {% if _linked | length > 5 %}
+                        <span class="issue-linked-prs-more">+{{ (_linked | length) - 5 }} more</span>
+                      {% endif %}
+                    </div>
+                  {% endif %}
+                {% endif %}
                 {% if st == awaiting_state %}
                   <div class="parked-meta" title="Auto-unparks on the next PR update (review, comment, push, CI result).">
                     parked

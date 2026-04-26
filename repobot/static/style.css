@@ -2785,6 +2785,71 @@ button.delete {
   padding: 4px 8px;
   margin-top: 6px;
 }
+
+/* Linked-PR chips on issue cards. The label is a tracked-mono
+   eyebrow; chips are pill-shaped, color-coded by PR state (open
+   borrows the brand blue, merged is success-green, closed is
+   neutral grey). Drafts get a dashed border to read as "in
+   progress, not ready." */
+.issue-linked-prs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--rule);
+}
+.issue-linked-prs-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 700;
+  margin-right: 2px;
+}
+.issue-linked-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--rule);
+  color: var(--ink-mute);
+  background: var(--bg-card);
+  text-decoration: none;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.issue-linked-pr:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  text-decoration: none;
+}
+.issue-linked-pr-open {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.issue-linked-pr-merged {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.issue-linked-pr-closed {
+  border-color: var(--rule-strong);
+  color: var(--ink-mute);
+  opacity: 0.75;
+}
+.issue-linked-pr-draft {
+  border-style: dashed;
+}
+.issue-linked-prs-more {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
 button.continue {
   background: var(--warn-soft);
   color: var(--warn);

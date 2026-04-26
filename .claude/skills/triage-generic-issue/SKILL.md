@@ -25,6 +25,19 @@ is fine; no mutations.
   - `comments` — last 10 comments, each `{author, authorAssociation,
     createdAt, body}` (bodies truncated to ~1500 chars)
   - `author_login` — the issue reporter
+  - `linked_prs` — list of `{number, url, state, is_draft, title}`
+    for PRs that cross-reference this issue. Used to decide whether
+    `attempt-fix-issue` makes sense:
+    - **Any OPEN linked PR**: someone's already on it. Don't propose
+      `attempt-fix-issue`. The likely correct primary is `prompt`
+      so the maintainer reviews the existing PR (we'll wire
+      cross-context navigation to it in a follow-up).
+    - **Only CLOSED linked PRs (none open)**: a fix was attempted
+      and abandoned. `attempt-fix-issue` is on the table; the
+      drafted PR body should reference the prior PR ("Replaces
+      #closed_pr — original attempt was abandoned").
+    - **No linked PRs**: clean slate; `attempt-fix-issue` is on
+      the table for bug-shaped issues.
 - `identity.github_username` — you (the maintainer running the bot).
   - Don't @-mention this handle.
   - If `last_commenter == identity.github_username`, the maintainer
@@ -99,6 +112,22 @@ Use this priority ladder. First match wins.
     → `prompt` primary — let the maintainer decide. Don't auto-
     close anything with momentum.
 
+### Bug-shaped issues with no linked PR
+
+If the issue looks like a real, repro'd bug (clear "expected vs.
+actual" framing, code/repo paths or specific behaviors named, no
+ambient ambiguity), AND `linked_prs` has no OPEN entries, AND no
+decided-out / keep-open label is in play:
+
+→ Propose `attempt-fix-issue` PRIMARY. The action spins up a
+worktree and lets a fix-skill take a swing at it. Worst case it
+returns `needs_human` if the fix isn't obvious; best case there's
+a PR ready for review on the next refresh.
+
+When proposing it, draft a short `fix_hypothesis` (in the JSON
+output) — your read on what code is likely wrong and what shape
+the fix takes. The fix-skill uses that as a starting heuristic.
+
 ### 3. Draft language for the action
 
 Whichever primary you picked, compose its body up front so the user
@@ -133,7 +162,8 @@ Return a single JSON object fenced as ```json ... ```:
   "close_comment": "Optional — body for close-as-stale. Empty when close-as-stale is not in actions.",
   "nudge_comment": "Optional — body for nudge-issue-author. Empty when nudge-issue-author is not in actions.",
   "convert_rationale": "Optional — short rationale for convert-to-discussion. Empty when not in actions.",
-  "actions": ["close-as-stale", "nudge-issue-author", "label-as-stale", "convert-to-discussion", "prompt", "skip"],
+  "fix_hypothesis": "Optional — your read on the fix shape, used as a starting heuristic by attempt-fix-issue. Empty when attempt-fix-issue isn't in actions.",
+  "actions": ["attempt-fix-issue", "close-as-stale", "nudge-issue-author", "label-as-stale", "convert-to-discussion", "prompt", "skip"],
   "notes": {
     "classification": "stale-by-age",
     "age_days": 412,

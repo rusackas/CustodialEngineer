@@ -624,6 +624,21 @@ def _mechanical_generic_issue_triage(item: dict) -> tuple[str, list[str]]:
     else:
         msg = "Triage: " + "; ".join(reasons) + "."
 
+    # `attempt-fix-issue` — only proposed when there isn't already
+    # an open PR tackling this issue (don't open a duplicate). Skip
+    # for keep-open / decided-out / discussion-shaped issues; those
+    # aren't "go fix the bug" candidates.
+    linked_prs = raw.get("linked_prs") or []
+    has_open_linked_pr = any(
+        (lp.get("state") or "").upper() == "OPEN"
+        for lp in linked_prs
+    )
+    safe_to_attempt = (not has_open_linked_pr
+                       and not has_decided_out
+                       and not has_keep_open)
+    if safe_to_attempt:
+        actions.append("attempt-fix-issue")
+
     # Universal options always offered last. Convert-to-discussion
     # is offered freely — it's a soft action and a maintainer can
     # always undo. Skip / prompt as escape hatches.
@@ -665,6 +680,11 @@ def triage_generic_issue(item: dict, queue_id: str | None = None
         # the discussion without a second round-trip.
         "comments": raw.get("comments") or [],
         "body": raw.get("body") or "",
+        # Linked PRs (open or closed) — the skill uses this to skip
+        # `attempt-fix-issue` when there's already an open PR
+        # tackling the issue, and to recognize "fix was attempted
+        # and abandoned" when the only linked PR is closed.
+        "linked_prs": raw.get("linked_prs") or [],
     }
     skill = _resolve_issue_triage_skill(queue_id)
     try:
