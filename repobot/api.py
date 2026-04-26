@@ -1746,6 +1746,74 @@ def new_task(request: Request,
     return _reload_or_redirect(request)
 
 
+@app.post("/queues/{queue_id}/items/{item_id}/spawn-pr-task")
+def spawn_pr_task(request: Request, queue_id: str, item_id: int,
+                  pr_number: int = Form(...),
+                  pr_title: str = Form(default="")):
+    """Spawn an Ad Hoc Task pre-targeted at a PR linked from an
+    issue card. Used as the cross-context "go act on this linked PR"
+    affordance — clicking the `+ task` chip on an issue's linked-PR
+    list lands you on the Tasks board with a session ready to triage
+    and act on that PR.
+
+    The pre-filled prompt primes the do-task skill toward "triage
+    first, recommend, wait for OK before mutating" so the user's
+    review-and-confirm flow happens in the session transcript
+    instead of dispatching a side-effect immediately.
+    """
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    repo_id = github.queue_repo_id(qcfg)
+    if not repo_id:
+        raise HTTPException(status_code=400,
+                            detail="couldn't resolve repo_id for queue")
+    issue_number = item.get("number")
+    title_clean = (pr_title or "").strip()
+    title_part = f' — "{title_clean}"' if title_clean else ""
+    # Smart prompt: triage-first conversational, no surprise mutations.
+    # The do-task skill takes it from here. Comment bodies for any
+    # mutation get drafted in the session for OK before posting.
+    prompt = (
+        f"Triage and act on PR #{pr_number}{title_part} (linked from "
+        f"issue #{issue_number}).\n\n"
+        f"Step 1 — read the PR's current state via `gh pr view "
+        f"{pr_number} --repo {repo_id}/...`: CI status / "
+        f"mergeStateStatus / reviewDecision / unresolved review "
+        f"threads / recent comments. Skim the diff if it's small.\n\n"
+        f"Step 2 — recommend ONE next action and explain why. "
+        f"Options: approve-merge, rebase, fix-precommit, attempt-fix, "
+        f"nudge-author, await-update, close-with-thanks, prompt. "
+        f"Note constraints (self-authored? branch protection? "
+        f"author is a bot?).\n\n"
+        f"Step 3 — WAIT for my OK before mutating. When I confirm, "
+        f"draft any comment body for me to review in your reply, "
+        f"then post + execute the action via gh CLI.\n\n"
+        f"For approve-merge specifically: skip self-approval (GitHub "
+        f"blocks it) — go straight to `gh pr merge --squash --auto`. "
+        f"For close: comment-then-close, never silent on a non-self "
+        f"non-bot PR."
+    )
+    try:
+        task = _tasks.create_task(repo_id=repo_id, prompt=prompt,
+                                  task_type="pr")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    def _dispatch():
+        try:
+            _tasks.dispatch_task(task["id"])
+        except Exception as exc:
+            _tasks.update_task(task["id"], status="stuck",
+                               last_result={
+                                   "status": "error",
+                                   "message": f"spawn failed: {exc}",
+                               })
+    threading.Thread(target=_dispatch, daemon=True).start()
+    return _reload_or_redirect(request)
+
+
 @app.post("/tasks/{task_id}/delete")
 def delete_task_endpoint(task_id: int):
     """Remove a task record, abort any in-flight session, and prune

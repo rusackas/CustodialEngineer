@@ -73,12 +73,28 @@
                       <span class="issue-linked-prs-label">linked</span>
                       {% for lp in _linked[:5] %}
                         {% set _ls = (lp.state or '') | upper %}
-                        <a href="{{ lp.url }}" target="_blank" rel="noopener"
-                           class="issue-linked-pr issue-linked-pr-{{ _ls | lower }}{% if lp.is_draft %} issue-linked-pr-draft{% endif %}"
-                           title="{{ lp.title }} ({{ _ls | lower }}{% if lp.is_draft %}, draft{% endif %})">
-                          {{ icon('git-pull-request' if _ls == 'OPEN' else 'git-merge' if _ls == 'MERGED' else 'git-pull-request-closed', size=11) }}
-                          PR #{{ lp.number }}
-                        </a>
+                        <span class="issue-linked-pr-row">
+                          <a href="{{ lp.url }}" target="_blank" rel="noopener"
+                             class="issue-linked-pr issue-linked-pr-{{ _ls | lower }}{% if lp.is_draft %} issue-linked-pr-draft{% endif %}"
+                             title="{{ lp.title }} ({{ _ls | lower }}{% if lp.is_draft %}, draft{% endif %})">
+                            {{ icon('git-pull-request' if _ls == 'OPEN' else 'git-merge' if _ls == 'MERGED' else 'git-pull-request-closed', size=11) }}
+                            PR #{{ lp.number }}
+                          </a>
+                          {# `+ task` spawns an Ad Hoc Task targeting
+                             this PR — the cross-context "go act on
+                             the linked PR" path. Triage-first prompt
+                             baked into the endpoint. #}
+                          <form method="post"
+                                action="/queues/{{ queue.id }}/items/{{ item.id }}/spawn-pr-task"
+                                class="issue-linked-pr-task-form">
+                            <input type="hidden" name="pr_number" value="{{ lp.number }}">
+                            <input type="hidden" name="pr_title" value="{{ lp.title }}">
+                            <button type="submit" class="issue-linked-pr-task"
+                                    title="Spawn an Ad Hoc Task to triage and act on this PR">
+                              + task
+                            </button>
+                          </form>
+                        </span>
                       {% endfor %}
                       {% if _linked | length > 5 %}
                         <span class="issue-linked-prs-more">+{{ (_linked | length) - 5 }} more</span>
