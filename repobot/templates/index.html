@@ -366,12 +366,21 @@
         {% set att = (queue_attention_counts or {}).get(queue.id, 0) %}
         {% set _qrid = (queue_repo_ids or {}).get(queue.id, '') %}
         <div class="boards-tab-wrap" data-repo-id="{{ _qrid }}">
+          {# JS owns aria-selected — see activateBoard(). Server
+             rendering tab 0 as aria-selected="true" unconditionally
+             was racing with the localStorage-driven JS state on
+             post-action page reloads, leaving the visible tab and
+             the boards-reel translate disagreeing (you'd land on
+             "Dependabot tab highlighted, blank canvas to its right"
+             after dispatching an action from any non-zero board).
+             Render neutral; activateBoard sets the right one on
+             init. #}
           <button type="button" class="boards-tab"
                   role="tab"
                   data-board-index="{{ loop.index0 }}"
                   data-queue-id="{{ queue.id }}"
                   data-repo-id="{{ _qrid }}"
-                  aria-selected="{{ 'true' if loop.index0 == 0 else 'false' }}">
+                  aria-selected="false">
             <span class="boards-tab-title">{{ queue.title }}</span>
             <span class="boards-tab-badge {% if not att %}boards-tab-badge-zero{% endif %}">{{ att }}</span>
           </button>

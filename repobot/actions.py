@@ -170,6 +170,18 @@ ACTIONS: dict[str, dict[str, Any]] = {
         "terminal_state": "done",
         "failure_state": "in triage",
     },
+    "mark-as-draft": {
+        # Soft-warning sibling to label-as-stale on the issue side.
+        # Converts an open PR to draft and posts a comment naming
+        # what's needed + warning that the PR may be closed in a
+        # future sweep without movement. Parks the card.
+        "label": "mark-as-draft",
+        "skill": "mark-pr-as-draft",
+        "worktree_required": False,
+        "in_progress_state": None,
+        "terminal_state": "awaiting update",
+        "failure_state": "in triage",
+    },
     "dependabot-rebase": {
         "label": "dependabot-rebase",
         "skill": "dependabot-rebase-comment",

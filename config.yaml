@@ -126,6 +126,9 @@ queues:
       - in progress
       - awaiting update
       - done
+    # Drafts are intentionally included now — they're often the
+    # "submitted then walked away" kind of stale that benefits most
+    # from a thankful close-and-reopen-if-you-want comment.
     query:
       state: open
       search: is:pr is:open sort:updated-asc
@@ -133,8 +136,6 @@ queues:
       ci_status: true
       merge_state: true
       review_threads: true
-    filter:
-      non_draft: true
   - id: custodial-engineer-prs
     title: Custodial Engineer PRs
     max_in_flight: 10

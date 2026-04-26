@@ -385,6 +385,18 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
             actions.append("nudge-author")
         actions.append("close")
 
+    # Draft PR shortcut — for someone else's draft that hasn't moved
+    # in a while, the kind thing is to close with thanks and a
+    # "feel free to reopen" door. We don't auto-detect the "hasn't
+    # moved in a while" part here (the queue's sort:updated-asc
+    # surface order does that for us — only stale ones surface);
+    # the skill prompt has a richer judgment, but mechanical-side
+    # we just propose `close` primary on drafts so the user has the
+    # button when they need it.
+    if is_draft and not self_authored:
+        reasons.append("draft, not authored by you")
+        actions.append("close")  # close-pr skill drafts thankful body
+
     # Clean PR (no blockers, not a draft, CI not pending) → propose
     # approve-merge as the obvious next click. The dispatcher
     # re-verifies mergeStateStatus before acting, so this is safe
@@ -414,6 +426,15 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
         msg = "No blocking signal detected — manual triage."
     else:
         msg = "Needs attention: " + ", ".join(reasons) + "."
+
+    # For non-draft PRs that have any blocker AND are someone else's
+    # work, mark-as-draft is a soft-warning option that gives the
+    # author a clear "you need to move this" without slamming the
+    # door. Place it after the stronger fix actions but before
+    # close-style escape hatches.
+    if (reasons and not is_draft and not is_bot and not self_authored
+            and (has_conflicts or ci == "failing" or threads)):
+        actions.append("mark-as-draft")
 
     # Universal options always offered. `prompt` is the human escape
     # hatch; `summarize-diff` / `assess-on-worktree` give the user a

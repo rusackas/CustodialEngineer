@@ -164,8 +164,19 @@ Use this priority ladder. First match wins.
      option; `prompt` to defer.
    - Bot author → `close` primary; `prompt` to defer.
 
-5. **Draft PR**: `await-update` primary. Drafts mean the author is
-   still working; let them be. Don't nudge a draft.
+5. **Draft PR**:
+   - **Active draft** (someone is clearly still working — recent
+     commits, recent comments, the author is engaged):
+     `await-update` primary. Drafts mean "in progress"; don't
+     nudge.
+   - **Stale draft** (no commit / comment activity in 60+ days,
+     OR the queue surfaced it via an oldest-first sort): the
+     kind thing is `close` with a thankful "thanks for the PR,
+     feel free to reopen if you want to push it through" body.
+     The close-pr skill drafts the comment voice — your job is
+     just to put `close` first in `actions`. Don't propose
+     `nudge-author` on a stale draft; if the author had
+     bandwidth, they'd have moved the PR.
 
 6. **Clean** (CI green / unset, no conflicts, no open threads, not
    draft):
@@ -209,6 +220,12 @@ universal actions:
 - `approve-merge` — approve and merge a clean PR. Surface as
   primary when CI is green / unset, no conflicts, no unresolved
   threads, and the PR is not a draft. Requires `approval_comment`.
+- `mark-as-draft` — soft-warning sibling to `nudge-author`:
+  converts the PR to draft AND posts a "here's what's needed,
+  may close in a future sweep" comment. Surface alongside
+  `nudge-author` on non-draft PRs whose author isn't moving;
+  it's the friendlier-to-reviewers escalation for "this isn't
+  ready, stop pretending it is." Skip on bot-authored PRs.
 - `approve-ci` — click the "Approve and run workflow" gate.
   Idempotent — safe even if no runs are pending. Surface only when
   `needs_ci_approval` is true.
