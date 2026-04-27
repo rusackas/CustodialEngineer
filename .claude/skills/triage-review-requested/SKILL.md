@@ -73,6 +73,18 @@ Two things the user wants fast:
    - `prompt` — ambiguous; kick it to the human.
    - `dismiss-review-request` — you genuinely aren't the right
      reviewer. Rare.
+   - `close` — close the PR with a thankful comment. Surface as
+     primary when the work is **obsolete** (already done in
+     master / superseded by another PR / repo direction has
+     shifted) or when the PR was opened against a stale plan
+     that no longer applies. The close-pr action skill drafts
+     a thankful "thanks for the PR — feel free to reopen if you
+     want to push it through" body for human-authored PRs; you
+     should also draft a `close_comment` here so the modal is
+     pre-filled with concrete reasoning ("Closing — Column.tsx
+     already exists on master, this migration landed via #N").
+     Pre-population on close makes the modal snappy and gives
+     the user something to edit rather than a blank slate.
    - `skip` — move on without any action.
 
 Order `actions` primary-first. The button shown prominently is the
@@ -179,6 +191,15 @@ Default heuristic:
 - Open threads from others OR CI not settled → `await-update`.
 - Dangerous (security, destructive, breaking-without-migration) →
   `request-changes-review` with a drafted body.
+- **Obsolete / superseded** (the work has already landed on master,
+  another PR has been merged that does the same thing, or the
+  repo direction has changed and this PR no longer fits) →
+  `close` primary with a drafted `close_comment`. Be concrete
+  about *why* — name the file paths you confirmed exist, the PR
+  number that superseded this one, etc. Don't propose `close` for
+  PRs that just look stale or low-momentum; that's
+  `nudge-author` / `await-update` territory. `close` is for
+  "this work is no longer relevant" specifically.
 
 ### 8. Assemble the output
 
@@ -231,7 +252,8 @@ Return a single JSON object fenced as ```json ... ```:
   "suggested_comment": "Optional — pre-filled body for add-review-comment / request-changes-review. First person, no @-mentions of the reviewer. Empty string if none.",
   "approval_comment": "Optional — pre-filled review body for approve-merge / approve-review. Author-aware: thank a human contributor; stay neutral/mechanical for bots (Dependabot, etc.). Reference the concrete merge-safety signal. Empty string if neither approve action is in `actions`.",
   "nudge_comment": "Optional — pre-filled body for nudge-author. Polite maintainer voice; @-mention the PR author so they get pinged; enumerate the concrete blockers (failing CI checks by name, specific unresolved threads with quoter @ and file:line). Empty string when `nudge-author` is not in `actions`.",
-  "actions": ["nudge-author", "add-review-comment", "assess-on-worktree", "await-update", "approve-merge", "prompt", "skip"],
+  "close_comment": "Optional — pre-filled body for `close`. Concrete reasoning ('already on master via #N', 'superseded by #M', 'repo direction has shifted'). Friendly, decisive, ends with 'reopen if you want to push it through.' Empty when `close` is not in actions.",
+  "actions": ["nudge-author", "add-review-comment", "assess-on-worktree", "await-update", "approve-merge", "close", "prompt", "skip"],
   "notes": {
     "classification": "mergeable | blocked",
     "unresolved_others_count": 3,

@@ -1526,7 +1526,10 @@
     }
 
     document.addEventListener('click', (e) => {
-      if (e.target.matches('[data-close-comment]')) {
+      // closest() not matches() — see plan-modal handler below for
+      // why. Same SVG-icon bug applies to every X button using
+      // data-close-*.
+      if (e.target.closest('[data-close-comment]')) {
         closeCommentModal();
       }
     });
@@ -1900,7 +1903,7 @@
     });
 
     document.addEventListener('click', (e) => {
-      if (e.target.matches('[data-close-reviewers]')) closeReviewersModal();
+      if (e.target.closest('[data-close-reviewers]')) closeReviewersModal();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && reviewersModal.classList.contains('is-open')) {
@@ -2153,7 +2156,7 @@
     }
 
     document.addEventListener('click', (e) => {
-      if (e.target.matches('[data-close-drafts]')) {
+      if (e.target.closest('[data-close-drafts]')) {
         closeDraftsModal();
       }
       const draftsBtn = e.target.closest('[data-drafts-approve]');
@@ -2361,7 +2364,7 @@
         });
         return;
       }
-      if (e.target.matches('[data-close-modal]')) closeModal();
+      if (e.target.closest('[data-close-modal]')) closeModal();
     });
 
     // Live-sessions popover on the working pill.
