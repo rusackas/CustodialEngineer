@@ -1,4 +1,5 @@
 """FastAPI app serving the kanban UI and action dispatch endpoints."""
+import asyncio
 import threading
 import time
 
@@ -520,9 +521,19 @@ async def resume_live(queue_id: str, item_id: int):
 @app.post("/queues/{queue_id}/items/{item_id}/plan/approve")
 async def approve_plan_endpoint(queue_id: str, item_id: int,
                                  plan_json: str = Form(...)):
-    """Submit a (possibly edited) plan back to the live plan-fix session
-    so it executes phase 2. The payload is the full edited plan dict as
-    JSON — we round-trip it through the skill."""
+    """Submit a (possibly edited) plan back to the plan-fix session.
+
+    Two paths:
+      - Live session still around (idle, waiting for follow-up):
+        send the APPROVED PLAN message directly — phase 2 runs in
+        the same session.
+      - Live session has closed (idle timeout / aborted): spawn a
+        fresh plan-fix session with the approved plan in runtime
+        context (`approved_plan` field). The skill's prompt is
+        documented to jump straight to phase 2 when that field is
+        present, so the user doesn't lose their edits to a closed-
+        session error.
+    """
     try:
         edited = json.loads(plan_json)
     except json.JSONDecodeError as exc:
@@ -530,11 +541,33 @@ async def approve_plan_endpoint(queue_id: str, item_id: int,
     if not isinstance(edited, dict):
         raise HTTPException(status_code=400, detail="plan must be a JSON object")
     delivered = await approve_plan(queue_id, item_id, edited)
-    if not delivered:
-        raise HTTPException(
-            status_code=409,
-            detail="plan session has closed — discard and re-run `plan-fix`.",
+    if delivered:
+        return RedirectResponse(url="/", status_code=303)
+
+    # Live session is gone — spawn a fresh plan-fix session in
+    # phase-2-only mode. The dispatcher manages the worktree
+    # (re-uses if present), and the skill detects `approved_plan`
+    # in runtime context and skips phase 1.
+    from .actions import dispatch as _dispatch_action
+    try:
+        await asyncio.to_thread(
+            _dispatch_action,
+            queue_id, item_id, "plan-fix",
+            {"approved_plan": edited},
         )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=("plan session was closed and the resume spawn failed: "
+                    f"{exc}. Discard and re-run `plan-fix`."),
+        )
+    set_item_plan(queue_id, item_id, edited)
+    set_item_plan_status(queue_id, item_id, "executing")
+    set_item_result(queue_id, item_id, {
+        "action": "execute-plan",
+        "status": "running",
+        "message": "Resumed in a fresh session; executing approved plan…",
+    })
     return RedirectResponse(url="/", status_code=303)
 
 

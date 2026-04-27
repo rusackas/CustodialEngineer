@@ -35,6 +35,17 @@ If the human replies with anything else in phase 2 (a question, a
 revision request not in the APPROVED PLAN format), answer briefly and
 stay in the idle/planning mindset — do not execute.
 
+### Phase-2-only resume mode
+
+If the runtime context includes a non-empty `approved_plan` field
+on its first turn (i.e., the bot is reviving an approved plan into
+a fresh session because the original phase-1 session had already
+closed when the human clicked Approve), **skip phase 1 entirely**.
+Treat that field's contents as if it were the body of the human's
+phase-2 follow-up message — execute it directly. Don't re-investigate,
+don't emit another plan, don't ask for confirmation. The plan was
+already reviewed; your job is just execution.
+
 ## Inputs (runtime context)
 
 - `pr` — `{owner, name, number, url, title, head_ref}`
@@ -44,6 +55,10 @@ stay in the idle/planning mindset — do not execute.
 - `identity` — `{github_username}`: the human who will approve your plan
 - prior `last_result` (if provided via `triage.notes` or the initial
   prompt) — the attempt-fix `needs_human` message explaining why it bailed
+- `approved_plan` (optional) — present only when the dispatcher is
+  reviving an approved plan because the original phase-1 session was
+  already closed. When set, this is your phase-2 input directly (see
+  "Phase-2-only resume mode" above).
 
 ## Phase 1 procedure — planning
 

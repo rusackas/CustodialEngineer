@@ -1947,8 +1947,13 @@
     }
 
     document.addEventListener('click', (e) => {
-      if (e.target.matches('[data-close-plan]')) {
+      // closest() not matches() — the X button wraps an SVG icon,
+      // so clicks land on the path/svg child, not the button itself.
+      // matches() failed for those clicks; the Cancel button (plain
+      // text) hit matches() because its child was just a text node.
+      if (e.target.closest('[data-close-plan]')) {
         closePlanModal();
+        return;
       }
       const planBtn = e.target.closest('[data-plan-approve]');
       if (planBtn) {
