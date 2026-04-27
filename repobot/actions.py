@@ -21,8 +21,10 @@ from .config import load_config
 from .queues import (
     _now,
     current_dry_run,
+    extend_item_actions,
     find_item,
     load_state,
+    queue_items,
     set_item_assessment,
     set_item_diff_summary,
     set_item_drafts,
@@ -34,6 +36,60 @@ from .queues import (
     set_item_session_id,
     set_item_state,
 )
+
+
+# When a skill bails with `needs_human`, the bail message often
+# points at the right next action — a state drifted since triage,
+# branch protection requires another reviewer, etc. We mechanically
+# scan the message for known signatures and append fix actions to
+# the item's existing menu so the user has the relevant button
+# right under the error, without paying for a re-triage Claude
+# session. The original action stays on the menu so re-attempting
+# after the fix is one click.
+def _state_drift_followups(action_id: str, item: dict, message: str) -> list[str]:
+    """Return the list of action ids to append to item.actions
+    based on a `needs_human` bail message. Empty list means
+    "no known signature matched — leave the menu alone."
+    """
+    if not message:
+        return []
+    msg = message.lower()
+    raw = item.get("raw") or {}
+    author_login = (raw.get("author") or {}).get("login") if isinstance(raw.get("author"), dict) else None
+    is_bot_author = bool((raw.get("author") or {}).get("is_bot")) if isinstance(raw.get("author"), dict) else False
+    is_dependabot = author_login in ("app/dependabot", "dependabot[bot]", "dependabot")
+    out: list[str] = []
+
+    # Conflict / dirty / branch-out-of-date — needs a rebase.
+    if any(kw in msg for kw in (
+            "conflict", "dirty", "needs a rebase", "needs rebase",
+            "branch is behind")):
+        if is_dependabot:
+            # Dependabot has its own rebase path (post @dependabot
+            # rebase comment) — cheaper than a worktree rebase and
+            # plays nicer with dependabot's own branch ownership.
+            out.append("dependabot-rebase")
+        out.append("rebase")
+
+    # Branch protection requiring another reviewer — the self-merge
+    # gate at action time. Right move: park.
+    if "branch protection" in msg and ("review" in msg or "approving" in msg):
+        out.append("await-update")
+
+    # CI flipped to red since triage — propose the CI-fix paths.
+    # (Won't propose attempt-fix on bot PRs since those have their
+    # own paths; rely on dependabot-rebase / dependabot-recreate.)
+    if any(kw in msg for kw in ("ci is failing", "ci flipped", "checks failing")):
+        if not is_bot_author:
+            out.extend(["fix-precommit", "attempt-fix"])
+
+    # Maintainer edits not enabled on a fork PR — push isn't possible.
+    # Right move: nudge the author.
+    if "maintainer" in msg and "edits" in msg and ("disabled" in msg or "not allowed" in msg):
+        if not is_bot_author:
+            out.append("nudge-author")
+
+    return out
 
 # Statuses returned by a skill's JSON block that we consider "successful
 # enough to land in the terminal state". Anything else leaves the card in
@@ -975,6 +1031,18 @@ def dispatch(queue_id: str, item_id, action_id: str,
                 # card doesn't linger in the in-progress column.
                 if spec["failure_state"]:
                     set_item_state(queue_id, item_id, spec["failure_state"])
+                # Surface follow-up actions when the bail message
+                # points at a known fix path (state drifted since
+                # triage, branch protection bites, etc.) — appended
+                # to the existing menu so the user has the right
+                # button under the error without retriage churn.
+                fresh_item = next(
+                    (i for i in queue_items(load_state(), queue_id)
+                     if i["id"] == item_id), {})
+                followups = _state_drift_followups(
+                    action_id, fresh_item, result.get("message") or "")
+                if followups:
+                    extend_item_actions(queue_id, item_id, followups)
             # Other non-success (error, unparsed, ...): leave the card at
             # `in_progress_state` so the chat button stays live and the
             # user can follow up with the session before idle-timeout.

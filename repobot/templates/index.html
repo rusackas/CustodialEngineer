@@ -1388,7 +1388,12 @@
                 aria-label="Close">{{ icon('x', size=16) }}</button>
       </div>
       <div id="modal-transcript" class="modal-transcript"></div>
-      <form id="modal-send" class="modal-send">
+      {# hx-boost="false" so htmx doesn't intercept the submit
+         and morph the body. This form's submit is JS-handled via
+         fetch() — htmx had been racing the JS preventDefault() and
+         the resulting boosted swap was tearing the kanban out
+         mid-session-message. #}
+      <form id="modal-send" class="modal-send" hx-boost="false">
         <textarea id="modal-input" rows="2"
                   placeholder="Send a follow-up message…"></textarea>
         <button type="submit" class="modal-send-btn">send</button>

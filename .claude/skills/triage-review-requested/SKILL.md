@@ -27,10 +27,23 @@ and `git` is fine; no mutations.
   `{id, path, line, is_outdated, first_author, first_body,
   comments_count}` — ALL unresolved review threads, including ones
   started by others.
-- `identity.github_username` — you (the reviewer). Filter the
-  unresolved-threads signal around this: threads where the FIRST
-  author is someone other than you, still unresolved, are the
-  interesting ones — feedback the PR author hasn't addressed.
+- `identity.github_username` — **the human reading this triage IS
+  this account**. Treat them as "you" in your proposal text, never
+  in third person. Specifically:
+  - Don't @-mention them in any output field.
+  - Don't refer to them by handle in prose. ❌ Bad: "rusackas
+    asked about caching"; "@rusackas already approved the spec."
+    ✅ Good: "you asked about caching"; "you already approved the
+    spec"; or omit attribution when context makes it obvious.
+  - When quoting one of their past comments, attribute as "you"
+    (e.g., 'you commented "Looks good"') or quote without a handle.
+  - Other commenters (the PR author, other reviewers) are fine to
+    @-mention or third-person normally.
+
+  Functional uses: filter the unresolved-threads signal around
+  this — threads where the FIRST author is someone other than the
+  reader, still unresolved, are the interesting ones (feedback the
+  PR author hasn't addressed).
 
 ## Priority: what to surface
 

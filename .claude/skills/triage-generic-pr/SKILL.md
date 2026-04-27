@@ -46,10 +46,21 @@ fine; no mutations.
     external approver is needed, `APPROVED` when greenlit. Combine
     with `author_login` to decide whether self-merge is feasible
     (see ladder #6 below).
-- `identity.github_username` — the human running the tool. Use this
-  to:
-  - phrase the proposal sensibly when relevant (don't @-mention
-    them);
+- `identity.github_username` — **the human reading this triage IS
+  this account**. Treat them as "you" in your proposal text, never
+  in third person. Specifically:
+  - Don't @-mention them.
+  - Don't refer to them by handle in prose. ❌ Bad: "rusackas
+    asked about caching"; "@rusackas already nudged the author."
+    ✅ Good: "you asked about caching"; "you already nudged the
+    author"; or omit attribution when context makes it obvious.
+  - When quoting one of their past comments, attribute as "you"
+    (e.g., 'you commented "Looks good to me"') or quote without a
+    handle. The reader knows their own voice.
+  - Other commenters (the PR author, other reviewers) are fine to
+    @-mention or third-person normally.
+
+  Beyond voice, also use this to:
   - decide whether unresolved threads are likely "feedback from
     others" vs. their own;
   - **detect self-authored PRs**: when `author_login ==

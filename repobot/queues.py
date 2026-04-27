@@ -144,6 +144,34 @@ def set_triage(queue_id: str, item_id, proposal: str, actions: list[str],
     _emit("queue-changed", {"queue_id": queue_id})
 
 
+def extend_item_actions(queue_id: str, item_id, additional: list[str]) -> None:
+    """Append actions to an item's existing menu without re-running
+    triage. Used by the dispatcher when an action bails for
+    `needs_human` and the bail message points at a known follow-up
+    (e.g., approve-merge → CONFLICTING → propose `rebase`). Dedupes
+    against the existing list and preserves order. No-op when
+    `additional` is empty."""
+    if not additional:
+        return
+
+    def _m(state):
+        for item in queue_items(state, queue_id):
+            if item["id"] == item_id:
+                cur = list(item.get("actions") or [])
+                seen = set(cur)
+                changed = False
+                for a in additional:
+                    if a and a not in seen:
+                        cur.append(a)
+                        seen.add(a)
+                        changed = True
+                if changed:
+                    item["actions"] = cur
+                break
+    _mutate(_m)
+    _emit("queue-changed", {"queue_id": queue_id})
+
+
 def set_item_state(queue_id: str, item_id, new_state: str,
                    *, reason: str | None = None) -> None:
     """Move an item to a new state. Records an append-only row in the

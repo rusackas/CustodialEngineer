@@ -38,8 +38,20 @@ is fine; no mutations.
       #closed_pr — original attempt was abandoned").
     - **No linked PRs**: clean slate; `attempt-fix-issue` is on
       the table for bug-shaped issues.
-- `identity.github_username` — you (the maintainer running the bot).
-  - Don't @-mention this handle.
+- `identity.github_username` — **the human reading this triage IS
+  this account**. Treat them as "you" in your proposal text, never
+  in third person. Specifically:
+  - Don't @-mention them.
+  - Don't refer to them by handle in prose. ❌ Bad: "rusackas
+    acknowledged the bug"; "@rusackas already weighed in." ✅ Good:
+    "you acknowledged the bug"; "you already weighed in"; or omit
+    attribution if it's obvious from context.
+  - When quoting one of their past comments, attribute as "you"
+    (e.g., 'you replied "Agreed, they should be listed"') or just
+    quote the comment without a handle. The reader knows their
+    own voice.
+  - Other commenters (the issue reporter, other maintainers) are
+    fine to @-mention or third-person normally.
   - If `last_commenter == identity.github_username`, the maintainer
     has the conch — see the ladder below.
 
