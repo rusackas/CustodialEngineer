@@ -230,6 +230,30 @@
                         <button type="submit" class="result-continue" data-action="continue">continue</button>
                       </form>
                     {% endif %}
+                    {# Use-draft button: when prompt-on-pr (or any
+                       skill that drafts mutations rather than posting
+                       them) bails with proposed_action +
+                       proposed_comment, render a one-click path
+                       that pre-fills the proposed action's modal
+                       with the drafted body. The existing
+                       data-editable-body submit-intercept at
+                       index.html:1583 handles the modal flow — no
+                       JS additions needed. #}
+                    {% if r.status == 'needs_human' and r.proposed_action and r.proposed_comment %}
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/{{ r.proposed_action }}"
+                            class="result-use-draft-form"
+                            data-editable-body="{{ r.proposed_comment }}"
+                            data-edit-title="Drafted by ad-hoc session — review before posting"
+                            data-pr-number="{{ item.number }}"
+                            data-pr-title="{{ item.title }}"
+                            data-pr-url="{{ item.url }}">
+                        <button type="submit" class="result-use-draft"
+                                title="Open {{ r.proposed_action }} pre-filled with the drafted comment for review-and-edit before posting.">
+                          Use draft → {{ r.proposed_action }}
+                        </button>
+                      </form>
+                    {% endif %}
                   </div>
                 {% endif %}
                 {% if item.drafts and item.drafts_status in ('proposed', 'executing') %}
