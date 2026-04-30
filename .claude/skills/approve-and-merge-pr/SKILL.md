@@ -72,17 +72,60 @@ that should block auto-merge. Bail with `status: needs_human` if:
 - Any entry in `reviews[]` has `state == "CHANGES_REQUESTED"` that
   hasn't been superseded by a later `APPROVED` from the same author.
 - Any entry in `reviewThreads[]` has `isResolved == false` AND
-  `isOutdated == false`. Resolved threads are fine; outdated-on-
-  removed-code threads are fine; live unresolved threads are not —
-  a human needs to resolve or respond. When bailing for this, name
+  `isOutdated == false` **AND the thread author is human OR the
+  bot's body contains a substantive concern** (see classification
+  below). Resolved threads are fine; outdated-on-removed-code
+  threads are fine; live unresolved human threads block; live
+  unresolved bot threads need triage. When bailing for this, name
   the file/line in the message so the card is actionable.
+
+  **Bot vs. human thread classification.** Treat the FIRST
+  comment's `author.login` as the thread author:
+  - Human (no `[bot]` suffix and not in the known-bot list below)
+    → blocks unconditionally, as before.
+  - Bot (`[bot]` suffix OR login in: `bito-code-review`,
+    `coderabbitai`, `coderabbitai[bot]`, `dosu`, `dosu[bot]`,
+    `sonarcloud`, `sonarcloud[bot]`, `sonar`, `codecov`,
+    `codecov-commenter`, `codecov[bot]`, `github-actions`,
+    `github-actions[bot]`, `bitbot`, `dependabot[bot]`)
+    → check the body. **Boilerplate / non-substantive bot threads
+    do NOT block.** Substantive bot threads do.
+
+  **Boilerplate bot patterns (DON'T block):**
+  - "Process Violation" / "process check" / lockfile policy
+    flags on `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml`
+    / `poetry.lock` / `Cargo.lock` from any bot.
+  - Coverage delta / "coverage decreased by X%" notices.
+  - "Chore" / "dependencies" classification chips.
+  - Bot-suggested CI label additions / removals.
+  - CLA check status (when status is already passing).
+  - Pure-summary / "LGTM" / "no issues found" / "0 issues" notes.
+  - Generic "size: large" / "size: small" stamps.
+
+  **Substantive bot patterns (DO block):**
+  - Specific code-citation comments ("possible null deref at
+    `path/file.ts:42`", "introduces N+1 query in `models.py`").
+  - Security-flag mentions: vulnerability, CVE, secret leak,
+    credential exposure.
+  - Concrete regression / breaking-change warnings tied to a
+    file:line.
+  - Anything with TODO / FIXME / XXX in the body that names a
+    file or function the human needs to address.
+  - dependabot's own threads about peer-dep / version conflicts
+    blocking the bump.
+
+  When in doubt on a bot thread, fall back to "block" — but
+  surface the bot's exact thread excerpt in the bail message
+  so the user can decide quickly whether to manually resolve
+  the thread on GitHub or override.
+
 - A recent comment (last ~10) from a maintainer includes blocking
   language like "don't merge", "hold", "wait", "blocked on", "needs
   follow-up", "revert this", "breaking change".
 - A bot reviewer (dosu / dosu-bot, coderabbitai[bot], sonar, etc.)
-  has flagged a concern, unresolved TODO, regression, or unanswered
-  question. Pure summaries / "LGTM" / changelog diffs are fine to
-  ignore.
+  has flagged a *substantive* concern in a TOP-LEVEL issue comment
+  (i.e., not a review thread — those are handled above). Use the
+  same boilerplate-vs-substantive split.
 
 When bailing, the `message` should name the concern specifically
 (e.g., "dosu-bot flagged a potential regression in comment #6") so
