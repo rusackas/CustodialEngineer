@@ -577,6 +577,24 @@
                                     title="An action session is already running on this card — wait for it, or open it via the session button."
                                     {% elif is_primary %}title="Triage's recommended next step."{% endif %}>{{ action }}</button>
                           </form>
+                        {% elif action == 'resolve-bot-threads' %}
+                          {# Custom flow — modal lists each unresolved
+                             review thread with classification chip; user
+                             picks which to resolve. Server resolves via
+                             the GraphQL resolveReviewThread mutation. #}
+                          <form method="post"
+                                action="/queues/{{ queue.id }}/items/{{ item.id }}/resolve-bot-threads"
+                                data-bot-threads-resolve="1"
+                                data-candidates-url="/queues/{{ queue.id }}/items/{{ item.id }}/bot-thread-candidates"
+                                data-pr-number="{{ item.number }}"
+                                data-pr-title="{{ item.title }}"
+                                data-pr-url="{{ item.url }}">
+                            <button type="submit" data-action="{{ action }}"
+                                    class="{% if is_primary %}action-primary{% endif %}"
+                                    {% if ns.has_live_action %}disabled
+                                    title="An action session is already running on this card — wait for it, or open it via the session button."
+                                    {% elif is_primary %}title="Triage's recommended next step."{% endif %}>{{ action }}</button>
+                          </form>
                         {% else %}
                         <form method="post"
                               action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/{{ action }}"

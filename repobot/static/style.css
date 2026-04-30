@@ -3575,6 +3575,94 @@ button.clear-done:hover {
   border-radius: 6px;
   background: var(--bg-card);
 }
+
+/* Bot-threads resolver modal — one row per unresolved review thread
+   on the PR. Checkbox + classification chip + author + path:line +
+   body excerpt. Boilerplate threads are pre-checked; substantive
+   and human threads are pre-unchecked but selectable if the user
+   wants to override. */
+.bot-threads-list {
+  max-height: 55vh;
+  overflow-y: auto;
+  margin: 8px 0;
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+.bot-threads-empty {
+  padding: 14px;
+  color: var(--ink-mute);
+  font-size: 13px;
+  text-align: center;
+}
+.bot-threads-row {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--rule);
+  cursor: pointer;
+  align-items: flex-start;
+}
+.bot-threads-row:last-child { border-bottom: 0; }
+.bot-threads-row:hover { background: var(--bg-inset); }
+.bot-threads-row input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.bot-threads-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.bot-threads-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.bot-threads-author {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.bot-threads-classification {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid currentColor;
+}
+.bot-threads-class-boilerplate .bot-threads-classification {
+  color: var(--ok);
+}
+.bot-threads-class-substantive .bot-threads-classification {
+  color: var(--danger);
+}
+.bot-threads-class-ambiguous .bot-threads-classification {
+  color: var(--warn);
+}
+.bot-threads-class-human .bot-threads-classification {
+  color: var(--ink-faint);
+}
+.bot-threads-path {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  background: var(--bg-inset);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.bot-threads-body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
 .reviewers-loading, .reviewers-empty {
   padding: 14px;
   color: var(--ink-mute);

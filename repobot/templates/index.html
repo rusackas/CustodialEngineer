@@ -1337,6 +1337,42 @@
     </div>
   </div>
 
+  {# Bot-thread resolver modal — opened by `resolve-bot-threads`
+     buttons. Lists each unresolved review thread on the PR with
+     classification chips so the user vets which ones to actually
+     resolve. Default: boilerplate + ambiguous bot threads checked,
+     substantive bot threads + human threads unchecked. #}
+  <div id="bot-threads-modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-bot-threads></div>
+    <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3>Resolve review threads</h3>
+          <div class="modal-pr" id="bot-threads-modal-pr"></div>
+        </div>
+        <button type="button" class="modal-close" data-close-bot-threads
+                aria-label="Close">{{ icon('x', size=16) }}</button>
+      </div>
+      <div class="comment-modal-help">
+        Bot review threads often raise process / coverage / lockfile
+        flags that block merge despite having no actionable concern.
+        Resolving them here marks each thread as resolved on GitHub
+        — same as clicking "Resolve" on the thread manually.
+        <strong>Boilerplate</strong> bot threads are pre-checked;
+        <strong>substantive</strong> bot threads and human threads
+        are pre-unchecked but still selectable if you want to override.
+      </div>
+      <div id="bot-threads-modal-list" class="bot-threads-list">
+        <div class="reviewers-loading">Loading threads…</div>
+      </div>
+      <div id="bot-threads-modal-error" class="plan-modal-error"></div>
+      <div class="comment-modal-actions">
+        <button type="button" class="comment-modal-cancel" data-close-bot-threads>Cancel</button>
+        <button type="button" class="comment-modal-send" id="bot-threads-modal-send" disabled>Resolve selected</button>
+      </div>
+    </div>
+  </div>
+
   <div id="reviewers-modal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-reviewers></div>
     <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
@@ -1592,6 +1628,17 @@
         e.preventDefault();
         e.stopImmediatePropagation();
         openReviewersModal(form);
+        return;
+      }
+      // Bot-thread resolver: click opens a modal listing each
+      // unresolved review thread with a classification chip; user
+      // selects which to resolve and confirms. The form's POST is
+      // executed from inside the modal after the user clicks
+      // "Resolve selected."
+      if (form.dataset.botThreadsResolve && form.dataset.botThreadsConfirmed !== '1') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        openBotThreadsModal(form);
         return;
       }
       // Disabled-button-with-spinner UI. HTMX undoes this automatically
@@ -1910,7 +1957,137 @@
     document.addEventListener('click', (e) => {
       if (e.target.closest('[data-close-reviewers]')) closeReviewersModal();
     });
+
+    // === Bot-threads resolver modal =========================
+    // Opened by `data-bot-threads-resolve` form submits. Fetches
+    // each unresolved review thread on the PR, classifies them
+    // (boilerplate / substantive / human / ambiguous), renders one
+    // checkbox per thread with a quoted excerpt + classification
+    // chip. On confirm, POSTs the selected thread ids to the resolve
+    // endpoint.
+    const botThreadsModal = document.getElementById('bot-threads-modal');
+    const botThreadsModalPr = document.getElementById('bot-threads-modal-pr');
+    const botThreadsModalList = document.getElementById('bot-threads-modal-list');
+    const botThreadsModalSend = document.getElementById('bot-threads-modal-send');
+    const botThreadsModalError = document.getElementById('bot-threads-modal-error');
+    let botThreadsFormPending = null;
+
+    function closeBotThreadsModal() {
+      botThreadsModal.classList.remove('is-open');
+      botThreadsModal.setAttribute('aria-hidden', 'true');
+      botThreadsFormPending = null;
+    }
+    function refreshBotThreadsSendState() {
+      const checked = botThreadsModalList.querySelectorAll(
+        'input[type=checkbox]:checked').length;
+      botThreadsModalSend.disabled = checked === 0;
+      botThreadsModalSend.textContent = checked > 0
+        ? `Resolve ${checked} selected`
+        : 'Resolve selected';
+    }
+    async function openBotThreadsModal(form) {
+      botThreadsFormPending = form;
+      botThreadsModalList.innerHTML =
+        '<div class="reviewers-loading">Loading threads…</div>';
+      botThreadsModalError.textContent = '';
+      botThreadsModalSend.disabled = true;
+      botThreadsModalSend.textContent = 'Resolve selected';
+      renderPrLine(botThreadsModalPr,
+        form.dataset.prNumber, form.dataset.prTitle, form.dataset.prUrl);
+      botThreadsModal.classList.add('is-open');
+      botThreadsModal.setAttribute('aria-hidden', 'false');
+      let candidates;
+      try {
+        const url = form.dataset.candidatesUrl;
+        const r = await fetch(url, {credentials: 'same-origin'});
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        candidates = await r.json();
+      } catch (err) {
+        botThreadsModalList.innerHTML = '';
+        botThreadsModalError.textContent = 'Failed to load threads: ' + err.message;
+        return;
+      }
+      const threads = (candidates && candidates.threads) || [];
+      botThreadsModalList.innerHTML = '';
+      if (!threads.length) {
+        const empty = document.createElement('div');
+        empty.className = 'bot-threads-empty';
+        empty.textContent = 'No unresolved review threads on this PR.';
+        botThreadsModalList.appendChild(empty);
+        return;
+      }
+      threads.forEach((t) => {
+        const row = document.createElement('label');
+        row.className = 'bot-threads-row bot-threads-class-' + (t.classification || 'human');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = t.id;
+        cb.checked = !!t.default_checked;
+        cb.addEventListener('change', refreshBotThreadsSendState);
+        row.appendChild(cb);
+        const main = document.createElement('div');
+        main.className = 'bot-threads-row-main';
+        const head = document.createElement('div');
+        head.className = 'bot-threads-row-head';
+        const author = document.createElement('span');
+        author.className = 'bot-threads-author';
+        author.textContent = '@' + (t.first_author || 'unknown');
+        head.appendChild(author);
+        const cls = document.createElement('span');
+        cls.className = 'bot-threads-classification';
+        cls.textContent = t.classification;
+        head.appendChild(cls);
+        if (t.path) {
+          const path = document.createElement('code');
+          path.className = 'bot-threads-path';
+          path.textContent = t.path + (t.line ? ':' + t.line : '');
+          head.appendChild(path);
+        }
+        main.appendChild(head);
+        if (t.first_body) {
+          const body = document.createElement('div');
+          body.className = 'bot-threads-body';
+          body.textContent = (t.first_body.length > 500)
+            ? (t.first_body.slice(0, 500) + '…')
+            : t.first_body;
+          main.appendChild(body);
+        }
+        row.appendChild(main);
+        botThreadsModalList.appendChild(row);
+      });
+      refreshBotThreadsSendState();
+    }
+    botThreadsModalSend.addEventListener('click', () => {
+      if (!botThreadsFormPending) return;
+      const checked = Array.from(
+        botThreadsModalList.querySelectorAll('input[type=checkbox]:checked'));
+      const ids = checked.map(c => c.value);
+      if (!ids.length) return;
+      const action = botThreadsFormPending.getAttribute('action');
+      const liveForm = (action
+        ? document.querySelector(`form[action="${action}"]`)
+        : null) || botThreadsFormPending;
+      // Inject hidden thread_ids[] inputs.
+      Array.from(liveForm.querySelectorAll('input[name="thread_ids"]'))
+        .forEach(n => n.remove());
+      ids.forEach((id) => {
+        const h = document.createElement('input');
+        h.type = 'hidden';
+        h.name = 'thread_ids';
+        h.value = id;
+        liveForm.appendChild(h);
+      });
+      liveForm.dataset.botThreadsConfirmed = '1';
+      closeBotThreadsModal();
+      liveForm.requestSubmit();
+    });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('[data-close-bot-threads]')) closeBotThreadsModal();
+    });
     document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && botThreadsModal.classList.contains('is-open')) {
+        closeBotThreadsModal();
+      }
       if (e.key === 'Escape' && reviewersModal.classList.contains('is-open')) {
         closeReviewersModal();
       }

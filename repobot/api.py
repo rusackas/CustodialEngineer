@@ -867,6 +867,93 @@ def drawer(request: Request, queue_id: str, item_id: int):
     )
 
 
+@app.get("/queues/{queue_id}/items/{item_id}/bot-thread-candidates")
+def bot_thread_candidates(queue_id: str, item_id: int):
+    """Return the unresolved review threads on this PR with each
+    thread classified by `triage.classify_bot_thread`. Powers the
+    resolve-bot-threads modal — the user sees what would be
+    resolved (with bot author + classification) before submitting.
+
+    Pulls thread data from `item.raw.unresolved_threads` (already
+    populated by the GraphQL hydrate on fetch); doesn't re-fetch.
+    Threads without a classification of `boilerplate` or
+    `ambiguous` are surfaced too but pre-unchecked in the UI —
+    the user can opt in but the default is "don't auto-resolve."
+    """
+    from .triage import classify_bot_thread, is_bot_login
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    raw = item.get("raw") or {}
+    threads = raw.get("unresolved_threads") or []
+    out = []
+    for t in threads:
+        classification = classify_bot_thread(t)
+        out.append({
+            "id": t.get("id"),
+            "first_author": t.get("first_author") or "",
+            "first_body": t.get("first_body") or "",
+            "path": t.get("path") or "",
+            "line": t.get("line"),
+            "is_bot": is_bot_login(t.get("first_author") or ""),
+            "classification": classification,
+            # Default-checked when boilerplate (safe to auto-resolve)
+            # or ambiguous-bot (likely safe but user should glance).
+            # Substantive bot threads and human threads default
+            # unchecked — user has to opt in to override.
+            "default_checked": classification in ("boilerplate", "ambiguous"),
+        })
+    return JSONResponse({"threads": out})
+
+
+@app.post("/queues/{queue_id}/items/{item_id}/resolve-bot-threads")
+def submit_resolve_bot_threads(queue_id: str, item_id: int,
+                                thread_ids: list[str] = Form(default=[])):
+    """Resolve the selected review threads via the GraphQL
+    resolveReviewThread mutation. Records a result on the item with
+    counts (resolved / errored). Doesn't transition state — the card
+    stays where it is and the next refresh tick re-computes the
+    action menu (now without the bot threads blocking approve-merge).
+    """
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    pr_number = item.get("number")
+    if not pr_number:
+        raise HTTPException(status_code=400, detail="item has no PR number")
+    selected = [t.strip() for t in thread_ids if t and t.strip()]
+    if not selected:
+        raise HTTPException(status_code=400, detail="no threads selected")
+    if current_dry_run():
+        set_item_result(queue_id, item_id, {
+            "action": "resolve-bot-threads",
+            "status": "skipped_dry_run",
+            "message": f"dry_run — would resolve {len(selected)} threads",
+        })
+        return RedirectResponse(url="/", status_code=303)
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    slug = github.item_repo_slug(item) or github.queue_repo_slug(qcfg)
+    resolved: list[str] = []
+    errors: list[str] = []
+    with github.repo_scope(slug):
+        for tid in selected:
+            try:
+                github.resolve_review_thread(tid)
+                resolved.append(tid)
+            except Exception as exc:
+                errors.append(f"{tid[:8]}…: {exc}")
+    parts = [f"resolved {len(resolved)} thread{'s' if len(resolved) != 1 else ''}"]
+    if errors:
+        parts.append(f"{len(errors)} failed")
+    set_item_result(queue_id, item_id, {
+        "action": "resolve-bot-threads",
+        "status": "completed" if not errors else "completed_with_errors",
+        "message": "; ".join(parts) + (
+            f"  ({'; '.join(errors)})" if errors else ""),
+    })
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.get("/queues/{queue_id}/items/{item_id}/reviewer-candidates")
 def reviewer_candidates(queue_id: str, item_id: int):
     """Return ranked candidate reviewers for the modal. Mechanical

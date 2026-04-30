@@ -226,6 +226,23 @@ ACTIONS: dict[str, dict[str, Any]] = {
         "terminal_state": "done",
         "failure_state": "in triage",
     },
+    "resolve-bot-threads": {
+        # Resolve unresolved review threads from bot reviewers
+        # (bito / sonarcloud / dosu / coderabbitai / codecov / etc.)
+        # whose bodies match boilerplate patterns. Custom flow with
+        # a confirmation modal that lists each thread + classification
+        # so the user vets which ones to actually resolve. Has its own
+        # endpoint at /queues/{q}/items/{i}/resolve-bot-threads —
+        # this entry is here so the card can render the button via
+        # the standard actions loop, even though dispatch goes
+        # elsewhere.
+        "label": "resolve-bot-threads",
+        "skill": None,
+        "worktree_required": False,
+        "in_progress_state": None,
+        "terminal_state": None,
+        "failure_state": "in triage",
+    },
     "mark-as-draft": {
         # Soft-warning sibling to label-as-stale on the issue side.
         # Converts an open PR to draft and posts a comment naming

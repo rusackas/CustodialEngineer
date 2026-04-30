@@ -39,6 +39,146 @@ from .config import load_config
 
 STALE_DAYS = 7
 
+# Labels that mean "the maintainers explicitly do not want this PR
+# auto-approved or auto-merged." Triage suppresses approve-merge
+# from the action menu when any of these is present and proposes
+# `await-update` instead. Kept lowercased for case-insensitive
+# matching against label names.
+_HOLD_LABELS = {
+    "hold", "wip", "do-not-merge", "do-not-merge/hold",
+    "do not merge", "blocked", "needs-design", "needs-discussion",
+    "draft", "rfc", "needs-rebase",
+}
+
+
+def _has_hold_label(raw: dict) -> bool:
+    """True iff the PR carries any of the well-known hold/wip/blocked
+    labels. Used by mechanical triage to suppress approve-merge
+    proposals on explicitly-held PRs."""
+    for l in (raw.get("labels") or []):
+        name = (l.get("name") or "").strip().lower()
+        if name in _HOLD_LABELS:
+            return True
+    return False
+
+
+def _hold_label_names(raw: dict) -> list[str]:
+    """Return the matching hold-label names so the proposal text can
+    cite the actual label that fired the guard."""
+    return [
+        (l.get("name") or "").strip()
+        for l in (raw.get("labels") or [])
+        if (l.get("name") or "").strip().lower() in _HOLD_LABELS
+    ]
+
+
+# Bot logins whose review threads almost always represent process /
+# CI / coverage / lockfile boilerplate rather than substantive code
+# review concerns. The `[bot]` suffix catches generic bot
+# integrations; this set covers integrations that have non-suffix
+# logins.
+_KNOWN_REVIEW_BOTS = {
+    "bito-code-review", "coderabbitai", "coderabbitai[bot]",
+    "dosu", "dosu[bot]", "sonarcloud", "sonarcloud[bot]", "sonar",
+    "codecov", "codecov-commenter", "codecov[bot]",
+    "github-actions", "github-actions[bot]", "bitbot",
+    "dependabot[bot]",
+}
+
+# Body-substring patterns that indicate a bot thread is boilerplate
+# (process / coverage / changelog / etc. — not a substantive code
+# concern). Case-insensitive match. If any pattern hits AND no
+# substantive pattern hits, the thread classifies as boilerplate.
+_BOILERPLATE_PATTERNS = (
+    "process violation", "process check", "lockfile",
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
+    "cargo.lock",
+    "coverage", "code coverage", "coverage decreased", "coverage increased",
+    "this pr does not satisfy",
+    "cla check", "contributor license",
+    "changelog entry", "release notes",
+    "no issues found", "0 issues", "no findings",
+    "lgtm", "looks good",
+    "size: large", "size: small", "size: medium",
+)
+
+# Body-substring patterns that flip a bot thread from "boilerplate"
+# to "substantive" — concrete code concerns we should NOT auto-
+# resolve. Case-insensitive.
+_SUBSTANTIVE_PATTERNS = (
+    "vulnerability", "cve-", "credential", "secret leak",
+    "null deref", "null pointer", "n+1 query",
+    "regression", "breaking change",
+    "memory leak", "race condition", "deadlock",
+    "todo:", "fixme:", "xxx:",
+    "potential bug", "incorrect logic",
+)
+
+
+def is_bot_login(login: str) -> bool:
+    """True when `login` looks like a GitHub bot account — either has
+    the `[bot]` suffix (the standard convention) or is in the known-
+    bot set."""
+    if not login:
+        return False
+    if login.endswith("[bot]"):
+        return True
+    return login in _KNOWN_REVIEW_BOTS
+
+
+def classify_bot_thread(thread: dict) -> str:
+    """Classify an unresolved review thread by its first-comment
+    author + body. Returns one of:
+
+      - 'human' — first author is a person; auto-resolve never OK.
+      - 'boilerplate' — bot author, body matches process/coverage/
+        lockfile patterns, no substantive concern. Safe to auto-
+        resolve.
+      - 'substantive' — bot author but body raises a real concern
+        (security, regression, code citation). Block until human
+        addresses.
+      - 'ambiguous' — bot author but body matches neither pattern
+        set. Default to "block" but let the user decide.
+    """
+    first_author = (thread.get("first_author") or "").strip()
+    if not is_bot_login(first_author):
+        return "human"
+    body = (thread.get("first_body") or "").lower()
+    has_substantive = any(p in body for p in _SUBSTANTIVE_PATTERNS)
+    if has_substantive:
+        return "substantive"
+    has_boilerplate = any(p in body for p in _BOILERPLATE_PATTERNS)
+    if has_boilerplate:
+        return "boilerplate"
+    return "ambiguous"
+
+
+def _bot_threads_resolvable(raw: dict) -> bool:
+    """True iff this PR has any unresolved review threads from bot
+    reviewers — meaning the resolve-bot-threads action would surface
+    something for the user to vet. Mechanical triagers add it to
+    the action menu in that case so the button is one click away
+    from any blocked card."""
+    for t in raw.get("unresolved_threads") or []:
+        if is_bot_login(t.get("first_author") or ""):
+            return True
+    return False
+
+
+def _held_short_circuit(raw: dict) -> tuple[str, list[str]] | None:
+    """If the PR carries a hold-label, return the early-return tuple
+    every mechanical function uses to skip the rest of its logic.
+    Otherwise None. Centralizes the "explicitly held → don't propose
+    approve-merge or any auto-fix action" rule so adding it to
+    every triager is one-line."""
+    if not _has_hold_label(raw):
+        return None
+    names = _hold_label_names(raw)
+    msg = (f"Held by label{'s' if len(names) > 1 else ''}: "
+           f"{', '.join(f'`{n}`' for n in names)}. "
+           f"Not auto-actionable until removed.")
+    return msg, ["await-update", "prompt", "close", "skip"]
+
 
 def _parse_iso(ts: str | None):
     if not ts:
@@ -60,9 +200,18 @@ def mechanical_triage(item: dict) -> tuple[str, list[str]]:
     ci = (raw.get("ci_status") or "").lower()
     age = _age_days(raw)
 
+    held = _held_short_circuit(raw)
+    if held:
+        return held
+
+    bot_threads = _bot_threads_resolvable(raw)
+
     if mergeable == "CONFLICTING":
         msg = "Merge conflicts detected. Post `@dependabot rebase`; if that fails, rebase manually."
-        return msg, ["dependabot-rebase", "rebase", "close"]
+        actions = ["dependabot-rebase", "rebase", "close"]
+        if bot_threads:
+            actions.insert(1, "resolve-bot-threads")
+        return msg, actions
 
     if ci == "passing" and mergeable == "MERGEABLE":
         # `mergeable == MERGEABLE` only means no textual conflicts — the PR
@@ -71,7 +220,13 @@ def mechanical_triage(item: dict) -> tuple[str, list[str]]:
         # this is safe. We still flag the caveat in the proposal.
         msg = ("CI is green and no textual conflicts — approve-merge will "
                "re-verify mergeStateStatus before approving.")
-        return msg, ["approve-merge", "prompt", "close"]
+        actions = ["approve-merge", "prompt", "close"]
+        if bot_threads:
+            # Surface resolve-bot-threads BEFORE approve-merge: bot
+            # threads are a common reason approve-merge bails; one
+            # click resolves them, then approve-merge runs clean.
+            actions.insert(0, "resolve-bot-threads")
+        return msg, actions
 
     if ci == "pending":
         msg = "Checks are still running. Re-triage on the next refresh."
@@ -223,6 +378,9 @@ def _mechanical_my_pr_triage(item: dict) -> tuple[str, list[str]]:
     one primary action from the three signals and lists the rest as
     fallbacks."""
     raw = item.get("raw") or {}
+    held = _held_short_circuit(raw)
+    if held:
+        return held
     has_conflicts = bool(raw.get("has_conflicts"))
     ci = (raw.get("ci_status") or "").lower()
     threads = raw.get("unresolved_threads") or []
@@ -238,6 +396,12 @@ def _mechanical_my_pr_triage(item: dict) -> tuple[str, list[str]]:
         reasons.append(f"{len(threads)} unresolved review thread"
                        + ("s" if len(threads) != 1 else ""))
         actions.append("address-comments")
+        if _bot_threads_resolvable(raw):
+            # Bot threads can be batch-resolved without going through
+            # address-comments (which is heavier — drafts a reply per
+            # thread). Surface both so the user picks based on whether
+            # the bot threads need a reply or just a resolve.
+            actions.append("resolve-bot-threads")
     if not actions:
         return ("No blocking signal detected — manual triage.",
                 ["prompt"])
@@ -258,6 +422,9 @@ def _mechanical_review_requested_triage(item: dict) -> tuple[str, list[str]]:
     blocked-by-formatting PR has no one-click way to land the auto-
     fix even though their token has push rights."""
     raw = item.get("raw") or {}
+    held = _held_short_circuit(raw)
+    if held:
+        return held
     has_conflicts = bool(raw.get("has_conflicts"))
     ci = (raw.get("ci_status") or "").lower()
     threads = raw.get("unresolved_threads") or []
@@ -302,6 +469,11 @@ def _mechanical_review_requested_triage(item: dict) -> tuple[str, list[str]]:
         msg = "Blockers: " + ", ".join(reasons) + "."
         actions.extend(["add-review-comment", "await-update",
                         "prompt", "skip"])
+    if _bot_threads_resolvable(raw):
+        # Insert before approve-merge / address-comments so the user
+        # can clear bot threads first if approve-merge would bail
+        # on them.
+        actions.insert(0, "resolve-bot-threads")
     seen: set = set()
     ordered = [a for a in actions if not (a in seen or seen.add(a))]
     return msg, ordered
@@ -395,6 +567,9 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
     """
     from .identity import current_user_id
     raw = item.get("raw") or {}
+    held = _held_short_circuit(raw)
+    if held:
+        return held
     has_conflicts = bool(raw.get("has_conflicts"))
     ci = (raw.get("ci_status") or "").lower()
     threads = raw.get("unresolved_threads") or []
@@ -522,6 +697,13 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
     if (reasons and not is_draft and not is_bot and not self_authored
             and (has_conflicts or ci == "failing" or threads)):
         actions.append("mark-as-draft")
+
+    # Bot review threads (bito / sonarcloud / dosu / coderabbitai /
+    # etc.) are a common reason approve-merge bails. Surface a
+    # one-click resolver whenever any bot-authored unresolved thread
+    # exists; the modal lets the user vet which to actually resolve.
+    if _bot_threads_resolvable(raw):
+        actions.append("resolve-bot-threads")
 
     # Universal options always offered. `prompt` is the human escape
     # hatch; `summarize-diff` / `assess-on-worktree` give the user a

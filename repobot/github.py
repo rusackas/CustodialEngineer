@@ -12,7 +12,7 @@ from contextvars import ContextVar
 
 from .config import load_config
 
-LIST_FIELDS = "number,title,url,mergeable,createdAt,updatedAt,headRefName,isDraft,author,reviewDecision"
+LIST_FIELDS = "number,title,url,mergeable,createdAt,updatedAt,headRefName,isDraft,author,reviewDecision,labels"
 CHECK_FIELDS = "statusCheckRollup"
 
 # Fields we ask `gh issue list --json` for. `comments` is the heavy
