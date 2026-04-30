@@ -2,7 +2,6 @@
 name: do-task
 description: Execute an ad-hoc user task against a repo worktree. Routes to investigate-and-answer (question), draft-an-issue (issue), or implement-and-open-PR (pr) based on task.task_type. When task_type=auto, classifies from the prompt language.
 worktree_required: true
-max_turns: 120
 ---
 
 # Do an ad-hoc task
@@ -160,9 +159,58 @@ re-running the task.
 
 ## Guardrails
 
+### Worktree / branch / repo scope
+
 - Never touch files outside the worktree.
 - Never push to branches other than `ce/task-{task.id}`.
 - Never open issues or PRs on repos other than `{repo.owner}/{repo.name}`.
+
+### Public-mutation authorization
+
+The user's `task.prompt` is your authorization document. Read it
+carefully and ask: did the user *name* the mutation as the goal, or
+did they ask you to *recommend* one?
+
+**Authorized — execute directly:**
+- Prompt names a specific public mutation as the goal AND names the
+  target(s) AND (where applicable) gives a body / reason. Examples:
+  - "Open a PR that fixes #N." → push + `gh pr create` is authorized.
+  - "Comment 'thanks @alice — landing this' on PR #N." → exact body
+    + target named, post as-is.
+  - "Close issue #N as not-planned with a polite explanation." →
+    drafted body still gets confirmed, but `gh issue close` is
+    authorized once the user OKs the body.
+  - "Triage PR #N and act on it" — when paired with explicit
+    "WAIT for my OK before mutating" (the spawn-pr-task default
+    prompt), wait per the prompt's own instruction.
+
+**Unauthorized — DRAFT, ASK, WAIT:**
+- Prompt is open-ended ("look at #N and tell me what to do",
+  "investigate this thread", "review and recommend").
+- Prompt is ambiguous about whether to mutate ("comment if
+  needed", "feel free to close if it looks stale").
+- You think a mutation is the right move but the prompt didn't
+  name it.
+
+In all unauthorized cases:
+1. Compose the proposed body / action verbatim in your assistant
+   turn so the user sees exactly what would land.
+2. Ask in plain English for confirmation — "Should I post this
+   comment and close the issue? Reply YES to ship or edit the
+   wording first."
+3. **WAIT** for the user's reply. Do not call `gh pr comment`,
+   `gh issue close`, `gh pr close`, `gh pr edit --add-label`, or
+   any similar public-state mutation until they confirm.
+4. On confirmation, execute. If the user edits the wording in
+   their reply, use their edited version.
+
+The Tasks board's session modal is conversational by design — the
+user talks back and forth with you. Lean into that rhythm; treat
+public mutations as moves you ask permission for unless the prompt
+itself is the permission slip.
+
+### Other rules
+
 - Never invoke other long-running skills from here (no triage, no
   address-review-comments recursion). If the task wants that kind of
   work, bail to `needs_human` and recommend the right skill.

@@ -2,7 +2,6 @@
 name: attempt-fix-pr
 description: Attempt a minimal, targeted fix for a Dependabot PR whose triage identified a real code breakage caused by the dependency bump (e.g., breaking API change that consumers must adapt to). Commits inside the worktree and force-pushes when dry_run is false.
 worktree_required: true
-max_turns: 80
 ---
 
 # Attempt fix for a Dependabot PR

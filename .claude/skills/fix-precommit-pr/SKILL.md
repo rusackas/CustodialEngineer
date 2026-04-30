@@ -2,7 +2,6 @@
 name: fix-precommit-pr
 description: Fix a PR whose only failing check is pre-commit. Runs `pre-commit run` on the PR's changed files, commits the auto-fixes (black / ruff / prettier / trailing-whitespace / etc.), and force-pushes. Dedicated, narrow path — does NOT attempt code reasoning.
 worktree_required: true
-max_turns: 40
 ---
 
 # Fix pre-commit drift on a PR

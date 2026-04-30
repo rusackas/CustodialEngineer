@@ -2,7 +2,6 @@
 name: address-review-comments
 description: Walk through unresolved review threads on the user's own PR. Phase 1 applies fixes (one commit per thread, push) and drafts a reply per thread. Phase 2 posts the human-approved replies. Never leaves a thread silent.
 worktree_required: true
-max_turns: 80
 ---
 
 # Address unresolved review comments on my PR

@@ -132,7 +132,12 @@ def _oauth_env() -> dict[str, str]:
     return env
 
 
-DEFAULT_MAX_TURNS = 40
+# Effectively unlimited. The earlier 40/80 caps were paranoia from
+# when sessions were new and we didn't trust them not to spin. They
+# run cleanly now — let them go as long as they need. A large finite
+# bound is still a useful infinite-loop tripwire, just well above
+# any real session's burn (most finish in 5–30 turns).
+DEFAULT_MAX_TURNS = 500
 
 
 def load_skill(name: str) -> str:

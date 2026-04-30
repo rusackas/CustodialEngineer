@@ -2,7 +2,6 @@
 name: plan-pr-fix
 description: Investigate a PR that a prior attempt-fix session flagged as needs_human, and produce a concrete, reviewable fix plan. Does NOT execute — the human reviews/edits the plan, then approves, and you execute in a later turn using the same session.
 worktree_required: true
-max_turns: 60
 ---
 
 # Plan a fix for a PR (then execute on approval)
