@@ -444,6 +444,16 @@
             <form method="post" action="/queues/{{ queue.id }}/fetch">
               <button type="submit" class="refresh" title="Re-fetch every item from GitHub. Non-done items whose PR was updated since last triage get re-triaged. Done items with new activity are reopened.">Update</button>
             </form>
+            {# Bulk-approve button — opens a modal listing every
+               approve-mergeable PR in this queue with editable
+               comments. JS renders only when ≥2 candidates exist
+               (counted client-side from item.actions); button is
+               always in the DOM so SSE refreshes don't have to
+               re-render the header. #}
+            <button type="button" class="bulk-approve-btn"
+                    data-bulk-approve-queue="{{ queue.id }}"
+                    title="Approve every approve-mergeable PR in this queue, with each comment editable in one modal."
+                    hidden>Bulk approve</button>
             <button type="button" class="settings-gear-btn"
                     data-settings-target="settings-modal-{{ queue.id }}"
                     title="Column settings"
@@ -1337,6 +1347,39 @@
     </div>
   </div>
 
+  {# Bulk-approve modal — opened by the queue header's "Bulk
+     approve" button. Lists every PR in the queue eligible for
+     approve-merge with each comment editable so the user can
+     vet+ship them in one confirmation instead of one modal per
+     card. Editorial control preserved per-card. #}
+  <div id="bulk-approve-modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-bulk-approve></div>
+    <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3>Bulk approve</h3>
+          <div class="modal-pr" id="bulk-approve-modal-sub"></div>
+        </div>
+        <button type="button" class="modal-close" data-close-bulk-approve
+                aria-label="Close">{{ icon('x', size=16) }}</button>
+      </div>
+      <div class="comment-modal-help">
+        Each PR below is approve-mergeable. Edit any comment before
+        shipping; uncheck a card to skip it this round. The
+        approve-merge skill re-verifies mergeStateStatus per PR
+        before posting, so the queue gate is preserved on each.
+      </div>
+      <div id="bulk-approve-list" class="bulk-approve-list">
+        <div class="reviewers-loading">Loading candidates…</div>
+      </div>
+      <div id="bulk-approve-error" class="plan-modal-error"></div>
+      <div class="comment-modal-actions">
+        <button type="button" class="comment-modal-cancel" data-close-bulk-approve>Cancel</button>
+        <button type="button" class="comment-modal-send" id="bulk-approve-send" disabled>Approve selected</button>
+      </div>
+    </div>
+  </div>
+
   {# Bot-thread resolver modal — opened by `resolve-bot-threads`
      buttons. Lists each unresolved review thread on the PR with
      classification chips so the user vets which ones to actually
@@ -1957,6 +2000,171 @@
     document.addEventListener('click', (e) => {
       if (e.target.closest('[data-close-reviewers]')) closeReviewersModal();
     });
+
+    // === Bulk-approve modal =================================
+    // Opened by per-queue `[data-bulk-approve-queue]` buttons.
+    // Lists every approve-mergeable PR in the queue with each
+    // comment editable; ships them all in one confirmation. Each
+    // approve-merge still routes through the standard dispatch
+    // (skill re-verifies mergeStateStatus before posting), so the
+    // safety guard per PR is preserved.
+    const bulkApproveModal = document.getElementById('bulk-approve-modal');
+    const bulkApproveModalSub = document.getElementById('bulk-approve-modal-sub');
+    const bulkApproveList = document.getElementById('bulk-approve-list');
+    const bulkApproveSend = document.getElementById('bulk-approve-send');
+    const bulkApproveError = document.getElementById('bulk-approve-error');
+    let bulkApproveQueueId = null;
+
+    function closeBulkApproveModal() {
+      bulkApproveModal.classList.remove('is-open');
+      bulkApproveModal.setAttribute('aria-hidden', 'true');
+      bulkApproveQueueId = null;
+    }
+    function refreshBulkApproveSendState() {
+      const checked = bulkApproveList.querySelectorAll(
+        'input[type=checkbox]:checked').length;
+      bulkApproveSend.disabled = checked === 0;
+      bulkApproveSend.textContent = checked > 0
+        ? `Approve ${checked} selected`
+        : 'Approve selected';
+    }
+    async function openBulkApproveModal(queueId) {
+      bulkApproveQueueId = queueId;
+      bulkApproveList.innerHTML =
+        '<div class="reviewers-loading">Loading candidates…</div>';
+      bulkApproveError.textContent = '';
+      bulkApproveSend.disabled = true;
+      bulkApproveSend.textContent = 'Approve selected';
+      bulkApproveModalSub.textContent = queueId;
+      bulkApproveModalSub.hidden = false;
+      bulkApproveModal.classList.add('is-open');
+      bulkApproveModal.setAttribute('aria-hidden', 'false');
+      let payload;
+      try {
+        const r = await fetch('/queues/' + encodeURIComponent(queueId) + '/bulk-approve-candidates',
+                              {credentials: 'same-origin'});
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        payload = await r.json();
+      } catch (err) {
+        bulkApproveList.innerHTML = '';
+        bulkApproveError.textContent = 'Failed to load candidates: ' + err.message;
+        return;
+      }
+      const candidates = (payload && payload.candidates) || [];
+      bulkApproveList.innerHTML = '';
+      if (!candidates.length) {
+        const empty = document.createElement('div');
+        empty.className = 'bot-threads-empty';
+        empty.textContent = 'No approve-mergeable PRs in this queue right now.';
+        bulkApproveList.appendChild(empty);
+        return;
+      }
+      candidates.forEach((c) => {
+        const row = document.createElement('div');
+        row.className = 'bulk-approve-row';
+        row.dataset.itemId = String(c.id);
+        const head = document.createElement('label');
+        head.className = 'bulk-approve-head';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.addEventListener('change', refreshBulkApproveSendState);
+        head.appendChild(cb);
+        const link = document.createElement('a');
+        link.href = c.url || '#';
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'bulk-approve-pr';
+        link.textContent = '#' + c.number + ' — ' + c.title;
+        head.appendChild(link);
+        if (c.author_login) {
+          const author = document.createElement('span');
+          author.className = 'bulk-approve-author';
+          author.textContent = '@' + c.author_login;
+          head.appendChild(author);
+        }
+        row.appendChild(head);
+        const ta = document.createElement('textarea');
+        ta.className = 'bulk-approve-comment';
+        ta.value = c.default_comment || '';
+        ta.rows = 2;
+        const autosize = () => {
+          ta.style.height = 'auto';
+          ta.style.height = (ta.scrollHeight + 2) + 'px';
+        };
+        ta.addEventListener('input', autosize);
+        row.appendChild(ta);
+        requestAnimationFrame(autosize);
+        bulkApproveList.appendChild(row);
+      });
+      refreshBulkApproveSendState();
+    }
+    bulkApproveSend.addEventListener('click', async () => {
+      if (!bulkApproveQueueId) return;
+      const rows = Array.from(
+        bulkApproveList.querySelectorAll('.bulk-approve-row'));
+      const fd = new FormData();
+      let count = 0;
+      rows.forEach((row) => {
+        const cb = row.querySelector('input[type=checkbox]');
+        if (!cb || !cb.checked) return;
+        const ta = row.querySelector('textarea.bulk-approve-comment');
+        fd.append('item_id', row.dataset.itemId);
+        fd.append('comment_body', ta ? ta.value : '');
+        count++;
+      });
+      if (!count) return;
+      bulkApproveSend.disabled = true;
+      bulkApproveSend.classList.add('loading');
+      try {
+        const r = await fetch('/queues/' + encodeURIComponent(bulkApproveQueueId) + '/bulk-approve-merge',
+                              {method: 'POST', body: fd});
+        if (!r.ok) {
+          let detail = 'Failed';
+          try { const j = await r.json(); if (j.detail) detail = j.detail; } catch {}
+          bulkApproveError.textContent = detail;
+        } else {
+          closeBulkApproveModal();
+          if (window.refreshQueues) window.refreshQueues();
+        }
+      } catch (err) {
+        bulkApproveError.textContent = 'Network error: ' + err.message;
+      } finally {
+        bulkApproveSend.disabled = false;
+        bulkApproveSend.classList.remove('loading');
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('[data-close-bulk-approve]')) {
+        closeBulkApproveModal();
+        return;
+      }
+      const bulkBtn = e.target.closest('[data-bulk-approve-queue]');
+      if (bulkBtn) {
+        openBulkApproveModal(bulkBtn.dataset.bulkApproveQueue);
+      }
+    });
+
+    // Show the bulk-approve button on each queue when it has ≥2
+    // approve-mergeable cards. Counts approve-merge buttons in the
+    // queue body — if ≥2 exist, unhide the header button. Re-runs
+    // on every queue body refresh (SSE / poll).
+    function updateBulkApproveButtons() {
+      document.querySelectorAll('[data-bulk-approve-queue]').forEach((btn) => {
+        const qid = btn.dataset.bulkApproveQueue;
+        const body = document.querySelector(`[data-sse-queue="${qid}"]`);
+        if (!body) return;
+        const count = body.querySelectorAll(
+          'button[data-action="approve-merge"]').length;
+        btn.hidden = count < 2;
+        if (count >= 2) {
+          btn.textContent = `Bulk approve (${count})`;
+        }
+      });
+    }
+    updateBulkApproveButtons();
+    // Re-run after SSE swaps so the button updates without a full reload.
+    document.body.addEventListener('htmx:afterSwap', updateBulkApproveButtons);
 
     // === Bot-threads resolver modal =========================
     // Opened by `data-bot-threads-resolve` form submits. Fetches

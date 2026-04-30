@@ -3576,6 +3576,115 @@ button.clear-done:hover {
   background: var(--bg-card);
 }
 
+/* Bulk-approve modal — one row per approve-mergeable PR. Each row
+   has a checkbox (default checked), a PR # link with title, the
+   author handle, and an editable comment textarea. The modal ships
+   them all in one POST. */
+.bulk-approve-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 8px 0;
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+.bulk-approve-row {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.bulk-approve-row:last-child { border-bottom: 0; }
+.bulk-approve-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.bulk-approve-pr {
+  flex: 1;
+  color: var(--brand);
+  text-decoration: none;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bulk-approve-pr:hover { text-decoration: underline; }
+.bulk-approve-author {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+.bulk-approve-comment {
+  width: 100%;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  box-sizing: border-box;
+  resize: vertical;
+  line-height: 1.4;
+  background: var(--bg-inset);
+}
+.bulk-approve-comment:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  background: var(--bg-card);
+}
+
+/* Composite "Unblock" button at the top of a PR card's actions
+   row. Picks the single best one-click unblock based on signals
+   (mechanically — see triage.pick_unblock_action). Visually
+   distinguished from the regular menu so the eye lands on it
+   first when present. */
+.unblock-form {
+  display: inline-flex;
+  margin: 0;
+}
+.unblock-btn {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: lowercase;
+  font-weight: 700;
+  padding: 5px 12px;
+  border: 1.5px solid var(--brand);
+  background: var(--brand);
+  color: var(--bg-card);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.unblock-btn:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+/* The header-row "Bulk approve" button — same neighbor as Update.
+   Surfaces only when the queue has ≥2 approve-mergeable cards
+   (JS toggles `hidden`). Brand-tinted to read as a primary action. */
+.bulk-approve-btn {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 5px 10px;
+  border: 1px solid var(--brand);
+  background: var(--accent-soft);
+  color: var(--brand);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.bulk-approve-btn:hover {
+  background: var(--brand);
+  color: var(--bg-card);
+}
+
 /* Bot-threads resolver modal — one row per unresolved review thread
    on the PR. Checkbox + classification chip + author + path:line +
    body excerpt. Boilerplate threads are pre-checked; substantive

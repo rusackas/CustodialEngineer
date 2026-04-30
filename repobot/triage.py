@@ -153,6 +153,81 @@ def classify_bot_thread(thread: dict) -> str:
     return "ambiguous"
 
 
+def pick_unblock_action(raw: dict | None, actions: list[str] | None) -> str:
+    """Choose the single best 'unblock this PR' action for a card,
+    based on its current signals + the actions the mechanical
+    triager already put on the menu. Returns the action id (e.g.
+    `approve-ci`, `rebase`, `fix-precommit`, `resolve-bot-threads`,
+    `approve-merge`) or empty string if no obvious unblock.
+
+    Priority is by *blockingness* — the action whose absence is
+    actually preventing merge gets picked first. We require the
+    chosen action to already be on the card's actions menu so we
+    never propose something the mechanical layer judged
+    unavailable (push not allowed, hold label fired, etc.).
+
+    Returns "" when:
+      - The PR is held by label (mechanical short-circuited the menu).
+      - The PR is in draft state (mark-as-draft / await-update is
+        still the right move; "unblock" framing would be misleading).
+      - No clear single best move emerges.
+    """
+    if not raw or not actions:
+        return ""
+    actions_set = set(actions)
+    # The mechanical short-circuit on hold-labels emits exactly
+    # ['await-update', 'prompt', 'close', 'skip']. Detect that and
+    # return empty — there's no unblock to propose; the label is
+    # the explicit hold.
+    if "approve-merge" not in actions_set and "rebase" not in actions_set \
+            and "fix-precommit" not in actions_set \
+            and "attempt-fix" not in actions_set:
+        return ""
+    if raw.get("isDraft"):
+        return ""
+
+    # CI awaiting approval (first-contributor gate). One click and
+    # the rest of triage starts working — the highest-leverage
+    # unblock by far.
+    if "approve-ci" in actions_set and raw.get("needs_ci_approval"):
+        return "approve-ci"
+
+    # Bot review threads blocking the merge gate. Resolving the
+    # boilerplate ones unsticks approve-merge directly. Place
+    # before fix actions because resolving threads is faster and
+    # safer than a worktree round-trip.
+    if "resolve-bot-threads" in actions_set:
+        # Only propose when at least one bot thread classifies as
+        # boilerplate or ambiguous — substantive bot threads should
+        # NOT be auto-resolved as the unblock move.
+        for t in raw.get("unresolved_threads") or []:
+            cls = classify_bot_thread(t)
+            if cls in ("boilerplate", "ambiguous"):
+                return "resolve-bot-threads"
+
+    # Merge conflicts — `rebase` is the right move when push is
+    # allowed; the mechanical layer wouldn't have included it
+    # otherwise.
+    if "rebase" in actions_set and raw.get("has_conflicts"):
+        return "rebase"
+
+    # Failing CI — `fix-precommit` is the most common one-shot fix
+    # (formatter / linter drift); `attempt-fix` is the broader
+    # fallback. We pick fix-precommit when on the menu since the
+    # mechanical layer already vetted that push is allowed.
+    if (raw.get("ci_status") or "").lower() == "failing":
+        if "fix-precommit" in actions_set:
+            return "fix-precommit"
+        if "attempt-fix" in actions_set:
+            return "attempt-fix"
+
+    # All blockers cleared — approve-merge is the unblock.
+    if "approve-merge" in actions_set:
+        return "approve-merge"
+
+    return ""
+
+
 def _bot_threads_resolvable(raw: dict) -> bool:
     """True iff this PR has any unresolved review threads from bot
     reviewers — meaning the resolve-bot-threads action would surface

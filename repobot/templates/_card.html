@@ -254,6 +254,30 @@
                         </button>
                       </form>
                     {% endif %}
+                    {# attempt-fix-issue phase 1 emits a drafted PR
+                       title + body. Surface a "Open PR — review &
+                       create" affordance that opens the comment-edit
+                       modal pre-filled with title (line 1) + body
+                       (rest); the create-pr-from-attempt endpoint
+                       splits them and runs gh pr create. Keeps
+                       editorial control on PR descriptions matching
+                       the comment editorial-control invariant. #}
+                    {% if r.status == 'pr_ready' and r.proposed_pr_title and r.proposed_pr_body %}
+                      {% set _pr_combined = r.proposed_pr_title ~ '\n\n' ~ r.proposed_pr_body %}
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/create-pr-from-attempt"
+                            class="result-use-draft-form"
+                            data-editable-body="{{ _pr_combined }}"
+                            data-edit-title="PR title (line 1) + body — review before creating"
+                            data-pr-number="{{ item.number }}"
+                            data-pr-title="{{ item.title }}"
+                            data-pr-url="{{ item.url }}">
+                        <button type="submit" class="result-use-draft"
+                                title="Open the PR with the drafted body. First line becomes the title.">
+                          Review &amp; create PR
+                        </button>
+                      </form>
+                    {% endif %}
                   </div>
                 {% endif %}
                 {% if item.drafts and item.drafts_status in ('proposed', 'executing') %}
@@ -453,6 +477,18 @@
                   {% set show_plan_fix = has_head_ref and not plan_in_flight
                                          and 'plan-fix' not in (item.actions or []) %}
                   {% set plan_fix_primary = rs == 'needs_human' %}
+                  {# Composite "Unblock" — single button that picks the
+                     right one-click unblock action based on signals.
+                     Same underlying action goes through its own modal
+                     (close, fix-precommit, etc. each handled below in
+                     the standard loop). The button just shortcuts to
+                     "the obvious next move on this card." Renders only
+                     for non-issue items and only when pick_unblock_action
+                     returns a non-empty id. #}
+                  {% set _unblock = '' %}
+                  {% if _kind != 'issue' %}
+                    {% set _unblock = pick_unblock_action(item.raw, item.actions) %}
+                  {% endif %}
                   <div class="actions">
                     {% if live_idle %}
                       <form method="post"
@@ -460,6 +496,58 @@
                             title="Nudge the idle session to finish what it was doing and emit its final JSON.">
                         <button type="submit" class="resume" data-action="resume">resume</button>
                       </form>
+                    {% endif %}
+                    {% if _unblock and not ns.has_live_action %}
+                      {# Pre-fill the underlying action's modal body
+                         from the same triage_notes fields the standard
+                         buttons use. Each unblock target maps to its
+                         own data-editable-body source. #}
+                      {% set _unblock_body = '' %}
+                      {% set _unblock_title = 'Unblock — review before posting' %}
+                      {% if _unblock == 'approve-merge' %}
+                        {% set _unblock_body = (item.triage_notes or {}).get('approval_comment')
+                           or 'Dependabot version bump — CI green, mergeStateStatus CLEAN.' %}
+                        {% set _unblock_title = 'Approval review body — review before posting' %}
+                      {% elif _unblock == 'fix-precommit' or _unblock == 'attempt-fix' or _unblock == 'rebase' %}
+                        {# Worktree fix actions have no body to edit;
+                           submit immediately without modal. #}
+                        {% set _unblock_body = '' %}
+                      {% elif _unblock == 'approve-ci' %}
+                        {% set _unblock_body = '' %}
+                      {% elif _unblock == 'resolve-bot-threads' %}
+                        {# Routes through the bot-threads modal — its
+                           submit-intercept handles the open. #}
+                        {% set _unblock_body = '' %}
+                      {% endif %}
+                      {% if _unblock == 'resolve-bot-threads' %}
+                        <form method="post"
+                              action="/queues/{{ queue.id }}/items/{{ item.id }}/resolve-bot-threads"
+                              data-bot-threads-resolve="1"
+                              data-candidates-url="/queues/{{ queue.id }}/items/{{ item.id }}/bot-thread-candidates"
+                              data-pr-number="{{ item.number }}"
+                              data-pr-title="{{ item.title }}"
+                              data-pr-url="{{ item.url }}"
+                              class="unblock-form">
+                          <button type="submit" class="unblock-btn"
+                                  title="One-click unblock: resolve bot review threads (boilerplate first), then approve-merge runs clean.">
+                            Unblock → {{ _unblock }}
+                          </button>
+                        </form>
+                      {% else %}
+                        <form method="post"
+                              action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/{{ _unblock }}"
+                              {% if _unblock_body %}data-editable-body="{{ _unblock_body }}"
+                              data-edit-title="{{ _unblock_title }}"
+                              data-pr-number="{{ item.number }}"
+                              data-pr-title="{{ item.title }}"
+                              data-pr-url="{{ item.url }}"{% endif %}
+                              class="unblock-form">
+                          <button type="submit" class="unblock-btn"
+                                  title="One-click unblock — runs the {{ _unblock }} action with whatever review modal it normally opens.">
+                            Unblock → {{ _unblock }}
+                          </button>
+                        </form>
+                      {% endif %}
                     {% endif %}
                     {# Inline continue lives inside the result pill (above).
                        Keep a standalone fallback ONLY when the pill version

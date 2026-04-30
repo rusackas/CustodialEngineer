@@ -174,6 +174,13 @@ def _exact_time(iso: str | None) -> str:
 
 templates.env.globals["time_ago"] = _time_ago
 templates.env.globals["exact_time"] = _exact_time
+
+# Composite "Unblock" picker — given a card's raw + actions list,
+# returns the single best one-click unblock action id (or empty).
+# The card template renders an "Unblock → {action}" button at the
+# top of the actions row when this returns non-empty.
+from .triage import pick_unblock_action as _pick_unblock_action  # noqa: E402
+templates.env.globals["pick_unblock_action"] = _pick_unblock_action
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -865,6 +872,172 @@ def drawer(request: Request, queue_id: str, item_id: int):
          "queue_id": queue_id, "item_id": item_id,
          "history": history},
     )
+
+
+@app.get("/queues/{queue_id}/bulk-approve-candidates", response_class=JSONResponse)
+def bulk_approve_candidates(queue_id: str):
+    """Return the list of items in this queue that are eligible for
+    bulk approve-merge: their `actions` list contains 'approve-merge',
+    they have no live action session, and the state isn't already
+    `done`. Each candidate carries a default approval_comment pulled
+    from triage_notes (skill-drafted) or a templated fallback.
+
+    Powers the bulk-approve modal — the user sees every clean PR at
+    once with each comment editable, and ships the lot in one
+    confirmation."""
+    state = load_state()
+    bucket = state.get("queues", {}).get(queue_id) or {}
+    items = bucket.get("items") or []
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    done_state = qcfg.get("done_state", "done")
+    live_action_ids: set = set()
+    with sessions._SESSIONS_LOCK:
+        for s in sessions.SESSIONS.values():
+            if (s.kind == "action" and s.queue_id == queue_id
+                    and s.item_id is not None
+                    and s.status in ("queued", "starting", "running", "idle")):
+                live_action_ids.add(s.item_id)
+
+    out = []
+    for item in items:
+        if "approve-merge" not in (item.get("actions") or []):
+            continue
+        if item.get("state") == done_state:
+            continue
+        if item.get("id") in live_action_ids:
+            continue
+        notes = item.get("triage_notes") or {}
+        default_comment = (
+            notes.get("approval_comment")
+            or (item.get("assessment") or {}).get("approval_comment")
+            or "Dependabot version bump — CI green, mergeStateStatus CLEAN, no open threads."
+        )
+        author_login = ((item.get("raw") or {}).get("author") or {}).get("login")
+        out.append({
+            "id": item.get("id"),
+            "number": item.get("number"),
+            "title": item.get("title") or "",
+            "url": item.get("url") or "",
+            "author_login": author_login,
+            "default_comment": default_comment,
+        })
+    return JSONResponse({"candidates": out})
+
+
+@app.post("/queues/{queue_id}/bulk-approve-merge")
+async def bulk_approve_merge(queue_id: str,
+                              item_id: list[int] = Form(default=[]),
+                              comment_body: list[str] = Form(default=[])):
+    """Sequentially dispatch approve-merge for each (item_id, comment)
+    pair from the bulk-approve modal. Each fires through the standard
+    dispatch pipeline — same comment-edit flow, same skill, same
+    re-verify-mergeStateStatus guard. Returns a summary of how many
+    fired vs. errored.
+
+    The comment-edit UI lives in the bulk modal; user has already
+    reviewed each comment before submitting. We pass each as
+    `extra_context.comment_body` so the underlying skill posts it
+    verbatim — same path as a single-card approve.
+    """
+    if not item_id:
+        raise HTTPException(status_code=400, detail="no items selected")
+    if len(item_id) != len(comment_body):
+        raise HTTPException(
+            status_code=400,
+            detail="item_id and comment_body lists must have the same length",
+        )
+    fired: list[int] = []
+    errors: list[str] = []
+    from .actions import dispatch as _dispatch_action
+    for iid, body in zip(item_id, comment_body):
+        try:
+            extra = {"comment_body": (body or "").strip()} if (body or "").strip() else None
+            await asyncio.to_thread(
+                _dispatch_action, queue_id, iid, "approve-merge", extra)
+            fired.append(iid)
+        except Exception as exc:
+            errors.append(f"#{iid}: {exc}")
+    return JSONResponse({
+        "fired": fired,
+        "errors": errors,
+        "count": len(fired),
+    })
+
+
+@app.post("/queues/{queue_id}/items/{item_id}/create-pr-from-attempt")
+def create_pr_from_attempt(queue_id: str, item_id: int,
+                            comment_body: str = Form(...)):
+    """Run `gh pr create` for an attempt-fix-issue phase-2 confirmation.
+
+    The skill committed + pushed in phase 1 and emitted a drafted
+    title + body. The card surfaces a 'Review & create PR' button
+    that opens the comment-edit modal pre-filled with `title\\n\\n\\
+    body`. On confirm the modal POSTs the (possibly edited) blob
+    here. We split first line as the title; the rest is the body.
+    """
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    last_result = item.get("last_result") or {}
+    if last_result.get("status") != "pr_ready":
+        raise HTTPException(
+            status_code=400,
+            detail="No PR-ready draft on this item. Re-run attempt-fix-issue.",
+        )
+    head_branch = last_result.get("head_branch")
+    if not head_branch:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing head_branch on the draft — can't create PR.",
+        )
+    blob = (comment_body or "").strip()
+    if "\n\n" in blob:
+        title, body = blob.split("\n\n", 1)
+    else:
+        # No blank line between title and body — split on first newline.
+        title, _, body = blob.partition("\n")
+    title = title.strip()
+    body = body.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="PR title is empty")
+
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    slug = github.item_repo_slug(item) or github.queue_repo_slug(qcfg)
+    if current_dry_run():
+        set_item_result(queue_id, item_id, {
+            "action": "create-pr",
+            "status": "skipped_dry_run",
+            "message": f"dry_run — would gh pr create on {slug}, head {head_branch}",
+        })
+        return RedirectResponse(url="/", status_code=303)
+
+    import subprocess
+    cmd = ["gh", "pr", "create",
+           "--repo", slug,
+           "--head", head_branch,
+           "--title", title,
+           "--body", body]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        set_item_result(queue_id, item_id, {
+            "action": "create-pr",
+            "status": "error",
+            "message": f"gh pr create failed: {(proc.stderr or '').strip()}",
+        })
+        raise HTTPException(status_code=502,
+                            detail=f"gh pr create failed: {proc.stderr.strip()}")
+    pr_url = (proc.stdout or "").strip()
+    qcfg2 = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    awaiting_state = qcfg2.get("awaiting_state", "awaiting update")
+    set_item_state(queue_id, item_id, awaiting_state)
+    set_item_parked_at(queue_id, item_id, _now())
+    set_item_result(queue_id, item_id, {
+        "action": "create-pr",
+        "status": "completed",
+        "message": f"opened {pr_url}",
+        "pr_url": pr_url,
+    })
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/queues/{queue_id}/items/{item_id}/bot-thread-candidates")
