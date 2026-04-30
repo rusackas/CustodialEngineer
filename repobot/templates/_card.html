@@ -541,6 +541,27 @@
                              or (item.assessment or {}).get('ping_comment')
                              or 'Gentle ping — edit this before posting.' %}
                           {% set edit_title = 'Reviewer ping — edit before posting' %}
+                        {% elif action == 'close-as-stale' %}
+                          {# Issue-side close. Skill drafts close_comment;
+                             default surfaces the explicit "no recent
+                             activity, reopen if needed" voice so the
+                             user has something concrete to edit. #}
+                          {% set editable_body = (item.triage_notes or {}).get('close_comment')
+                             or 'Closing as stale — no recent activity. Reopen with fresh context if this is still hitting you.' %}
+                          {% set edit_title = 'Close comment — review before posting' %}
+                        {% elif action == 'nudge-issue-author' %}
+                          {% set editable_body = (item.triage_notes or {}).get('nudge_comment')
+                             or 'Circling back here — is this still hitting you? Could you share a repro or fresh details? Happy to dig in once we have something concrete.' %}
+                          {% set edit_title = 'Nudge comment — edit before posting' %}
+                        {% elif action == 'mark-as-draft' %}
+                          {# PR soft-warning. Skill emits a draft warning
+                             body via triage_notes.warn_comment when it
+                             proposes mark-as-draft; default falls back
+                             to a generic "what's outstanding + may
+                             close in a future sweep" voice. #}
+                          {% set editable_body = (item.triage_notes or {}).get('warn_comment')
+                             or 'Converting to draft for now — please bring this back to ready once the outstanding items above are addressed. If there is no movement in a future triage sweep this may get closed; reopen as ready any time.' %}
+                          {% set edit_title = 'Draft-warning comment — review before posting' %}
                         {% endif %}
                         {% if action == 'request-reviewers' %}
                           <form method="post"
