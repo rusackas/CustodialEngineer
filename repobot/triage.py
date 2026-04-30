@@ -249,29 +249,51 @@ def _mechanical_my_pr_triage(item: dict) -> tuple[str, list[str]]:
 
 
 def _mechanical_review_requested_triage(item: dict) -> tuple[str, list[str]]:
-    """Fallback triage when the skill fails. Pulls the fetcher-bucketed
-    classification and proposes safe defaults."""
+    """Mechanical triage for review-requested PRs. Mixes contributor-
+    side actions (nudge-author / await-update) with maintainer-side
+    fix actions (fix-precommit / attempt-fix / rebase) when pushing
+    to the PR's head branch is feasible — i.e. it's an in-repo PR
+    OR a fork PR with maintainer_can_modify enabled. Without those
+    fix actions on the menu, a maintainer reviewing a green-CI-
+    blocked-by-formatting PR has no one-click way to land the auto-
+    fix even though their token has push rights."""
     raw = item.get("raw") or {}
     has_conflicts = bool(raw.get("has_conflicts"))
     ci = (raw.get("ci_status") or "").lower()
     threads = raw.get("unresolved_threads") or []
+    is_bot_author = bool((raw.get("author") or {}).get("is_bot")) if isinstance(raw.get("author"), dict) else False
+    push_allowed = _can_push_back(raw)
     others = [t for t in threads if t.get("first_author")
               and t["first_author"] != (load_config().get("identity") or {})
               .get("github_username")]
     reasons: list[str] = []
     actions: list[str] = []
+
     if has_conflicts:
         reasons.append("merge conflicts")
+        if push_allowed:
+            actions.append("rebase")
+        if not is_bot_author:
+            actions.append("nudge-author")
         actions.append("await-update")
     if ci == "failing":
         reasons.append("failing CI")
-        actions.append("nudge-author")
+        if push_allowed:
+            # Maintainer-side fix paths — same trio as generic-pr /
+            # my-pr mechanical. The skills inspect the failing-check
+            # rollup themselves and bail cleanly when their assumption
+            # doesn't fit.
+            actions.extend(["fix-precommit", "attempt-fix", "plan-fix"])
+        if not is_bot_author:
+            actions.append("nudge-author")
     if others:
         reasons.append(
             f"{len(others)} unresolved thread"
             + ("s" if len(others) != 1 else "")
             + " from others")
-        actions.append("nudge-author")
+        if not is_bot_author:
+            actions.append("nudge-author")
+
     if not reasons:
         msg = "No blockers on signal check — safe to review."
         actions = ["approve-merge", "add-review-comment", "await-update",
