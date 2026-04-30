@@ -95,29 +95,29 @@ git push -u origin HEAD
 
 (The worktree is on `ce/issue-{N}`; HEAD pushes that branch up.)
 
-### 6. Open the PR
+### 6. Draft the PR title + body — DO NOT run `gh pr create`
 
-```
-gh pr create \
-  --repo {issue.owner}/{issue.name} \
-  --base <default-branch> \
-  --head ce/issue-{issue.number} \
-  --title "Fix: <issue.title>" \
-  --body "$(cat <<'EOF'
-Closes #{issue.number}
+This is the editorial-control gate. The PR description is
+content posted as the user; they want to review and edit it
+before the PR appears on GitHub. Your job is to compose the
+exact title + body you'd use, but stop short of creating the
+PR. The card surfaces an "Open PR" affordance that pre-fills a
+modal with these fields; the user reviews / edits / confirms,
+and the server runs `gh pr create` with the approved text.
 
-## Summary
-<2-3 bullet points of what the fix does>
+Compose:
 
-## Test plan
-- <how to verify, ideally pointing at the new test>
+- **Title** — concise imperative, ~60 chars max. Format: `Fix:
+  <one-line description of the fix>`. Don't include "(#N)" — the
+  body's `Closes #N` line links the issue.
+- **Body** — Markdown. Lead with `Closes #{issue.number}` so the
+  link auto-resolves on merge. Then a `## Summary` (2-3 bullets
+  on what the fix does and why), and `## Test plan` (how to
+  verify; ideally pointing at the new test you added). Close
+  with the `🤖 Generated with [Claude Code](...)` attribution.
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
-```
-
-Capture the PR URL from the command output.
+Emit them in your output's `proposed_pr_title` and
+`proposed_pr_body` fields. Status: `pr_ready`.
 
 ### 7. **If `dry_run == true`**
 
@@ -129,15 +129,22 @@ the PR description that *would* be created. Report
 
 ```json
 {
-  "status": "completed | needs_human | skipped_dry_run | error",
+  "status": "pr_ready | needs_human | skipped_dry_run | error",
   "message": "one-sentence summary",
-  "pr_url": "https://github.com/.../pull/N or null",
-  "pr_number": 1234,
+  "proposed_pr_title": "Fix: <one-line description>",
+  "proposed_pr_body": "Closes #N\n\n## Summary\n- bullet\n\n## Test plan\n- ...\n\n🤖 Generated with [Claude Code](...)",
+  "head_branch": "ce/issue-{issue.number}",
+  "commit_sha": "abc1234",
   "files_changed": ["path/one.py", "path/two.test.py"],
   "needs_human_reason": "when status is needs_human, why",
   "notes": "optional dump of the diff for dry_run"
 }
 ```
+
+`status: pr_ready` is the success path — branch is pushed, PR
+content is drafted, the user reviews + creates via the modal.
+`status: completed` is reserved for cases where there's nothing
+to PR (e.g., the issue turned out to require no code change).
 
 ## Guardrails
 

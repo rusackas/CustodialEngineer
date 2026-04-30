@@ -792,6 +792,50 @@ def continue_action(queue_id: str, item_id) -> str | None:
         result.setdefault("status", "completed")
         result["action"] = action_id
         status = result.get("status", "completed")
+        # Same special-case status branches as the regular dispatch
+        # path (`_on_first_turn` in `dispatch()`). Without these, a
+        # plan-fix / address-comments / summarize-diff / assess-on-
+        # worktree / attempt-fix-issue session that resumes via the
+        # continue button emits its draft and the result lands in
+        # `last_result` only — never stashed on item.plan /
+        # item.drafts / etc., so the modal flow that reads those
+        # fields shows nothing. The original symptom: card stuck at
+        # `in progress` with no draft pane after a continue+plan.
+        if action_id == "plan-fix" and status == "plan":
+            plan = {k: v for k, v in result.items()
+                    if k not in ("status", "action", "meta", "message")}
+            if "message" in result:
+                plan["message"] = result["message"]
+            set_item_plan(queue_id, item_id, plan)
+            set_item_plan_status(queue_id, item_id, "proposed")
+            set_item_result(queue_id, item_id, result)
+            return
+        if action_id == "address-comments" and status == "drafts":
+            drafts = {k: v for k, v in result.items()
+                      if k not in ("status", "action", "meta", "message")}
+            if "message" in result:
+                drafts["message"] = result["message"]
+            set_item_drafts(queue_id, item_id, drafts)
+            set_item_drafts_status(queue_id, item_id, "proposed")
+            set_item_result(queue_id, item_id, result)
+            return
+        if action_id == "summarize-diff" and status == "summary":
+            summary = {k: v for k, v in result.items()
+                       if k not in ("status", "action", "meta")}
+            set_item_diff_summary(queue_id, item_id, summary)
+            set_item_result(queue_id, item_id, result)
+            return
+        if action_id == "assess-on-worktree" and status == "assessment":
+            assessment = {k: v for k, v in result.items()
+                          if k not in ("status", "action", "meta")}
+            set_item_assessment(queue_id, item_id, assessment)
+            set_item_result(queue_id, item_id, result)
+            return
+        if action_id == "attempt-fix-issue" and status == "pr_ready":
+            set_item_result(queue_id, item_id, result)
+            if spec["in_progress_state"]:
+                set_item_state(queue_id, item_id, spec["in_progress_state"])
+            return
         if status in SUCCESS_STATUSES and spec["terminal_state"]:
             set_item_state(queue_id, item_id, spec["terminal_state"])
         set_item_result(queue_id, item_id, result)
@@ -1033,6 +1077,19 @@ def dispatch(queue_id: str, item_id, action_id: str,
                               if k not in ("status", "action", "meta")}
                 set_item_assessment(queue_id, item_id, assessment)
                 set_item_result(queue_id, item_id, result)
+                return
+            # attempt-fix-issue phase 1: skill committed + pushed, drafted
+            # the PR title + body, but did NOT run gh pr create — the
+            # user reviews/edits the body in a modal and confirms before
+            # the PR appears on GitHub. Stash the draft and keep the
+            # card in_progress so the create-pr affordance can render.
+            if action_id == "attempt-fix-issue" and status == "pr_ready":
+                # Stash everything-but-control-fields in last_result so
+                # the card template can read proposed_pr_title /
+                # proposed_pr_body / head_branch / commit_sha.
+                set_item_result(queue_id, item_id, result)
+                if spec["in_progress_state"]:
+                    set_item_state(queue_id, item_id, spec["in_progress_state"])
                 return
             if status in SUCCESS_STATUSES:
                 if spec["terminal_state"]:
