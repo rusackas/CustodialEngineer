@@ -1,14 +1,35 @@
 """Triage logic for queue items.
 
-`triage_dependabot_pr` is the entry point. It invokes the
-`triage-failing-dependabot-pr` Skill via the Claude Agent SDK, which reads
-CI logs and diff context to produce a well-informed proposal. If the
-session fails (SDK error, unparsed output, empty actions list) we fall
-back to `mechanical_triage`, which only looks at fields already on the
-item — mergeable status, updatedAt.
+## The mechanical-first contract
 
-The mechanical function is kept separately so tests can exercise it
-without the SDK and the live path can fall back to it.
+For every item, two layers run:
+
+1. **Mechanical (rules in code, authoritative).** Reads signals
+   already on the item (mergeable, ci_status, has_conflicts,
+   review_decision, labels, age, …) and emits the action menu
+   directly. Deterministic; tests can exercise it offline; no
+   prompt fragility around action lists.
+
+2. **Skill (Claude session, advisory).** Runs in parallel/after
+   mechanical. Drafts the *proposal text* the user reads on the
+   card and the *comment bodies* (close_comment, nudge_comment,
+   approval_comment, suggested_comment, …) that the action modal
+   pre-fills. The skill's `actions` field, if emitted, is
+   IGNORED — the menu has already been computed.
+
+The skill remains valuable for the things skills are good at:
+reading PR bodies and comment threads, drafting language that
+matches the situation, classifying ambiguous cases. It just
+doesn't make the action-list decision anymore — that lives in
+Python and is testable / debuggable.
+
+Skill failure is silent. The card still gets a proposal (from
+mechanical) and the menu (from mechanical), with `triage_error`
+recorded in `triage_notes` for diagnostics.
+
+`_triage_with_mechanical_first(item, queue_id, skill_name,
+mech_func, extra_pr_fields)` is the shared helper every public
+triager wraps.
 """
 from datetime import datetime, timezone
 
@@ -98,9 +119,23 @@ def _build_context(item: dict, extra_pr_fields: dict | None = None) -> dict:
     return {"pr": pr, "identity": (cfg.get("identity") or {})}
 
 
-def _skill_triage(skill: str, item: dict, queue_id: str | None = None,
+def _skill_enrich(skill: str, item: dict, queue_id: str | None = None,
                   extra_pr_fields: dict | None = None
-                  ) -> tuple[str, list[str], dict] | None:
+                  ) -> tuple[str | None, dict]:
+    """Run a triage skill for enrichment ONLY: returns the proposal
+    text and informational notes (comment drafts, classification,
+    blockers, etc.) for the card to render.
+
+    The skill's `actions` field is ignored under the mechanical-first
+    contract — Python rules compute the action menu. Skills can keep
+    emitting an actions array for diagnostic legibility; we just
+    don't trust it as authoritative. Returns (None, {}) if the skill
+    produced no proposal — caller falls back to the mechanical
+    summary for the card's proposal text.
+
+    Raises on session errors so the caller can record `triage_error`
+    in the result.
+    """
     context = _build_context(item, extra_pr_fields)
     session_id, result = sessions.run_session_blocking(
         skill, context,
@@ -110,42 +145,77 @@ def _skill_triage(skill: str, item: dict, queue_id: str | None = None,
         item_id=item.get("id"),
     )
     proposal = result.get("proposal")
-    actions = result.get("actions")
-    if not proposal or not isinstance(actions, list) or not actions:
-        return None
+    if not proposal:
+        return None, {"session_id": session_id} if session_id else {}
     # Carry every informational top-level field forward as triage_notes
     # so the UI can render `suggested_comment`, `blockers`, `concerns`,
     # `tests_needed`, etc. without each call-site needing its own
-    # extraction. Only the control fields (proposal, actions, status,
-    # meta, action) are excluded — the skill's `notes` dict is merged
-    # in last so it wins on key collisions.
+    # extraction. Control fields (proposal, actions, status, meta,
+    # action) are excluded; the skill's `notes` dict is merged in last
+    # so it wins on key collisions.
     _EXCLUDE = {"proposal", "actions", "status", "action", "meta"}
     notes = {k: v for k, v in result.items() if k not in _EXCLUDE and k != "notes"}
     nested = result.get("notes")
     if isinstance(nested, dict):
         notes.update(nested)
     notes["session_id"] = session_id
-    return proposal, [str(a) for a in actions], notes
+    return proposal, notes
+
+
+def _triage_with_mechanical_first(item: dict, queue_id: str | None,
+                                  skill_name: str | None,
+                                  mech_func,
+                                  extra_pr_fields: dict | None = None
+                                  ) -> tuple[str, list[str], dict]:
+    """Run the mechanical triage to get the authoritative action menu,
+    then (optionally) run the skill for proposal text + notes
+    enrichment. Skill failure is silent — the card still gets a
+    proposal (from mechanical) and the menu (from mechanical), with
+    `triage_error` recorded in notes for diagnostics.
+
+    `skill_name=None` means mechanical-only — no skill call. Useful
+    for queues that don't have a skill configured."""
+    mech_msg, mech_actions = mech_func(item)
+    proposal = mech_msg
+    notes: dict = {}
+    source = "mechanical"
+    triage_session_id: str | None = None
+
+    if skill_name:
+        try:
+            skill_proposal, skill_notes = _skill_enrich(
+                skill_name, item, queue_id=queue_id,
+                extra_pr_fields=extra_pr_fields)
+            triage_session_id = skill_notes.get("session_id")
+            if skill_proposal:
+                proposal = skill_proposal
+                notes = skill_notes
+                source = "mechanical+skill"
+            else:
+                # Skill emitted nothing usable; keep mechanical's
+                # proposal but stash the session id so the user can
+                # still inspect the transcript.
+                if triage_session_id:
+                    notes["session_id"] = triage_session_id
+        except Exception as exc:
+            notes["triage_error"] = str(exc)
+
+    extra: dict = {"triage_source": source, "triage_notes": notes}
+    if triage_session_id:
+        extra["triage_session_id"] = triage_session_id
+    return proposal, mech_actions, extra
 
 
 def triage_dependabot_pr(item: dict, queue_id: str | None = None
                          ) -> tuple[str, list[str], dict]:
-    """Return (proposal, actions, extra). `extra` always includes
-    `triage_source` ∈ {"skill", "mechanical"}."""
-    try:
-        skill_result = _skill_triage(
-            "triage-dependabot-pr", item, queue_id=queue_id)
-        if skill_result is not None:
-            proposal, actions, notes = skill_result
-            extra = {"triage_source": "skill", "triage_notes": notes}
-            if notes.get("session_id"):
-                extra["triage_session_id"] = notes["session_id"]
-            return proposal, actions, extra
-    except Exception as exc:
-        msg, actions = mechanical_triage(item)
-        return msg, actions, {"triage_source": "mechanical", "triage_error": str(exc)}
-    msg, actions = mechanical_triage(item)
-    return msg, actions, {"triage_source": "mechanical"}
+    """Mechanical-first: rules compute the action menu, skill drafts
+    the proposal text + comment bodies. The skill's `actions` field
+    is ignored — see `_triage_with_mechanical_first` for rationale."""
+    return _triage_with_mechanical_first(
+        item, queue_id,
+        skill_name="triage-dependabot-pr",
+        mech_func=mechanical_triage,
+    )
 
 
 def _mechanical_my_pr_triage(item: dict) -> tuple[str, list[str]]:
@@ -215,62 +285,40 @@ def _mechanical_review_requested_triage(item: dict) -> tuple[str, list[str]]:
     return msg, ordered
 
 
-def triage_review_requested_pr(item: dict, queue_id: str | None = None
-                                ) -> tuple[str, list[str], dict]:
-    """Triage one PR where the user has been asked to review. Passes
-    the signal fields to the skill so it can reason about classification
-    without re-fetching."""
-    raw = item.get("raw") or {}
-    extra_pr = {
+def _signal_extra_pr_fields(raw: dict) -> dict:
+    """Common bundle of signal fields most PR triage skills want
+    threaded through their runtime context without a re-fetch."""
+    return {
         "has_conflicts": bool(raw.get("has_conflicts")),
         "merge_state_status": raw.get("mergeStateStatus"),
         "unresolved_threads": raw.get("unresolved_threads") or [],
     }
-    try:
-        skill_result = _skill_triage(
-            "triage-review-requested", item, queue_id=queue_id,
-            extra_pr_fields=extra_pr)
-        if skill_result is not None:
-            proposal, actions, notes = skill_result
-            extra = {"triage_source": "skill", "triage_notes": notes}
-            if notes.get("session_id"):
-                extra["triage_session_id"] = notes["session_id"]
-            return proposal, actions, extra
-    except Exception as exc:
-        msg, actions = _mechanical_review_requested_triage(item)
-        return msg, actions, {"triage_source": "mechanical",
-                              "triage_error": str(exc)}
-    msg, actions = _mechanical_review_requested_triage(item)
-    return msg, actions, {"triage_source": "mechanical"}
+
+
+def triage_review_requested_pr(item: dict, queue_id: str | None = None
+                                ) -> tuple[str, list[str], dict]:
+    """Mechanical-first; skill enriches proposal text + comment drafts.
+    Skill's `actions` field is ignored — the menu is computed from
+    rules in `_mechanical_review_requested_triage`."""
+    return _triage_with_mechanical_first(
+        item, queue_id,
+        skill_name="triage-review-requested",
+        mech_func=_mechanical_review_requested_triage,
+        extra_pr_fields=_signal_extra_pr_fields(item.get("raw") or {}),
+    )
 
 
 def triage_my_pr(item: dict, queue_id: str | None = None
                  ) -> tuple[str, list[str], dict]:
-    """Triage one of the user's own open PRs. The skill gets the three
-    signal fields (has_conflicts, ci_status, unresolved_threads) so it
-    can reason about priority without re-fetching."""
-    raw = item.get("raw") or {}
-    extra_pr = {
-        "has_conflicts": bool(raw.get("has_conflicts")),
-        "merge_state_status": raw.get("mergeStateStatus"),
-        "unresolved_threads": raw.get("unresolved_threads") or [],
-    }
-    try:
-        skill_result = _skill_triage(
-            "triage-my-pr", item, queue_id=queue_id,
-            extra_pr_fields=extra_pr)
-        if skill_result is not None:
-            proposal, actions, notes = skill_result
-            extra = {"triage_source": "skill", "triage_notes": notes}
-            if notes.get("session_id"):
-                extra["triage_session_id"] = notes["session_id"]
-            return proposal, actions, extra
-    except Exception as exc:
-        msg, actions = _mechanical_my_pr_triage(item)
-        return msg, actions, {"triage_source": "mechanical",
-                              "triage_error": str(exc)}
-    msg, actions = _mechanical_my_pr_triage(item)
-    return msg, actions, {"triage_source": "mechanical"}
+    """Mechanical-first; skill enriches proposal text + comment drafts.
+    Skill's `actions` field is ignored — the menu is computed from
+    rules in `_mechanical_my_pr_triage`."""
+    return _triage_with_mechanical_first(
+        item, queue_id,
+        skill_name="triage-my-pr",
+        mech_func=_mechanical_my_pr_triage,
+        extra_pr_fields=_signal_extra_pr_fields(item.get("raw") or {}),
+    )
 
 
 # Default skill name used by `triage_generic_pr` when a queue doesn't
@@ -448,15 +496,12 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
 
 def triage_generic_pr(item: dict, queue_id: str | None = None
                       ) -> tuple[str, list[str], dict]:
-    """Generic triager for user-defined queues. Tries the queue's
-    configured triage skill (or `triage-generic-pr` by default), falls
-    back to mechanical signal-based triage when the skill errors or
-    returns an unparseable result.
-
-    This is the registry fallback wired in `runner._triager_for_queue`
-    — without it, queues outside the built-in TRIAGERS registry would
-    have items stuck in their initial state forever.
-    """
+    """Mechanical-first generic triager for user-defined PR queues.
+    Rules in `_mechanical_generic_triage` compute the action menu;
+    the queue-configured triage skill (or `triage-generic-pr` by
+    default) enriches with proposal text + comment drafts. The
+    skill's `actions` field is ignored — see
+    `_triage_with_mechanical_first` for rationale."""
     raw = item.get("raw") or {}
     extra_pr = {
         "has_conflicts": bool(raw.get("has_conflicts")),
@@ -466,31 +511,21 @@ def triage_generic_pr(item: dict, queue_id: str | None = None
         "is_cross_repository": bool(raw.get("is_cross_repository")),
         "needs_ci_approval": bool(raw.get("needs_ci_approval")),
         # Branch-protection signal — feeds the self-merge feasibility
-        # branch in the priority ladder.
+        # branch in the priority ladder (mechanical reads it directly,
+        # skill threads it for proposal-text reasoning).
         "review_decision": raw.get("reviewDecision"),
         "author_login": (raw.get("author") or {}).get("login")
                         if isinstance(raw.get("author"), dict) else None,
     }
     skill = _resolve_triage_skill(queue_id)
-    try:
-        skill_result = _skill_triage(
-            skill, item, queue_id=queue_id, extra_pr_fields=extra_pr)
-        if skill_result is not None:
-            proposal, actions, notes = skill_result
-            extra = {"triage_source": "skill",
-                     "triage_skill": skill,
-                     "triage_notes": notes}
-            if notes.get("session_id"):
-                extra["triage_session_id"] = notes["session_id"]
-            return proposal, actions, extra
-    except Exception as exc:
-        msg, actions = _mechanical_generic_triage(item)
-        return msg, actions, {"triage_source": "mechanical",
-                              "triage_skill": skill,
-                              "triage_error": str(exc)}
-    msg, actions = _mechanical_generic_triage(item)
-    return msg, actions, {"triage_source": "mechanical",
-                          "triage_skill": skill}
+    proposal, actions, extra = _triage_with_mechanical_first(
+        item, queue_id,
+        skill_name=skill,
+        mech_func=_mechanical_generic_triage,
+        extra_pr_fields=extra_pr,
+    )
+    extra["triage_skill"] = skill
+    return proposal, actions, extra
 
 
 # ============================================================
@@ -662,10 +697,11 @@ def _resolve_issue_triage_skill(queue_id: str | None) -> str:
 
 def triage_generic_issue(item: dict, queue_id: str | None = None
                          ) -> tuple[str, list[str], dict]:
-    """Generic triager for issue queues. Tries the queue's configured
-    triage skill (or `triage-generic-issue` by default), falls back
-    to mechanical signal-based triage on skill error / unparseable
-    result. Same shape as `triage_generic_pr` for symmetry."""
+    """Mechanical-first generic triager for issue queues. Rules in
+    `_mechanical_generic_issue_triage` compute the action menu; the
+    queue-configured triage skill (or `triage-generic-issue` by
+    default) enriches with proposal text + close/nudge/convert
+    drafts. The skill's `actions` field is ignored."""
     raw = item.get("raw") or {}
     labels = _label_set(raw)
     extra_pr = {
@@ -680,29 +716,16 @@ def triage_generic_issue(item: dict, queue_id: str | None = None
         # the discussion without a second round-trip.
         "comments": raw.get("comments") or [],
         "body": raw.get("body") or "",
-        # Linked PRs (open or closed) — the skill uses this to skip
-        # `attempt-fix-issue` when there's already an open PR
-        # tackling the issue, and to recognize "fix was attempted
-        # and abandoned" when the only linked PR is closed.
+        # Linked PRs (open or closed) — feed both the mechanical
+        # `attempt-fix-issue` gate and the skill's reasoning.
         "linked_prs": raw.get("linked_prs") or [],
     }
     skill = _resolve_issue_triage_skill(queue_id)
-    try:
-        skill_result = _skill_triage(
-            skill, item, queue_id=queue_id, extra_pr_fields=extra_pr)
-        if skill_result is not None:
-            proposal, actions, notes = skill_result
-            extra = {"triage_source": "skill",
-                     "triage_skill": skill,
-                     "triage_notes": notes}
-            if notes.get("session_id"):
-                extra["triage_session_id"] = notes["session_id"]
-            return proposal, actions, extra
-    except Exception as exc:
-        msg, actions = _mechanical_generic_issue_triage(item)
-        return msg, actions, {"triage_source": "mechanical",
-                              "triage_skill": skill,
-                              "triage_error": str(exc)}
-    msg, actions = _mechanical_generic_issue_triage(item)
-    return msg, actions, {"triage_source": "mechanical",
-                          "triage_skill": skill}
+    proposal, actions, extra = _triage_with_mechanical_first(
+        item, queue_id,
+        skill_name=skill,
+        mech_func=_mechanical_generic_issue_triage,
+        extra_pr_fields=extra_pr,
+    )
+    extra["triage_skill"] = skill
+    return proposal, actions, extra
