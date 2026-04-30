@@ -27,8 +27,10 @@ from .queues import (
     get_queue_config,
     get_queue_setting,
     load_state,
+    park_signals,
     queue_items,
     set_triage,
+    should_unpark,
     upsert_items,
 )
 from .triage import (
@@ -186,11 +188,18 @@ def _refresh_existing_items(queue_id: str, fetched: list[dict],
                             if q is not None else initial_state)
 
             if awaiting_state and item.get("state") == awaiting_state:
-                parked_at = item.get("parked_at")
-                if parked_at and updated_at and updated_at > parked_at:
+                # Backfill park_signals for items parked before the
+                # signals contract existed — silently capture the
+                # current snapshot so the next refresh has a baseline
+                # to compare against. Don't unpark this tick.
+                if "park_signals" not in item and item.get("parked_at"):
+                    item["park_signals"] = park_signals(fresh)
+                    continue
+                if should_unpark(item, fresh):
                     item["state"] = target_state
                     item["state_changed_at"] = now
                     item.pop("parked_at", None)
+                    item.pop("park_signals", None)
                     item.pop("last_result", None)
                     item.pop("last_result_at", None)
                     item.pop("proposal", None)
@@ -277,16 +286,25 @@ def refresh_one_item(queue_id: str, item_id) -> dict:
 
             target_state = _pick_initial_state(queue_id, q, fresh)
 
-            # Awaiting-update unpark: the external signal landed.
+            # Awaiting-update unpark: the substantive signal landed.
+            # Per `should_unpark`, only meaningful changes (new
+            # commit, comment, review, CI flip, conflict change,
+            # etc.) trigger this — not every updatedAt bump.
             if awaiting_state and it.get("state") == awaiting_state:
-                parked_at = it.get("parked_at")
-                unpark = bool(parked_at and updated_at and updated_at > parked_at)
+                # Legacy items without park_signals get a baseline
+                # capture this tick and stay parked.
+                if "park_signals" not in it and it.get("parked_at"):
+                    it["park_signals"] = park_signals(fresh)
+                    result["stale"] = False
+                    return
+                unpark = should_unpark(it, fresh)
                 result["stale"] = unpark
                 if not unpark:
                     return
                 it["state"] = target_state
                 it["state_changed_at"] = now
                 it.pop("parked_at", None)
+                it.pop("park_signals", None)
                 it.pop("last_result", None)
                 it.pop("last_result_at", None)
                 it.pop("proposal", None)

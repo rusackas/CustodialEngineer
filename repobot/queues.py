@@ -211,17 +211,78 @@ def delete_item(queue_id: str, item_id) -> None:
     _emit("queue-changed", {"queue_id": queue_id})
 
 
+def park_signals(raw: dict | None) -> dict:
+    """Snapshot of the substantive signals on an item at park time.
+    Compared against the current `raw` on every refresh tick — only
+    fields here trigger auto-unpark when they change. `updatedAt`
+    alone is deliberately excluded: it bumps for trivial events
+    (label adds/removes, comment edits, reviewer assignment churn,
+    bot status check polls) that the user explicitly does not want
+    to count as "the thing I was awaiting."
+
+    Substantive signals tracked:
+      - `head_sha` (new commits)
+      - `ci_status` (passing/failing/pending flips)
+      - `mergeStateStatus` (CLEAN/DIRTY/BLOCKED/BEHIND/etc. flips)
+      - `reviewDecision` (REVIEW_REQUIRED → APPROVED, etc.)
+      - `has_conflicts` (true/false flips)
+      - `unresolved_threads` count (new threads, resolved threads)
+      - `comments_count` (new top-level conversation comments)
+      - issue-side: `state`, `stateReason`, `last_comment_at`
+    """
+    raw = raw or {}
+    return {
+        "head_sha": raw.get("head_sha") or "",
+        "ci_status": raw.get("ci_status"),
+        "mergeStateStatus": raw.get("mergeStateStatus"),
+        "reviewDecision": raw.get("reviewDecision"),
+        "has_conflicts": bool(raw.get("has_conflicts")),
+        "unresolved_threads_count": len(raw.get("unresolved_threads") or []),
+        "comments_count": raw.get("comments_count") or 0,
+        # Issue-flavored signals — populated by the issue fetcher.
+        "state": raw.get("state"),
+        "stateReason": raw.get("stateReason"),
+        "last_comment_at": raw.get("last_comment_at"),
+    }
+
+
+def should_unpark(item: dict, fresh_raw: dict | None) -> bool:
+    """Return True when the substantive signals on `fresh_raw` differ
+    from the snapshot taken at park time. Fall back to the legacy
+    `updatedAt > parked_at` heuristic ONLY for items parked before
+    park-signal capture (no `park_signals` field on the item) — those
+    re-baseline on the next park cycle.
+
+    Returns False when `fresh_raw` is missing — we can't decide
+    without a current snapshot, so default to "stay parked."
+    """
+    if not fresh_raw:
+        return False
+    parked_signals = item.get("park_signals")
+    current_signals = park_signals(fresh_raw)
+    if parked_signals is None:
+        # Legacy fallback for items parked before this contract
+        # existed. Capture a baseline silently; don't unpark this
+        # tick. The runner is responsible for stamping the snapshot
+        # on the item in that case (see `_refresh_existing_items`).
+        return False
+    return parked_signals != current_signals
+
+
 def set_item_parked_at(queue_id: str, item_id, when: str | None) -> None:
     """Stamp (or clear) when an item was parked into `awaiting update`.
-    Used to detect fresh activity on the PR — when its `updatedAt`
-    passes `parked_at`, the card auto-demotes back to triage."""
+    Captures a `park_signals` snapshot at park time so the auto-unpark
+    check (in `_refresh_existing_items`) only triggers on substantive
+    change — see `park_signals()` for what counts as substantive."""
     def _m(state):
         for item in queue_items(state, queue_id):
             if item["id"] == item_id:
                 if when is None:
                     item.pop("parked_at", None)
+                    item.pop("park_signals", None)
                 else:
                     item["parked_at"] = when
+                    item["park_signals"] = park_signals(item.get("raw") or {})
                 break
     _mutate(_m)
     _emit("queue-changed", {"queue_id": queue_id})

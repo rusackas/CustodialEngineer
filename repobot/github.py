@@ -507,7 +507,8 @@ def fetch_search(query_block: dict, limit: int = 50,
                 h = {"mergeStateStatus": "", "threads": [], "ci_status": "",
                      "maintainer_can_modify": False,
                      "is_cross_repository": False,
-                     "needs_ci_approval": False}
+                     "needs_ci_approval": False,
+                     "head_sha": "", "comments_count": 0}
             if wants_merge:
                 pr["mergeStateStatus"] = h["mergeStateStatus"]
                 pr["has_conflicts"] = (
@@ -527,6 +528,9 @@ def fetch_search(query_block: dict, limit: int = 50,
             pr["maintainer_can_modify"] = h["maintainer_can_modify"]
             pr["is_cross_repository"] = h["is_cross_repository"]
             pr["needs_ci_approval"] = h["needs_ci_approval"]
+            # Substantive-unpark fields — see _park_signals in queues.py.
+            pr["head_sha"] = h.get("head_sha") or ""
+            pr["comments_count"] = h.get("comments_count") or 0
         elif wants_ci and number is not None:
             try:
                 checks = pr_checks(number)
@@ -894,6 +898,8 @@ query($owner:String!,$name:String!,$number:Int!){
       mergeStateStatus
       maintainerCanModify
       isCrossRepository
+      comments{ totalCount }
+      headRefOid
       commits(last:1){nodes{commit{statusCheckRollup{
         state
         contexts(first:50){nodes{
@@ -1006,6 +1012,13 @@ def _hydrate_pr_via_graphql(number: int) -> dict:
         "maintainer_can_modify": bool(pr.get("maintainerCanModify")),
         "is_cross_repository": bool(pr.get("isCrossRepository")),
         "needs_ci_approval": needs_approval,
+        # Substantive-event tracking: head SHA bumps on every commit
+        # push; comments_count bumps on every top-level conversation
+        # comment. Both feed the auto-unpark "did anything real
+        # happen?" gate so awaiting-update cards don't unpark on
+        # trivial label/metadata churn.
+        "head_sha": pr.get("headRefOid") or "",
+        "comments_count": ((pr.get("comments") or {}).get("totalCount") or 0),
     }
 
 
@@ -1083,7 +1096,8 @@ def fetch_review_requested_prs(limit: int = 50,
             h = {"mergeStateStatus": "", "threads": [], "ci_status": "",
                  "maintainer_can_modify": False,
                  "is_cross_repository": False,
-                 "needs_ci_approval": False}
+                 "needs_ci_approval": False,
+                 "head_sha": "", "comments_count": 0}
         pr["statusCheckRollup"] = []
         pr["ci_status"] = h["ci_status"] or "passing"
         pr["mergeStateStatus"] = h["mergeStateStatus"]
@@ -1093,6 +1107,8 @@ def fetch_review_requested_prs(limit: int = 50,
         pr["maintainer_can_modify"] = h["maintainer_can_modify"]
         pr["is_cross_repository"] = h["is_cross_repository"]
         pr["needs_ci_approval"] = h["needs_ci_approval"]
+        pr["head_sha"] = h.get("head_sha") or ""
+        pr["comments_count"] = h.get("comments_count") or 0
         _stamp_repo(pr)
         out.append(pr)
     return out
@@ -1135,7 +1151,8 @@ def fetch_my_prs(limit: int = 50,
             h = {"mergeStateStatus": "", "threads": [], "ci_status": "",
                  "maintainer_can_modify": False,
                  "is_cross_repository": False,
-                 "needs_ci_approval": False}
+                 "needs_ci_approval": False,
+                 "head_sha": "", "comments_count": 0}
         pr["statusCheckRollup"] = []
         pr["ci_status"] = h["ci_status"] or "passing"
         pr["mergeStateStatus"] = h["mergeStateStatus"]
@@ -1145,6 +1162,8 @@ def fetch_my_prs(limit: int = 50,
         pr["maintainer_can_modify"] = h["maintainer_can_modify"]
         pr["is_cross_repository"] = h["is_cross_repository"]
         pr["needs_ci_approval"] = h["needs_ci_approval"]
+        pr["head_sha"] = h.get("head_sha") or ""
+        pr["comments_count"] = h.get("comments_count") or 0
         if (pr["has_conflicts"] or pr["ci_status"] == "failing"
                 or h["threads"]):
             _stamp_repo(pr)
