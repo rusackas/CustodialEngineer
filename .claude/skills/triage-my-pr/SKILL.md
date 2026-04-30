@@ -24,8 +24,19 @@ just decide what to do next.
   merge_state_status, ci_status, has_conflicts, unresolved_threads}`.
   `unresolved_threads` is a list of `{id, path, line, is_outdated,
   first_author, first_body, comments_count}`.
-- `identity.github_username` — used to phrase the proposal in first
-  person ("I'll …") rather than third.
+- `identity.github_username` — **the human reading this triage IS
+  this account**. Treat them as "you" / "I" in your proposal text,
+  never in third person. Specifically:
+  - Don't @-mention them.
+  - Don't refer to them by handle in prose. ❌ Bad: "rusackas
+    pushed a fix"; "@rusackas already addressed this." ✅ Good:
+    "you pushed a fix"; "I addressed this" (first person works
+    here since the PR is the user's own work); or omit attribution
+    when context makes it obvious.
+  - When quoting one of their past comments, attribute as "you"
+    or quote without a handle.
+  - Other commenters (reviewers, bot reviewers) are fine to
+    @-mention or third-person normally.
 
 ## Priority order
 

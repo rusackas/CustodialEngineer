@@ -3352,13 +3352,31 @@
     document.addEventListener('submit', (e) => {
       const form = e.target;
       if (!(form instanceof HTMLFormElement)) return;
-      if (!form.matches('.actions form, .card-session-footer form')) return;
+      // Cover state-changing form submits anywhere on a card —
+      // action menu (.actions), session footer (running a follow-up
+      // / spawning a session), and the chip rows up in the header
+      // (.card-title-chips for PR cards' update/retriage, plus
+      // .card-session-footer-actions for the done-task cards'
+      // inline delete/retry icons). Without the chip-row coverage
+      // the visual feedback never fired on retriage and clicks
+      // looked like they did nothing.
+      if (!form.matches([
+            '.actions form',
+            '.card-session-footer form',
+            '.card-title-chips form',
+            '.card-session-footer-actions form',
+          ].join(','))) return;
       const card = form.closest('.card');
       if (!card) return;
       const btn = form.querySelector('button[data-action]')
                 || form.querySelector('button[type=submit]')
                 || form.querySelector('button');
-      const label = btn && btn.dataset.action ? btn.dataset.action : 'working';
+      // Use the button's text (for chip forms with no data-action,
+      // e.g., "update" / "retriage") if data-action isn't set.
+      const label = (btn && btn.dataset.action)
+                  || (btn && (btn.getAttribute('aria-label')
+                              || btn.textContent || '').trim())
+                  || 'working';
       markCardBusy(card, label);
     });
 

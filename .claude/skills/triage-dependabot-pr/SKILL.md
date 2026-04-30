@@ -18,6 +18,26 @@ mergeable, updated_at, is_draft, ci_status } }`. `ci_status` is one of
 `passing`, `failing`, `pending` — already computed from the check
 rollup.
 
+`identity.github_username` is also in context — **the human reading
+this triage IS this account**. Treat them as "you" in your proposal
+text, never in third person. Specifically:
+
+- Don't @-mention them.
+- Don't refer to them by handle in prose. ❌ Bad: "rusackas is
+  coordinating the migration"; "@rusackas already commented." ✅
+  Good: "you're coordinating the migration"; "you already
+  commented"; or omit attribution when context makes it obvious.
+- When quoting one of their past comments, attribute as "you" or
+  quote without a handle.
+- Other commenters (other maintainers, bot reviewers) are fine to
+  @-mention or third-person normally.
+
+This matters here because dependabot PRs often have substantive
+maintainer-driven coordination in the comment thread (phased
+migrations, hold flags, "wait for #N" annotations) — referring
+to the reader in third person reads like the bot is talking
+about them rather than to them.
+
 ## Procedure
 
 ### 1. Always fetch deeper PR metadata first

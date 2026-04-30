@@ -2622,7 +2622,9 @@ body {
 }
 .card.card-busy .actions,
 .card.card-busy .card-session-footer,
-.card.card-busy .card-head-tools {
+.card.card-busy .card-head-tools,
+.card.card-busy .card-title-chips,
+.card.card-busy .card-session-footer-actions {
   pointer-events: none;
 }
 .card-busy-badge {
@@ -2656,6 +2658,59 @@ body {
 @keyframes card-busy-rail {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+/* Immediate click-feedback on a busy button. The submit listener
+   in index.html stamps `.htmx-request` on the clicked button at
+   submit time (before the network round-trip lands). Without CSS
+   for that class, clicked buttons sat in their idle state and
+   actions looked like they did nothing — the user's friction
+   was real. The card-busy chrome (rail + dimmed neighbors +
+   badge) catches up within ~50ms but the BUTTON itself needed
+   its own beat of feedback so the click felt landed.
+
+   Treatment: the button gets a leading pulse-dot ("◍ retriage")
+   that gently blinks while the request is in flight. Background
+   shifts to a tinted state to read as "armed and working" rather
+   than "idle and waiting." Cursor: progress. */
+button.htmx-request,
+form.htmx-request button[type=submit],
+form.htmx-request button[data-action] {
+  cursor: progress;
+  position: relative;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+button.htmx-request::before,
+form.htmx-request button[type=submit]::before,
+form.htmx-request button[data-action]::before {
+  content: "◍";
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 0.85em;
+  vertical-align: 1px;
+  animation: htmx-request-dot 1.0s ease-in-out infinite;
+}
+@keyframes htmx-request-dot {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Header chip buttons (retriage / update / delete-task) get the
+   same treatment but scaled to the chip's tighter typography. */
+.card-refresh.htmx-request,
+.card-retriage.htmx-request {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+.card-refresh.htmx-request::before,
+.card-retriage.htmx-request::before {
+  content: "◍";
+  margin-right: 3px;
+  animation: htmx-request-dot 1.0s ease-in-out infinite;
 }
 
 /* Fade-out overlay for cards leaving a column — cloned into
