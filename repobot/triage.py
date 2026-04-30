@@ -449,23 +449,40 @@ def _mechanical_generic_triage(item: dict) -> tuple[str, list[str]]:
             f"{len(threads)} unresolved review thread"
             + ("s" if len(threads) != 1 else ""))
         actions.append("await-update")
-    if not reasons and age is not None and age > 30:
-        reasons.append(f"stale (~{age:.0f}d since update)")
-        if not is_bot:
-            actions.append("nudge-author")
-        actions.append("close")
+    # Stale / draft handling. Two-phase soft-close workflow:
+    #
+    # 1. **Non-draft stale PR (>30d, someone else's, not a bot):**
+    #    Propose `mark-as-draft` primary — that posts a "we may close
+    #    this in a future sweep if no further updates" warning and
+    #    demotes to draft. `close` stays as a secondary in case the
+    #    maintainer would rather just close right away.
+    #
+    # 2. **Draft stale PR (>90d, someone else's):** likely already
+    #    got mark-as-draft'd in a prior pass and never moved. Now
+    #    `close` is the right primary — the warning shot has had
+    #    its time. The close-pr skill drafts a thankful "thanks for
+    #    the PR — feel free to reopen if you want to push it
+    #    through" body.
+    #
+    # Self-authored / bot-authored stale PRs skip the soft-warning
+    # step (no point demoting your own PR to draft; bots have their
+    # own action paths). They go straight to `close` proposal.
 
-    # Draft PR shortcut — for someone else's draft that hasn't moved
-    # in a while, the kind thing is to close with thanks and a
-    # "feel free to reopen" door. We don't auto-detect the "hasn't
-    # moved in a while" part here (the queue's sort:updated-asc
-    # surface order does that for us — only stale ones surface);
-    # the skill prompt has a richer judgment, but mechanical-side
-    # we just propose `close` primary on drafts so the user has the
-    # button when they need it.
-    if is_draft and not self_authored:
-        reasons.append("draft, not authored by you")
-        actions.append("close")  # close-pr skill drafts thankful body
+    if is_draft and not self_authored and age is not None and age > 90:
+        reasons.append(f"stale draft (~{age:.0f}d since update)")
+        actions.append("close")
+    elif (not reasons and age is not None and age > 30
+          and not is_draft):
+        reasons.append(f"stale (~{age:.0f}d since update)")
+        if is_bot or self_authored:
+            # Skip the soft-warning step — close is the right move.
+            actions.append("close")
+        else:
+            # First-pass warning: demote to draft + post explanation.
+            # Close stays as a secondary so the maintainer can choose.
+            actions.append("mark-as-draft")
+            actions.append("close")
+            actions.append("nudge-author")
 
     # Clean PR (no blockers, not a draft, CI not pending) → propose
     # approve-merge as the obvious next click. The dispatcher

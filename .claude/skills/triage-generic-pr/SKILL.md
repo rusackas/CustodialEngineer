@@ -180,14 +180,31 @@ Use this priority ladder. First match wins.
      commits, recent comments, the author is engaged):
      `await-update` primary. Drafts mean "in progress"; don't
      nudge.
-   - **Stale draft** (no commit / comment activity in 60+ days,
-     OR the queue surfaced it via an oldest-first sort): the
-     kind thing is `close` with a thankful "thanks for the PR,
-     feel free to reopen if you want to push it through" body.
-     The close-pr skill drafts the comment voice — your job is
-     just to put `close` first in `actions`. Don't propose
-     `nudge-author` on a stale draft; if the author had
-     bandwidth, they'd have moved the PR.
+   - **Stale draft (90+ days since last activity)** by someone
+     other than the user: warning shot has expired. `close`
+     primary with a thankful "thanks for the PR — feel free to
+     reopen if you want to push it through" body. The close-pr
+     skill drafts the voice; you set `close_comment` so the
+     modal pre-fills with concrete reasoning. Don't propose
+     `nudge-author` on a stale draft — if the author had
+     bandwidth they'd have moved it.
+
+5b. **Stale non-draft PR (30+ days since last activity)** by
+   someone other than the user, no other blockers, not a bot:
+   propose `mark-as-draft` PRIMARY (soft-warn first, close
+   later). The action posts a "we may close this in a future
+   sweep if no further updates" comment AND demotes the PR to
+   draft, parking the card. After another ~90 days of
+   inactivity the now-draft PR re-enters the stale-pr-triage
+   queue and falls into rule (5)'s stale-draft branch — `close`
+   primary at that point. Two-phase soft-close.
+
+   `close` and `nudge-author` should also appear in `actions` as
+   secondaries — the maintainer might prefer a straight close
+   or a public nudge over the demote-and-warn path. Bot-authored
+   stale PRs skip the soft-warning step (they have their own
+   action paths, no point demoting to draft); propose `close`
+   directly.
 
 6. **Clean** (CI green / unset, no conflicts, no open threads, not
    draft):
