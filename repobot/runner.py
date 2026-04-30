@@ -59,6 +59,22 @@ def _items_with_live_triage(queue_id: str) -> set:
     return live
 
 
+def _items_with_live_action(queue_id: str) -> set:
+    """IDs of items with a live action session in flight. Used by the
+    stuck-execution recovery in `_refresh_existing_items` to detect
+    `plan_status: executing` / `drafts_status: executing` cards whose
+    session has died — so the card unsticks instead of showing a
+    forever-spinner."""
+    live: set = set()
+    with sessions._SESSIONS_LOCK:
+        for s in sessions.SESSIONS.values():
+            if (s.kind == "action" and s.queue_id == queue_id
+                    and s.item_id is not None
+                    and s.status in _LIVE_TRIAGE_STATES):
+                live.add(s.item_id)
+    return live
+
+
 # Each registered fetcher takes `prior_by_number` so the runner's
 # updatedAt fast-path can flow through; quiet PRs skip the per-PR
 # hydrate fanout regardless of which built-in fetcher is in play.
@@ -172,6 +188,13 @@ def _refresh_existing_items(queue_id: str, fetched: list[dict],
     fetched_by_number = {pr["number"]: pr for pr in fetched}
     now = _now()
     demoted_ids: list = []
+    # Snapshot live-action item ids once per refresh tick — used by
+    # the stuck-execution recovery below. Items in
+    # `plan_status/drafts_status: executing` whose session has died
+    # (idle timeout / crash / etc.) get reset to `proposed` so the
+    # card unsticks; the user can re-approve from the modal, which
+    # spawns fresh per the resume-after-close path (commit e453a47).
+    live_action_ids = _items_with_live_action(queue_id)
 
     def _m(state):
         bucket = state.get("queues", {}).get(queue_id)
@@ -183,6 +206,16 @@ def _refresh_existing_items(queue_id: str, fetched: list[dict],
                 continue
             item["raw"] = fresh
             updated_at = fresh.get("updatedAt")
+
+            # Stuck-execution recovery: plan/drafts marked executing
+            # but no live action session means the phase-2 session
+            # died without flipping status. Reset to `proposed` so
+            # the card surfaces the approve-and-run button again.
+            if item.get("id") not in live_action_ids:
+                if item.get("plan_status") == "executing":
+                    item["plan_status"] = "proposed"
+                if item.get("drafts_status") == "executing":
+                    item["drafts_status"] = "proposed"
 
             target_state = (_pick_initial_state(queue_id, q, fresh)
                             if q is not None else initial_state)
