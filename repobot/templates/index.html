@@ -2074,6 +2074,30 @@
         }
         wrap.appendChild(meta);
 
+        // Original ask context — surfaces who raised the concern
+        // and what they said, so the user reviewing the drafted
+        // reply doesn't have to context-switch to GitHub to see
+        // what they're replying to. Only renders when the skill
+        // populated `asker` / `excerpt`; older drafts (before this
+        // contract) silently skip the block.
+        if (t.asker || t.excerpt) {
+          const original = document.createElement('blockquote');
+          original.className = 'drafts-modal-original';
+          if (t.asker) {
+            const askerEl = document.createElement('div');
+            askerEl.className = 'drafts-modal-asker';
+            askerEl.textContent = '@' + t.asker + ' asked:';
+            original.appendChild(askerEl);
+          }
+          if (t.excerpt) {
+            const excerptEl = document.createElement('div');
+            excerptEl.className = 'drafts-modal-excerpt';
+            excerptEl.textContent = t.excerpt;
+            original.appendChild(excerptEl);
+          }
+          wrap.appendChild(original);
+        }
+
         if (t.reason) {
           const reason = document.createElement('div');
           reason.className = 'drafts-modal-reason';

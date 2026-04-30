@@ -4816,6 +4816,33 @@ button.plan-discard:hover { background: var(--bg-inset); }
   margin-bottom: 4px;
   line-height: 1.4;
 }
+
+/* Original ask block in the address-comments review modal —
+   "@alice asked:" + excerpt. Quoted-block treatment with a left
+   rail so it reads as conversation context distinct from the
+   reply textarea below. */
+.drafts-modal-original {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--rule-strong);
+  background: var(--bg-inset);
+  border-radius: 0 3px 3px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.drafts-modal-asker {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ink-mute);
+  letter-spacing: -0.005em;
+  margin-bottom: 3px;
+}
+.drafts-modal-excerpt {
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
 .drafts-modal-reply {
   width: 100%;
   font-family: inherit;

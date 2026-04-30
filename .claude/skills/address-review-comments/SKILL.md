@@ -170,6 +170,8 @@ and approves the drafts first; phase 2 posts them.
       "first_comment_id": 123456789,
       "path": "superset/x.py",
       "line": 42,
+      "asker": "alice",
+      "excerpt": "Could we rename this helper to `getFooBar` for consistency with the rest of the module?",
       "action": "fix | decline | outdated-already-fixed",
       "commit_sha": "abc1234",
       "reply_body": "Fixed in abc1234.",
@@ -185,6 +187,16 @@ and approves the drafts first; phase 2 posts them.
 - `first_comment_id` is the `databaseId` from the graphql query —
   phase 2 keys off it. The GraphQL node id (`"id"` above) is what
   phase-2 resolution uses.
+- `asker` is the FIRST comment's `author.login` — the reviewer who
+  raised the concern. Populate it from the graphql query in
+  procedure §1; the modal renders this so the human approving knows
+  who they're replying to.
+- `excerpt` is the FIRST comment's `body`, truncated to ~500 chars
+  on a word boundary. Surfaces the original ask in the modal so the
+  user can read the conversation in context without context-
+  switching to GitHub. Strip code blocks and trailing whitespace
+  from the excerpt; if the body is short enough (<500 chars), use
+  it verbatim.
 - `reply_body` is the human-editable text. Every thread must have one.
 - `commit_sha` is empty/omitted on decline.
 - `should_resolve` is a per-thread hint for whether phase 2 should
