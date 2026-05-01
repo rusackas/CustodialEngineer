@@ -83,6 +83,29 @@ approve-merge.
 Benign bot output (pure summaries, "LGTM", link previews, changelog
 diffs) is fine to ignore.
 
+### 1c. Hard rule — never recommend approve-merge over red CI
+
+If **any** check is in a failure state (`FAILURE`, `TIMED_OUT`,
+`ACTION_REQUIRED`, `STARTUP_FAILURE`), do not recommend
+`approve-merge` — regardless of:
+
+- whether the failing checks are branch-protected / required,
+- whether you judge the failure to be unrelated drift, flake, or
+  pre-existing breakage on master,
+- whether `mergeStateStatus` is `UNSTABLE` (i.e., GitHub considers
+  the PR mergeable),
+- whether the bump itself is trivial (data-only, version-only,
+  patch-level, etc.).
+
+The maintainer's policy: failing CI is failing CI. Propose the
+relevant fix action (`retrigger-ci` for flake/infra, `fix-precommit`
+for pre-commit drift, `update-lockfile` for lockfile drift,
+`attempt-fix` for real code breakage) and let the user merge once
+CI is green. You can still note in the proposal that the failures
+look unrelated to the bump — that helps the user decide whether
+`retrigger-ci` is sufficient — but never frame the PR as
+"safe to merge" or "safe to approve-merge" while red checks exist.
+
 ### 2. Branch on `ci_status`
 
 #### If `ci_status == "passing"` …
@@ -108,9 +131,15 @@ diffs) is fine to ignore.
     2-approvals-required or something else the approval alone
     won't clear, the downstream skill bails to `needs_human`
     without merging.
-- `mergeStateStatus == UNSTABLE` → note which non-required checks
-  are red in the excerpt. Usually safe to `approve-merge`, but say so
-  explicitly in the proposal.
+- `mergeStateStatus == UNSTABLE` → checks are red. Even though
+  GitHub considers the PR mergeable (the failing checks aren't
+  branch-protected), **do not recommend `approve-merge`** —
+  failing CI is failing CI, and the maintainer's policy is to
+  make it green before merging. Treat this as the failing-CI
+  flow: read the failing checks and propose `retrigger-ci`,
+  `fix-precommit`, `attempt-fix`, or `update-lockfile` per the
+  rules in section 3. Note in the proposal which non-required
+  checks are red, but never suggest merging over them.
 - Draft / WIP → propose `prompt` only.
 
 Classification: `approve-merge`, `rebase-needed`, `blocked`,
