@@ -94,6 +94,24 @@
                               + task
                             </button>
                           </form>
+                          {# `track` parks the issue with a "tracked by
+                             PR #N" note and archives it from triage —
+                             the PR is the live surface now. No GitHub
+                             side-effect; just clears this issue card
+                             so the queue stays focused. #}
+                          {% if (lp.state or '') | upper == 'OPEN' %}
+                            <form method="post"
+                                  action="/queues/{{ queue.id }}/items/{{ item.id }}/track-pr"
+                                  class="issue-linked-pr-track-form">
+                              <input type="hidden" name="pr_number" value="{{ lp.number }}">
+                              <input type="hidden" name="pr_url" value="{{ lp.url }}">
+                              <input type="hidden" name="pr_title" value="{{ lp.title }}">
+                              <button type="submit" class="issue-linked-pr-track"
+                                      title="Park this issue with a 'tracked by PR #{{ lp.number }}' note and archive it from triage. The PR is the live surface now.">
+                                track
+                              </button>
+                            </form>
+                          {% endif %}
                         </span>
                       {% endfor %}
                       {% if _linked | length > 5 %}
@@ -548,6 +566,27 @@
                           </button>
                         </form>
                       {% endif %}
+                    {% endif %}
+                    {# Issue-side composite — when the mechanical
+                       triager put `attempt-fix-issue` on the menu
+                       (no open linked PR, not decided-out, not keep-
+                       open), surface a primary "Open fix PR" button
+                       at the top of the actions row. Underlying
+                       action still goes through its standard
+                       worktree flow — phase-1 drafts the PR title +
+                       body, phase-2 confirmation modal lets the user
+                       review before `gh pr create` runs. #}
+                    {% if _kind == 'issue'
+                          and 'attempt-fix-issue' in (item.actions or [])
+                          and not ns.has_live_action %}
+                      <form method="post"
+                            action="/queues/{{ queue.id }}/items/{{ item.id }}/actions/attempt-fix-issue"
+                            class="unblock-form">
+                        <button type="submit" class="unblock-btn"
+                                title="Spin up a worktree, attempt a fix, push, and draft a PR. You'll get a review modal for the title + body before the PR is created.">
+                          Open fix PR
+                        </button>
+                      </form>
                     {% endif %}
                     {# Inline continue lives inside the result pill (above).
                        Keep a standalone fallback ONLY when the pill version

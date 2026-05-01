@@ -2947,6 +2947,37 @@ button.delete {
   background: var(--warn);
   border-color: var(--warn);
 }
+/* "track" — quieter sibling to "+ task". Parks the issue with a
+   "tracked by PR #N" note and archives the card from triage. No
+   GitHub side-effect, so visually muted: ink-mute pill, no warm
+   accent. Sits as a discrete pill after the chip+task fused
+   group, separated by the row's natural gap. */
+.issue-linked-pr-track-form {
+  display: inline-flex;
+  margin: 0 0 0 4px;
+}
+.issue-linked-pr-track {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease,
+              border-color 0.15s ease;
+}
+.issue-linked-pr-track:hover {
+  color: var(--bg-card);
+  background: var(--ink-soft);
+  border-color: var(--ink-soft);
+}
 button.continue {
   background: var(--warn-soft);
   color: var(--warn);

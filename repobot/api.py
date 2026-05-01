@@ -1040,6 +1040,41 @@ def create_pr_from_attempt(queue_id: str, item_id: int,
     return RedirectResponse(url="/", status_code=303)
 
 
+@app.post("/queues/{queue_id}/items/{item_id}/track-pr")
+def track_pr(queue_id: str, item_id: int,
+             pr_number: int = Form(...),
+             pr_url: str = Form(default=""),
+             pr_title: str = Form(default="")):
+    """Park an issue card with a 'tracked by PR #N' note and move it
+    to the queue's done state. Used when a linked PR is doing the
+    work — the issue triage card no longer needs attention; the PR
+    is the live surface from here on.
+
+    No GitHub side-effects. Purely a local "archive this issue card,
+    leave a breadcrumb pointing at the PR" so the issue queue stays
+    focused on issues that still need triage decisions.
+    """
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    done_state = qcfg.get("done_state", "done")
+    pr_label = f"PR #{pr_number}"
+    if pr_title:
+        pr_label = f"{pr_label} ({pr_title})"
+    set_item_state(queue_id, item_id, done_state,
+                   reason=f"tracked by {pr_label}")
+    set_item_parked_at(queue_id, item_id, _now())
+    set_item_result(queue_id, item_id, {
+        "action": "track-pr",
+        "status": "completed",
+        "message": f"Tracking {pr_label} — issue card archived from triage.",
+        "pr_url": pr_url or None,
+        "pr_number": pr_number,
+    })
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.get("/queues/{queue_id}/items/{item_id}/bot-thread-candidates")
 def bot_thread_candidates(queue_id: str, item_id: int):
     """Return the unresolved review threads on this PR with each
