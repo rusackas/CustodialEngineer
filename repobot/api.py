@@ -2238,7 +2238,19 @@ def spawn_feedback_task(request: Request, queue_id: str, item_id: int,
         f"the CustodialEngineer repo with a clear commit message "
         f"explaining the bug and the fix; the user will review/merge "
         f"like any other PR. Skip side-effects on the source repo "
-        f"({src_repo_id}); this task is about CE itself."
+        f"({src_repo_id}); this task is about CE itself.\n\n"
+        f"BEFORE you start: read CLAUDE.md and MEMORY.md at the repo "
+        f"root. CLAUDE.md has the architectural invariants; MEMORY.md "
+        f"has learned-pattern facts from prior incidents — your bug "
+        f"may already be flagged there, and if so the fix is to align "
+        f"with the documented learning, not relitigate it.\n\n"
+        f"AFTER you've drafted a fix: judge whether the underlying "
+        f"lesson is durable (i.e., generalizes beyond the one card "
+        f"that triggered the report) or a one-off. If durable, "
+        f"include a one-line entry addition to MEMORY.md in the same "
+        f"PR — under the appropriate section, with a brief Why "
+        f"naming the symptom (\"PR #N — ...\"). If a one-off, skip "
+        f"the MEMORY.md change."
     )
 
     try:

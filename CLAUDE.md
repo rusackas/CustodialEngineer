@@ -6,6 +6,22 @@ own `?` feedback button). Read it once before touching anything —
 the invariants below are load-bearing and the architecture won't
 make sense without them.
 
+There are three context files at the repo root, with deliberate
+separation:
+
+- **CLAUDE.md** (this file) — stable architecture and load-bearing
+  invariants. What's true *by design*. Changes only when the
+  architecture changes.
+- **MEMORY.md** — curated, learned-pattern facts distilled from
+  incidents and feedback PRs. What we've *learned the hard way*.
+  Append-only-ish; entries get amended, not deleted.
+- **BACKLOG.md** — running list of drive-by ideas and unfinished
+  threads. What's *queued or unfinished*. No ceremony.
+
+Read MEMORY.md before recommending anything that has historically
+been a sharp edge — it's where the "we tried X and it caused Y"
+lessons live.
+
 ## What this is
 
 Custodial Engineer ("CE") is a personal repo-maintainer toolkit
@@ -301,15 +317,11 @@ the list as authoritative; the repo state is.
 
 ## Anti-patterns — don't do these
 
-- **Don't propose `approve-merge` while CI is red**, regardless
-  of `mergeStateStatus`, required-flag classification, or your
-  judgment of whether the failure is "relevant." Maintainer
-  policy: failing CI is failing CI; fix it before merging.
-- **Don't add a one-shot fix in a skill prompt when the bug is
-  in the mechanical menu.** If the menu is missing an action,
-  fix `triage.py`. Skills don't decide menus.
-- **Don't post a public comment without a review modal in the
-  flow.** The user must always edit before send.
+These are stylistic / architectural; the action-menu and triage-
+specific anti-patterns ("don't propose approve-merge over red
+CI", "don't fix menu bugs in skill prompts", etc.) live in
+MEMORY.md with their incident context.
+
 - **Don't introduce backwards-compat shims, dead code, or
   re-exports for things that have no consumers.** This is a
   small personal toolkit; YAGNI.
@@ -318,6 +330,9 @@ the list as authoritative; the repo state is.
   inputs, GraphQL responses) — not between two functions you own.
 - **Don't write multi-paragraph docstrings or comment blocks.**
   One short line max. Comments explain *why*, never *what*.
+- **Don't add a feature without checking MEMORY.md first** when
+  the feature touches an area with a history of sharp edges
+  (action menus, comment-posting flows, triage signal staleness).
 
 ## Frontend conventions
 
