@@ -5340,6 +5340,60 @@ button.card-retriage {
 }
 button.card-retriage:hover { background: var(--alert-warning); color: var(--bg-card); }
 
+/* Per-card "?" feedback button. Sits in the card header chip row
+   alongside update / retriage. Quiet by default — circular pill,
+   ink-mute. Hover bumps to brand to telegraph "this opens a Claude
+   session." */
+.card-feedback-form { display: inline-flex; margin: 0; }
+button.card-feedback {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--mono);
+  padding: 2px 8px;
+  min-width: 22px;
+  background: transparent;
+  color: var(--card-ink-soft);
+  border-color: var(--ink-faint);
+  border-radius: var(--radius-pill);
+  letter-spacing: 0;
+  cursor: help;
+}
+button.card-feedback:hover {
+  background: var(--brand);
+  color: var(--bg-card);
+  border-color: var(--brand);
+}
+
+/* Header self-update button — sits next to the brand. Quietly
+   styled to stay out of the way; the rocket icon + "update CE"
+   label hint at "ship the new code now". Confirms via JS prompt
+   before submit so an accidental click doesn't restart the
+   server. */
+.app-self-update-form { display: inline-flex; margin: 0 0 0 12px; }
+button.app-self-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 4px 10px;
+  border: 1px solid var(--rule-strong);
+  background: var(--bg-inset);
+  color: var(--ink-mute);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease,
+              border-color 0.15s ease;
+}
+button.app-self-update:hover {
+  background: var(--brand);
+  color: var(--bg-card);
+  border-color: var(--brand);
+}
+
 /* Icon-only variant for card header actions — drops label text so
    the meta row stays quiet. `aria-label` + `title` on the button
    carry the meaning. */

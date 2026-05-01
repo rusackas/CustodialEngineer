@@ -121,6 +121,19 @@
         <span class="app-brand-text">custodial<span class="app-brand-dot">·</span>engineer</span>
         {% if dry_run %}<span class="app-brand-flag" title="Actions are logged instead of executed. Flip actions.dry_run in config.yaml when you trust the flow.">dry run</span>{% endif %}
       </h1>
+      {# Self-update: pull latest origin/main on the CE repo this
+         server is running from, then re-exec the process so the
+         new code loads. Aborts if the working tree is dirty or the
+         pull is non-ff. SSE clients reconnect automatically after
+         the restart. #}
+      <form method="post" action="/admin/self-update"
+            class="app-self-update-form"
+            onsubmit="return confirm('Pull origin/main and restart the server? Aborts if the working tree is dirty.');">
+        <button type="submit" class="app-self-update"
+                title="git pull --ff-only origin/main on the CE repo, then re-exec the server. Use after merging a CE feedback PR to consume the new code without leaving the app.">
+          {{ icon('rocket', size=12) }} update CE
+        </button>
+      </form>
     </div>
 
     <div class="app-header-row app-readout">
@@ -1416,6 +1429,43 @@
     </div>
   </div>
 
+  {# Feedback modal — opened by the per-card "?" button. The user
+     describes what's wrong with the card's triage; on submit we POST
+     to /queues/{q}/items/{i}/spawn-feedback-task with the prompt,
+     which spawns an Ad Hoc Task on the CE repo. #}
+  <div id="feedback-modal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-feedback></div>
+    <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h3>Send feedback to Claude</h3>
+          <div class="modal-pr" id="feedback-modal-pr"></div>
+        </div>
+        <button type="button" class="modal-close" data-close-feedback
+                aria-label="Close">{{ icon('x', size=16) }}</button>
+      </div>
+      <div class="comment-modal-help">
+        Describe what's wrong with this card's triage — the action
+        menu, the proposal text, missing buttons, anything. Claude
+        opens an Ad Hoc Task on the Custodial Engineer repo with
+        this card's full context (raw signals, triage notes, action
+        menu, last result, recent history) plus your message, then
+        investigates the relevant skill prompts / triage logic and
+        opens a PR with proposed fixes. Review and merge like any
+        other PR.
+      </div>
+      <textarea id="feedback-modal-textarea"
+                class="comment-modal-textarea"
+                rows="6"
+                placeholder="e.g. The Unblock button picked fix-precommit but the skill says CI is green — I think this is a stale ci_status problem at retriage time."></textarea>
+      <div id="feedback-modal-error" class="plan-modal-error"></div>
+      <div class="comment-modal-actions">
+        <button type="button" class="comment-modal-cancel" data-close-feedback>Cancel</button>
+        <button type="button" class="comment-modal-send" id="feedback-modal-send">Spawn task</button>
+      </div>
+    </div>
+  </div>
+
   <div id="reviewers-modal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-reviewers></div>
     <div class="modal-body modal-body-narrow" role="dialog" aria-modal="true">
@@ -1682,6 +1732,15 @@
         e.preventDefault();
         e.stopImmediatePropagation();
         openBotThreadsModal(form);
+        return;
+      }
+      // Per-card feedback: opens the feedback modal with a free-text
+      // input. On confirm we re-submit the form with the user's
+      // prompt as a hidden field.
+      if (form.dataset.feedbackTask && form.dataset.feedbackConfirmed !== '1') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        openFeedbackModal(form);
         return;
       }
       // Disabled-button-with-spinner UI. HTMX undoes this automatically
@@ -2298,6 +2357,87 @@
       }
       if (e.key === 'Escape' && reviewersModal.classList.contains('is-open')) {
         closeReviewersModal();
+      }
+    });
+
+    // === Feedback modal =====================================
+    // Opened by per-card `?` button (data-feedback-task). User
+    // describes what's wrong; on confirm we re-submit the form
+    // with the prompt as a hidden field so it lands at the
+    // /spawn-feedback-task endpoint, which spawns an Ad Hoc Task
+    // on the CE repo with the card's full context.
+    const feedbackModal = document.getElementById('feedback-modal');
+    const feedbackModalPr = document.getElementById('feedback-modal-pr');
+    const feedbackModalTextarea = document.getElementById('feedback-modal-textarea');
+    const feedbackModalError = document.getElementById('feedback-modal-error');
+    const feedbackModalSend = document.getElementById('feedback-modal-send');
+    let feedbackFormPending = null;
+
+    function closeFeedbackModal() {
+      feedbackModal.classList.remove('is-open');
+      feedbackModal.setAttribute('aria-hidden', 'true');
+      feedbackFormPending = null;
+      feedbackModalTextarea.value = '';
+      feedbackModalError.textContent = '';
+    }
+    function openFeedbackModal(form) {
+      feedbackFormPending = form;
+      feedbackModalError.textContent = '';
+      feedbackModalTextarea.value = '';
+      feedbackModalSend.disabled = false;
+      feedbackModalSend.textContent = 'Spawn task';
+      // Render a PR-line summary if we have number/title metadata.
+      const num = form.dataset.prNumber;
+      const title = form.dataset.prTitle || '';
+      const queueLabel = form.dataset.queueLabel || '';
+      if (num) {
+        feedbackModalPr.textContent = `#${num}${title ? ' — ' + title : ''}`
+          + (queueLabel ? `  ·  ${queueLabel}` : '');
+      } else if (queueLabel) {
+        feedbackModalPr.textContent = queueLabel;
+      } else {
+        feedbackModalPr.textContent = '';
+      }
+      feedbackModal.classList.add('is-open');
+      feedbackModal.setAttribute('aria-hidden', 'false');
+      // Focus the textarea after the open animation settles.
+      setTimeout(() => feedbackModalTextarea.focus(), 50);
+    }
+    feedbackModalSend.addEventListener('click', () => {
+      if (!feedbackFormPending) return;
+      const prompt = (feedbackModalTextarea.value || '').trim();
+      if (!prompt) {
+        feedbackModalError.textContent = 'Describe what\'s wrong before submitting.';
+        feedbackModalTextarea.focus();
+        return;
+      }
+      feedbackModalSend.disabled = true;
+      feedbackModalSend.textContent = 'Spawning…';
+      const liveForm = feedbackFormPending;
+      // Wipe any prior hidden inputs from a previous submit attempt.
+      liveForm.querySelectorAll('input[name="user_prompt"]').forEach(n => n.remove());
+      const h = document.createElement('input');
+      h.type = 'hidden';
+      h.name = 'user_prompt';
+      h.value = prompt;
+      liveForm.appendChild(h);
+      liveForm.dataset.feedbackConfirmed = '1';
+      closeFeedbackModal();
+      liveForm.requestSubmit();
+    });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('[data-close-feedback]')) closeFeedbackModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && feedbackModal.classList.contains('is-open')) {
+        closeFeedbackModal();
+      }
+    });
+    // ⌘-Enter / Ctrl-Enter inside the textarea = submit.
+    feedbackModalTextarea.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        feedbackModalSend.click();
       }
     });
 

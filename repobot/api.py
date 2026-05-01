@@ -2142,6 +2142,194 @@ def spawn_pr_task(request: Request, queue_id: str, item_id: int,
     return _reload_or_redirect(request)
 
 
+# Self-improvement feedback hook. Per-card "(?)" button posts here
+# with the user's free-text prompt; we bundle the card's full
+# context (raw, triage_notes, proposal, actions, last_result,
+# history) and spawn an Ad Hoc Task targeting the CE repo itself
+# so a Claude Code session can investigate and open a PR with
+# proposed skill / triage-logic changes. The user reviews and
+# merges the PR like any other.
+_CE_FEEDBACK_REPO_ID = "ce"
+_CE_CARD_DUMP_BUDGET = 30000  # ~30KB JSON cap, leaves room for prompt
+
+
+@app.post("/queues/{queue_id}/items/{item_id}/spawn-feedback-task")
+def spawn_feedback_task(request: Request, queue_id: str, item_id: int,
+                         user_prompt: str = Form(...)):
+    """Spawn an Ad Hoc Task on the CustodialEngineer repo with the
+    user's feedback about this card's triage. Includes the full card
+    context as a JSON dump in the prompt, plus the user's free-text
+    description of what's wrong / what they want changed.
+
+    Result: the Claude Code session investigates the relevant skills
+    + triage code and opens a PR on the CE repo with proposed fixes.
+    Standard PR review/merge from there.
+    """
+    user_prompt = (user_prompt or "").strip()
+    if not user_prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    if not github.repo_by_id(_CE_FEEDBACK_REPO_ID):
+        raise HTTPException(
+            status_code=400,
+            detail=f"feedback target repo `{_CE_FEEDBACK_REPO_ID}` not "
+                   f"in repos: registry — add it to config.yaml.",
+        )
+    item = find_item(load_state(), queue_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+
+    # Card dump: everything a Claude session would need to reason
+    # about why this card looks the way it does. JSON-serialised and
+    # capped at the budget so the prompt stays manageable.
+    qcfg = {q["id"]: q for q in get_queues_config()}.get(queue_id, {})
+    src_repo_id = github.queue_repo_id(qcfg) or "(unknown)"
+    card_dump = {
+        "queue_id": queue_id,
+        "queue_label": qcfg.get("label") or queue_id,
+        "queue_kind": qcfg.get("kind") or "pr",
+        "source_repo_id": src_repo_id,
+        "item": {
+            "id": item.get("id"),
+            "number": item.get("number"),
+            "title": item.get("title"),
+            "url": item.get("url"),
+            "state": item.get("state"),
+            "actions": item.get("actions") or [],
+            "proposal": item.get("proposal"),
+            "triage_source": item.get("triage_source"),
+            "triage_notes": item.get("triage_notes") or {},
+            "last_result": item.get("last_result"),
+            "raw": item.get("raw") or {},
+            "history": (item.get("history") or [])[-10:],
+        },
+    }
+    dump = json.dumps(card_dump, indent=2, default=str)
+    truncated = False
+    if len(dump) > _CE_CARD_DUMP_BUDGET:
+        dump = dump[:_CE_CARD_DUMP_BUDGET]
+        truncated = True
+
+    item_label = f"#{item.get('number')}" if item.get("number") else f"item {item_id}"
+    title_part = f' — "{item.get("title")}"' if item.get("title") else ""
+    truncation_note = "\n\n(card dump truncated to fit budget)" if truncated else ""
+    prompt = (
+        f"User feedback on Custodial Engineer's triage of "
+        f"{src_repo_id} {item_label}{title_part} (queue: {queue_id}).\n\n"
+        f"### USER PROMPT\n\n"
+        f"{user_prompt}\n\n"
+        f"### CARD CONTEXT\n\n"
+        f"```json\n{dump}\n```"
+        f"{truncation_note}"
+        f"\n\n"
+        f"### YOUR JOB\n\n"
+        f"Investigate the relevant Custodial Engineer code that "
+        f"produced the behavior the user is describing. The most "
+        f"common targets are:\n"
+        f"- `.claude/skills/*/SKILL.md` (triage skill prompts — most "
+        f"narrative bugs live here)\n"
+        f"- `repobot/triage.py` (mechanical action menu — most "
+        f"action-availability bugs live here)\n"
+        f"- `repobot/runner.py` (refresh / retriage flow)\n"
+        f"- `repobot/actions.py` (action registry, dispatch)\n"
+        f"- `repobot/templates/_card.html`, `static/style.css` (UI)\n\n"
+        f"Read the user's prompt, correlate with the card context, "
+        f"identify root cause, propose a fix. Keep the change "
+        f"minimal and aligned with existing patterns. Open a PR on "
+        f"the CustodialEngineer repo with a clear commit message "
+        f"explaining the bug and the fix; the user will review/merge "
+        f"like any other PR. Skip side-effects on the source repo "
+        f"({src_repo_id}); this task is about CE itself."
+    )
+
+    try:
+        task = _tasks.create_task(repo_id=_CE_FEEDBACK_REPO_ID,
+                                  prompt=prompt, task_type="pr")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    def _dispatch():
+        try:
+            _tasks.dispatch_task(task["id"])
+        except Exception as exc:
+            _tasks.update_task(task["id"], status="stuck",
+                               last_result={
+                                   "status": "error",
+                                   "message": f"spawn failed: {exc}",
+                               })
+    threading.Thread(target=_dispatch, daemon=True).start()
+    return _reload_or_redirect(request)
+
+
+# Self-update: pull latest CE main and re-exec the server so the
+# user can merge a PR via the tool and immediately consume the
+# new code. `git pull --ff-only` so local edits abort the update
+# instead of being silently overwritten.
+@app.post("/admin/self-update")
+def admin_self_update(request: Request):
+    """Run `git pull --ff-only` against origin/main on the CE repo
+    the server is running from, then re-exec the current process
+    via os.execv so the new code is loaded. SSE clients reconnect
+    automatically.
+
+    Aborts (without restart) if the working tree is dirty or the
+    pull is non-ff — the user investigates manually rather than us
+    losing state."""
+    import os
+    import sys
+    import subprocess
+    from pathlib import Path
+
+    # The CE repo is the parent of the repobot package directory.
+    repo_root = Path(__file__).resolve().parent.parent
+    if not (repo_root / ".git").exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"{repo_root} is not a git repo — can't self-update.",
+        )
+
+    def _run(*cmd: str) -> tuple[int, str, str]:
+        proc = subprocess.run(cmd, cwd=str(repo_root),
+                              capture_output=True, text=True)
+        return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
+
+    rc, out, err = _run("git", "status", "--porcelain")
+    if rc != 0:
+        raise HTTPException(status_code=500,
+                            detail=f"git status failed: {err}")
+    if out:
+        raise HTTPException(
+            status_code=409,
+            detail=f"working tree dirty — refusing to self-update.\n{out}",
+        )
+
+    _run("git", "fetch", "origin", "main")
+    rc, out, err = _run("git", "pull", "--ff-only", "origin", "main")
+    if rc != 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"git pull --ff-only failed (non-ff or conflict?):\n{err or out}",
+        )
+
+    head_rc, head_sha, _ = _run("git", "rev-parse", "--short", "HEAD")
+    summary = f"pulled to {head_sha if head_rc == 0 else '?'}: {out}"
+    print(f"[self-update] {summary} — re-execing server")
+
+    # Re-exec the same Python with the same argv. New process loads
+    # the freshly-pulled code; the old process is replaced. Schedule
+    # the exec slightly after the response goes out so the client
+    # gets the redirect rather than a connection-reset.
+    def _restart():
+        import time
+        time.sleep(0.5)
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as exc:
+            print(f"[self-update] os.execv failed: {exc}")
+
+    threading.Thread(target=_restart, daemon=True).start()
+    return _reload_or_redirect(request)
+
+
 @app.post("/tasks/{task_id}/delete")
 def delete_task_endpoint(task_id: int):
     """Remove a task record, abort any in-flight session, and prune
