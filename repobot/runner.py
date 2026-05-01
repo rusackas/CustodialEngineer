@@ -389,16 +389,50 @@ def refresh_one_item(queue_id: str, item_id) -> dict:
 
 def retriage_item(queue_id: str, item_id, wait: bool = False) -> None:
     """Force a fresh triage on a single item: aborts any in-flight or
-    idle triage session, clears the existing verdict, and spawns a new
-    triage thread. Used by the retriage button (user disagrees with
-    triage, or it got stuck). The item stays in `initial_state` — no
-    state transition is implied by retriage itself."""
+    idle triage session, refetches `raw` from GitHub, clears the
+    existing verdict, and spawns a new triage thread. Used by the
+    retriage button (user disagrees with triage, or it got stuck).
+    The item stays in `initial_state` — no state transition is
+    implied by retriage itself.
+
+    Refetching `raw` is critical: the mechanical action menu is
+    built from `raw.ci_status`, `raw.mergeStateStatus`, etc. If we
+    re-triaged from cached signals, a PR whose CI flipped to green
+    since last fetch would still get the failing-CI menu (fix-
+    precommit / attempt-fix / etc.) even though the skill's
+    narrative — which always fetches fresh via `gh pr view` — would
+    correctly recommend ping-reviewers or approve-merge. The
+    mismatch is exactly the symptom that surfaced this fix.
+    """
     q = get_queue_config(queue_id)
     triage = _triager_for_queue(queue_id)
     if triage is None:
         raise ValueError(f"No triager registered for queue: {queue_id}")
 
     sessions.abort_sessions_for_item(queue_id, item_id, kind="triage")
+
+    # Refetch from GitHub before clearing the verdict, so the
+    # mechanical menu the post-clear triage builds reflects current
+    # signals — not the cached ci_status / merge state from the
+    # original fetch.
+    state_pre = load_state()
+    item_pre = None
+    for i in queue_items(state_pre, queue_id):
+        if i.get("id") == item_id:
+            item_pre = i
+            break
+    fresh: dict | None = None
+    if item_pre is not None and item_pre.get("number"):
+        try:
+            slug = github.item_repo_slug(item_pre) or github.queue_repo_slug(q)
+            with github.repo_scope(slug):
+                fresh = github.fetch_one_pr(item_pre["number"])
+        except Exception as exc:
+            # If the refetch fails (rate limit, network, gone PR),
+            # fall back to cached raw — better to retriage with stale
+            # signals than to fail the whole retriage button.
+            print(f"[retriage] refetch failed for {queue_id}/{item_id}: {exc}")
+            fresh = None
 
     def _m(state):
         bucket = state.get("queues", {}).get(queue_id)
@@ -407,6 +441,8 @@ def retriage_item(queue_id: str, item_id, wait: bool = False) -> None:
         for it in bucket.get("items", []):
             if it.get("id") != item_id:
                 continue
+            if fresh is not None:
+                it["raw"] = fresh
             for k in ("proposal", "actions", "triaged_at", "triage_source",
                       "triage_notes", "last_result", "last_result_at",
                       "triage_session_id"):
